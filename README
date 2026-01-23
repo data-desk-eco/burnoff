@@ -1,0 +1,44 @@
+Burnoff
+=======
+
+Sentinel-2 SWIR flare detection at LNG facilities.
+
+Detects thermal anomalies using B11/B12 bands with local cloud filtering
+and contrast-based thresholding. Results displayed on a web map with
+on-demand COG visualization.
+
+
+Requirements
+------------
+
+- Python 3.12+ with uv
+- DuckDB
+- tippecanoe
+- Node.js (for npx serve)
+
+
+Quick Start
+-----------
+
+    make all        # Run full pipeline
+    make serve      # Start web server on :8000
+
+
+Detection
+---------
+
+Single location:
+
+    uv run burnoff detect --lat -12.51 --lon 130.92 --year 2024
+
+Bulk processing:
+
+    uv run burnoff bulk terminals.json -o detections.json --year 2024
+
+
+Data Sources
+------------
+
+- Sentinel-2 L2A via Element84 STAC API
+- SWIR bands: B11 (1610nm), B12 (2190nm)
+- Scene classification (SCL) for cloud masking
