@@ -30,6 +30,7 @@ B12_THRESHOLD = 0.5  # SWIR2 (2190nm) - primary thermal indicator
 B11_THRESHOLD = 0.3  # SWIR1 (1610nm) - confirmation band
 MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than background median
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
+MAX_FLARE_PIXELS = 16  # Flares are point sources; reject large hot areas
 
 
 @dataclass
@@ -227,7 +228,8 @@ def process_image(
         # Find pixels that are both above threshold AND stand out from background
         mask = (b12 > b12_threshold) & (b11 > b11_threshold) & (b12 > background_median * min_contrast)
 
-        if mask.any():
+        pixel_count = mask.sum()
+        if pixel_count > 0 and pixel_count <= MAX_FLARE_PIXELS:
             # Find location of max B12 pixel
             max_idx = np.unravel_index(b12.argmax(), b12.shape)
             row, col = max_idx
@@ -244,7 +246,7 @@ def process_image(
             return Detection(
                 date=img_date,
                 max_b12=float(b12[mask].max()),
-                pixel_count=int(mask.sum()),
+                pixel_count=pixel_count,
                 flare_lon=flare_lon,
                 flare_lat=flare_lat,
                 cog_urls={"b11": b11_url, "b12": b12_url, "visual": visual_url},
