@@ -26,6 +26,8 @@ STAC_API = "https://earth-search.aws.element84.com/v1"
 # Detection thresholds (reflectance units)
 B12_THRESHOLD = 0.5  # SWIR2 (2190nm) - primary thermal indicator
 B11_THRESHOLD = 0.3  # SWIR1 (1610nm) - confirmation band
+MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than background median
+MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
 
 
 @dataclass
@@ -137,15 +139,24 @@ def process_image(
     item: dict,
     lat: float,
     lon: float,
-    buffer_m: int = 1000,
+    buffer_m: int = 2000,
     b11_threshold: float = B11_THRESHOLD,
     b12_threshold: float = B12_THRESHOLD,
+    min_contrast: float = MIN_CONTRAST_RATIO,
+    max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
     max_pixels: int = 128,
 ) -> Detection | None:
-    """Process a single Sentinel-2 image and detect thermal anomalies."""
+    """Process a single Sentinel-2 image and detect thermal anomalies.
+
+    Detection requires:
+    1. Local area mostly cloud-free (SCL band check)
+    2. B12 and B11 above absolute thresholds
+    3. B12 significantly brighter than local background (contrast ratio)
+    """
     try:
         b11_url = item["assets"]["swir16"]["href"]
         b12_url = item["assets"]["swir22"]["href"]
+        scl_url = item["assets"].get("scl", {}).get("href")
         visual_url = item["assets"].get("visual", {}).get("href")
         epsg = item["properties"]["proj:epsg"]
         img_date = date.fromisoformat(item["properties"]["datetime"][:10])
@@ -172,9 +183,20 @@ def process_image(
     wgs_bounds = (min_lon, min_lat, max_lon, max_lat)
 
     try:
+        # Check local cloud cover using SCL band
+        # SCL classes: 8=cloud_medium_prob, 9=cloud_high_prob, 10=thin_cirrus, 3=cloud_shadow
+        if scl_url:
+            with rasterio.open(scl_url) as src:
+                window = from_bounds(*utm_bounds, src.transform)
+                out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
+                scl = src.read(1, window=window, out_shape=out_shape)
+                cloud_mask = np.isin(scl, [3, 8, 9, 10])
+                cloud_fraction = cloud_mask.sum() / cloud_mask.size
+                if cloud_fraction > max_local_cloud:
+                    return None  # Too cloudy locally
+
         with rasterio.open(b11_url) as src:
             window = from_bounds(*utm_bounds, src.transform)
-            # Use overviews by specifying smaller out_shape
             out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
             b11 = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b11_scale + b11_offset
 
@@ -183,8 +205,25 @@ def process_image(
             out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
             b12 = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b12_scale + b12_offset
 
-        # Detection: both bands above threshold
-        mask = (b12 > b12_threshold) & (b11 > b11_threshold)
+        # Calculate background statistics (exclude potential flare pixels)
+        # Use median of non-bright pixels as background reference
+        background_mask = b12 < b12_threshold
+        if background_mask.sum() < 10:
+            # Not enough background pixels to compare
+            return None
+        background_median = np.median(b12[background_mask])
+
+        # Detection requires:
+        # 1. Both bands above absolute thresholds
+        # 2. B12 significantly brighter than background (contrast check)
+        max_b12 = b12.max()
+        contrast_ratio = max_b12 / max(background_median, 0.01)  # Avoid division by zero
+
+        if max_b12 < b12_threshold or contrast_ratio < min_contrast:
+            return None
+
+        # Find pixels that are both above threshold AND stand out from background
+        mask = (b12 > b12_threshold) & (b11 > b11_threshold) & (b12 > background_median * min_contrast)
 
         if mask.any():
             # Find location of max B12 pixel
@@ -192,11 +231,10 @@ def process_image(
             row, col = max_idx
 
             # Convert pixel coords back to UTM
-            # Account for resampled array size
-            col_frac = (col + 0.5) / b12.shape[1]  # +0.5 for pixel center
+            col_frac = (col + 0.5) / b12.shape[1]
             row_frac = (row + 0.5) / b12.shape[0]
             flare_utm_x = utm_bounds[0] + col_frac * (utm_bounds[2] - utm_bounds[0])
-            flare_utm_y = utm_bounds[3] - row_frac * (utm_bounds[3] - utm_bounds[1])  # Y inverted
+            flare_utm_y = utm_bounds[3] - row_frac * (utm_bounds[3] - utm_bounds[1])
 
             # Convert to WGS84
             flare_lon, flare_lat = transformer_to_wgs.transform(flare_utm_x, flare_utm_y)
@@ -224,10 +262,12 @@ def detect(
     start_date: date,
     end_date: date,
     max_cloud: int = 30,
-    buffer_m: int = 1000,
+    buffer_m: int = 2000,
     workers: int = 8,
     b11_threshold: float = B11_THRESHOLD,
     b12_threshold: float = B12_THRESHOLD,
+    min_contrast: float = MIN_CONTRAST_RATIO,
+    max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
     progress_callback=None,
 ) -> DetectionResult:
     """
@@ -238,11 +278,13 @@ def detect(
         lon: Longitude (WGS84)
         start_date: Start of search period
         end_date: End of search period
-        max_cloud: Maximum cloud cover percentage (default 30)
-        buffer_m: Buffer around point in meters (default 1000)
+        max_cloud: Maximum scene cloud cover percentage (default 30)
+        buffer_m: Buffer around point in meters (default 2000)
         workers: Parallel workers for image processing (default 8)
         b11_threshold: SWIR1 threshold in reflectance (default 0.3)
         b12_threshold: SWIR2 threshold in reflectance (default 0.5)
+        min_contrast: Minimum ratio of flare brightness to background (default 3.0)
+        max_local_cloud: Maximum local cloud fraction (default 0.3)
         progress_callback: Optional callback(current, total) for progress updates
 
     Returns:
@@ -262,7 +304,8 @@ def detect(
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(
-                process_image, item, lat, lon, buffer_m, b11_threshold, b12_threshold
+                process_image, item, lat, lon, buffer_m,
+                b11_threshold, b12_threshold, min_contrast, max_local_cloud
             ): item
             for item in items
         }
