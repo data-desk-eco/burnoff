@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Burnoff: Sentinel-2 flare detections</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+    <link href="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace; }
+        #map { width: 100%; height: 100%; background: #000; }
+        .maplibregl-ctrl { display: none !important; }
+
+        .panel {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: #fff;
+            font-size: 13px;
+        }
+
+        .title {
+            top: 16px;
+            left: 16px;
+            padding: 12px 16px;
+        }
+        .title h1 {
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin: 0;
+            color: rgba(255,255,255,0.9);
+        }
+        .title p {
+            font-size: 11px;
+            color: rgba(255,255,255,0.4);
+            margin: 5px 0 0 0;
+            letter-spacing: 0.05em;
+        }
+
+        .legend {
+            bottom: 24px;
+            left: 16px;
+            padding: 12px 14px;
+        }
+        .legend h4 {
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin: 0 0 10px 0;
+            color: rgba(255,255,255,0.5);
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 6px 0;
+            font-size: 11px;
+            color: rgba(255,255,255,0.6);
+            letter-spacing: 0.02em;
+        }
+        .legend-circle {
+            width: 10px; height: 10px; border-radius: 50%;
+            margin-right: 10px;
+            box-shadow: 0 0 6px currentColor;
+        }
+
+        .info-panel {
+            top: 16px;
+            right: 16px;
+            width: 300px;
+            max-height: calc(100vh - 32px);
+            overflow-y: auto;
+            display: none;
+        }
+        .info-panel::-webkit-scrollbar { width: 4px; }
+        .info-panel::-webkit-scrollbar-track { background: transparent; }
+        .info-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); }
+        .info-panel.visible { display: block; }
+
+        .info-header {
+            padding: 14px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            position: relative;
+        }
+        .info-header h3 {
+            font-size: 13px;
+            font-weight: 500;
+            margin: 0;
+            padding-right: 24px;
+            color: #fff;
+            letter-spacing: 0.02em;
+        }
+        .info-header .close {
+            position: absolute; top: 12px; right: 12px;
+            cursor: pointer; font-size: 16px; color: rgba(255,255,255,0.4);
+            width: 22px; height: 22px;
+            display: flex; align-items: center; justify-content: center;
+            transition: color 0.15s;
+        }
+        .info-header .close:hover { color: #fff; }
+
+        .info-stats {
+            padding: 16px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .stat { text-align: center; }
+        .stat-value {
+            font-size: 24px;
+            font-weight: 400;
+            color: #fff;
+            font-variant-numeric: tabular-nums;
+        }
+        .stat-label {
+            font-size: 10px;
+            color: rgba(255,255,255,0.4);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 4px;
+        }
+
+        .detection-bar {
+            height: 3px;
+            background: rgba(255,255,255,0.1);
+            margin: 0 16px 12px 16px;
+            overflow: hidden;
+        }
+        .detection-bar-fill {
+            height: 100%;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .events-header {
+            padding: 12px 16px;
+            font-size: 10px;
+            font-weight: 500;
+            color: rgba(255,255,255,0.4);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+
+        .events-list { max-height: 260px; overflow-y: auto; }
+        .events-list::-webkit-scrollbar { width: 4px; }
+        .events-list::-webkit-scrollbar-track { background: transparent; }
+        .events-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); }
+
+        .event-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.15s;
+        }
+        .event-item:hover { background: rgba(255,255,255,0.05); }
+        .event-item.active { background: rgba(255,100,50,0.15); }
+        .event-item.loading { opacity: 0.5; pointer-events: none; }
+        .event-date {
+            font-weight: 500;
+            font-size: 13px;
+            color: rgba(255,255,255,0.9);
+            font-variant-numeric: tabular-nums;
+        }
+        .event-meta {
+            font-size: 11px;
+            color: rgba(255,255,255,0.35);
+            margin-top: 3px;
+            font-variant-numeric: tabular-nums;
+        }
+        .event-view {
+            font-size: 11px;
+            color: rgba(255,150,100,0.8);
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        .event-item:hover .event-view { opacity: 1; }
+        .event-item.loading .event-view { opacity: 1; }
+
+        .imagery-controls {
+            padding: 14px 16px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            display: none;
+        }
+        .imagery-controls.visible { display: block; }
+        .imagery-controls label {
+            display: block;
+            font-size: 10px;
+            color: rgba(255,255,255,0.5);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 8px;
+        }
+        .imagery-controls input[type="range"] {
+            width: 100%;
+            height: 3px;
+            -webkit-appearance: none;
+            background: rgba(255,255,255,0.2);
+            outline: none;
+        }
+        .imagery-controls input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px; height: 12px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .btn-close-imagery {
+            width: 100%;
+            padding: 10px;
+            margin-top: 12px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.6);
+            cursor: pointer;
+            font-size: 11px;
+            font-family: inherit;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            transition: all 0.15s;
+        }
+        .btn-close-imagery:hover {
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+        }
+        .btn-view-imagery {
+            padding: 8px 16px;
+            background: rgba(255,150,100,0.2);
+            border: 1px solid rgba(255,150,100,0.4);
+            color: rgba(255,200,150,0.9);
+            cursor: pointer;
+            font-size: 10px;
+            font-family: inherit;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            transition: all 0.15s;
+        }
+        .btn-view-imagery:hover {
+            background: rgba(255,150,100,0.3);
+            color: #fff;
+        }
+        .btn-view-imagery:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <div class="panel title">
+        <h1>BURNOFF: SENTINEL-2 FLARE DETECTIONS</h1>
+        <p>SWIR thermal anomaly detection at LNG facilities</p>
+    </div>
+
+    <div class="panel legend">
+        <h4>B12 Intensity</h4>
+        <div class="legend-item"><div class="legend-circle" style="background: #f7f7f7; color: #f7f7f7;"></div>High</div>
+        <div class="legend-item"><div class="legend-circle" style="background: #fc8d59; color: #fc8d59;"></div>Medium</div>
+        <div class="legend-item"><div class="legend-circle" style="background: #b30000; color: #b30000;"></div>Low</div>
+    </div>
+
+    <div class="panel info-panel" id="info">
+        <div class="info-header">
+            <h3 id="info-name">-</h3>
+            <span class="close" onclick="closeInfo()">&times;</span>
+        </div>
+        <div class="info-stats">
+            <div class="stat">
+                <div class="stat-value" id="info-date">-</div>
+                <div class="stat-label">Date</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="info-b12">-</div>
+                <div class="stat-label">Max B12</div>
+            </div>
+        </div>
+        <div class="info-stats" style="border-bottom: none; padding-top: 0;">
+            <div class="stat">
+                <div class="stat-value" id="info-pixels">-</div>
+                <div class="stat-label">Pixels</div>
+            </div>
+            <div class="stat">
+                <button class="btn-view-imagery" id="btn-imagery" onclick="loadCurrentImagery()">View SWIR</button>
+            </div>
+        </div>
+        <div class="imagery-controls" id="imagery-controls">
+            <label>
+                Opacity
+                <input type="range" id="opacity-slider" min="0" max="100" value="85" oninput="setOpacity(this.value)">
+            </label>
+            <button class="btn-close-imagery" onclick="closeImagery()">Close imagery</button>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
+    <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+    <script>
+        // Register PMTiles protocol
+        const protocol = new pmtiles.Protocol();
+        maplibregl.addProtocol('pmtiles', protocol.tile);
+
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: {
+                version: 8,
+                sky: { 'sky-color': '#000000', 'horizon-fog-blend': 0 },
+                sources: {
+                    'satellite': {
+                        type: 'raster',
+                        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+                        tileSize: 256,
+                        attribution: '&copy; Esri'
+                    }
+                },
+                layers: [{
+                    id: 'basemap',
+                    type: 'raster',
+                    source: 'satellite',
+                    paint: { 'raster-saturation': -1 }
+                }]
+            },
+            center: [100, 10],
+            zoom: 3
+        });
+
+        map.on('style.load', () => {
+            map.setProjection({ type: 'globe' });
+        });
+
+        let currentFeature = null;
+
+        // Format date as "6 Sep" to avoid wrapping
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const d = new Date(dateStr);
+            return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' });
+        }
+
+        // Magma-like colormap for SWIR visualization
+        function magmaColor(t) {
+            const colors = [
+                [0, 0, 4], [40, 11, 84], [101, 21, 110],
+                [159, 42, 99], [212, 72, 66], [245, 125, 21],
+                [250, 193, 39], [252, 255, 164]
+            ];
+            const idx = Math.min(Math.floor(t * (colors.length - 1)), colors.length - 2);
+            const f = t * (colors.length - 1) - idx;
+            const c1 = colors[idx], c2 = colors[idx + 1];
+            return [
+                Math.round(c1[0] + f * (c2[0] - c1[0])),
+                Math.round(c1[1] + f * (c2[1] - c1[1])),
+                Math.round(c1[2] + f * (c2[2] - c1[2]))
+            ];
+        }
+
+        map.on('load', () => {
+            // Add PMTiles source
+            map.addSource('detections', {
+                type: 'vector',
+                url: 'pmtiles://data/detections.pmtiles'
+            });
+
+            // Detection circles layer
+            map.addLayer({
+                id: 'detection-circles',
+                type: 'circle',
+                source: 'detections',
+                'source-layer': 'detections',
+                paint: {
+                    'circle-radius': ['interpolate', ['exponential', 1.5], ['zoom'],
+                        2, ['+', 5, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
+                        14, ['+', 8, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
+                    ],
+                    'circle-color': ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
+                        0.3, '#b30000',
+                        0.6, '#fc8d59',
+                        1.0, '#f7f7f7'
+                    ],
+                    'circle-opacity': 0.9,
+                    'circle-stroke-color': '#fff',
+                    'circle-stroke-width': 1,
+                    'circle-stroke-opacity': 0.5
+                }
+            });
+
+            map.on('mouseenter', 'detection-circles', () => map.getCanvas().style.cursor = 'pointer');
+            map.on('mouseleave', 'detection-circles', () => map.getCanvas().style.cursor = '');
+
+            map.on('click', 'detection-circles', (e) => {
+                const feature = e.features[0];
+                showInfo(feature);
+                map.flyTo({ center: feature.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
+            });
+
+            map.on('click', (e) => {
+                const features = map.queryRenderedFeatures(e.point, { layers: ['detection-circles'] });
+                if (features.length === 0) closeInfo();
+            });
+        });
+
+        function showInfo(feature) {
+            currentFeature = feature;
+            const props = feature.properties;
+            const bounds = typeof props.bounds === 'string' ? JSON.parse(props.bounds) : props.bounds;
+
+            document.getElementById('info').classList.add('visible');
+            document.getElementById('info-name').textContent = props.name || 'Unknown facility';
+            document.getElementById('info-date').textContent = formatDate(props.date);
+            document.getElementById('info-b12').textContent = props.max_b12 ? props.max_b12.toFixed(3) : '-';
+            document.getElementById('info-pixels').textContent = props.pixels || '-';
+
+            // Enable/disable imagery button
+            const btn = document.getElementById('btn-imagery');
+            btn.disabled = !props.cog_b12 || !bounds;
+        }
+
+        function closeInfo() {
+            document.getElementById('info').classList.remove('visible');
+            closeImagery();
+            currentFeature = null;
+        }
+
+        async function loadCurrentImagery() {
+            if (!currentFeature) return;
+            const props = currentFeature.properties;
+
+            // Parse JSON strings from vector tiles
+            let bounds = typeof props.bounds === 'string' ? JSON.parse(props.bounds) : props.bounds;
+            let utmBounds = typeof props.utm_bounds === 'string' ? JSON.parse(props.utm_bounds) : props.utm_bounds;
+
+            if (!bounds || !props.cog_b12) {
+                console.error('Missing bounds or COG URL');
+                return;
+            }
+
+            const btn = document.getElementById('btn-imagery');
+            btn.textContent = 'Loading...';
+            btn.disabled = true;
+
+            try {
+                const tiff = await GeoTIFF.fromUrl(props.cog_b12, { allowFullFile: false });
+                const image = await tiff.getImage();
+
+                const imgBbox = image.getBoundingBox();  // [minX, minY, maxX, maxY] in UTM
+                const width = image.getWidth();
+                const height = image.getHeight();
+                const [imgMinX, imgMinY, imgMaxX, imgMaxY] = imgBbox;
+                const resX = (imgMaxX - imgMinX) / width;
+                const resY = (imgMaxY - imgMinY) / height;
+
+                let window, windowWidth, windowHeight;
+
+                if (utmBounds && utmBounds[0] != null) {
+                    // Use UTM bounds for precise windowed read
+                    const [minX, minY, maxX, maxY] = utmBounds;
+                    const x0 = Math.max(0, Math.floor((minX - imgMinX) / resX));
+                    const y0 = Math.max(0, Math.floor((imgMaxY - maxY) / resY));  // Y is flipped
+                    const x1 = Math.min(width, Math.ceil((maxX - imgMinX) / resX));
+                    const y1 = Math.min(height, Math.ceil((imgMaxY - minY) / resY));
+
+                    window = [x0, y0, x1, y1];
+                    windowWidth = x1 - x0;
+                    windowHeight = y1 - y0;
+                    console.log('Windowed read:', window, windowWidth, 'x', windowHeight);
+                } else {
+                    // Fallback: read full image at reduced resolution
+                    const scale = Math.pow(2, Math.max(0, Math.floor(Math.log2(Math.max(width, height) / 512))));
+                    windowWidth = Math.ceil(width / scale);
+                    windowHeight = Math.ceil(height / scale);
+                    console.log('Full image at reduced res:', windowWidth, 'x', windowHeight);
+                }
+
+                const rasters = await image.readRasters({
+                    window,
+                    width: Math.min(windowWidth, 256),
+                    height: Math.min(windowHeight, 256)
+                });
+
+                const data = rasters[0];
+                const w = rasters.width;
+                const h = rasters.height;
+
+                console.log('Raster dimensions:', w, 'x', h);
+
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                const imgData = ctx.createImageData(w, h);
+
+                // Find max to set scale ceiling
+                let maxVal = 0;
+                for (let i = 0; i < data.length; i++) {
+                    if (data[i] > maxVal) maxVal = data[i];
+                }
+                console.log('Max B12 value:', maxVal);
+
+                // Threshold-based coloring: dark below threshold, colored above
+                const threshold = 0.2;
+                const ceiling = Math.max(1.0, maxVal);  // scale to max or 1.0, whichever is higher
+
+                for (let i = 0; i < data.length; i++) {
+                    const v = data[i];
+                    // Below threshold = dark purple, above = scale to ceiling
+                    const t = v <= threshold ? 0 : Math.min(1, (v - threshold) / (ceiling - threshold));
+                    const [r, g, b] = magmaColor(t);
+                    imgData.data[i * 4] = r;
+                    imgData.data[i * 4 + 1] = g;
+                    imgData.data[i * 4 + 2] = b;
+                    imgData.data[i * 4 + 3] = v > 0 ? 255 : 0;
+                }
+                ctx.putImageData(imgData, 0, 0);
+
+                if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
+                if (map.getSource('cog-source')) map.removeSource('cog-source');
+
+                map.addSource('cog-source', {
+                    type: 'image',
+                    url: canvas.toDataURL(),
+                    coordinates: [
+                        [bounds[0], bounds[3]],
+                        [bounds[2], bounds[3]],
+                        [bounds[2], bounds[1]],
+                        [bounds[0], bounds[1]]
+                    ]
+                });
+
+                map.addLayer({
+                    id: 'cog-layer',
+                    type: 'raster',
+                    source: 'cog-source',
+                    paint: { 'raster-opacity': 0.85 }
+                }, 'detection-circles');
+
+                // Hide detection circles while viewing imagery
+                map.setLayoutProperty('detection-circles', 'visibility', 'none');
+
+                btn.textContent = 'Viewing';
+                document.getElementById('imagery-controls').classList.add('visible');
+                document.getElementById('opacity-slider').value = 85;
+
+                map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], {
+                    padding: 50,
+                    maxZoom: 15
+                });
+
+            } catch (err) {
+                console.error('Failed to load COG:', err);
+                btn.textContent = 'Error';
+                setTimeout(() => { btn.textContent = 'View SWIR'; btn.disabled = false; }, 2000);
+            }
+        }
+
+        function setOpacity(value) {
+            if (map.getLayer('cog-layer')) {
+                map.setPaintProperty('cog-layer', 'raster-opacity', value / 100);
+            }
+        }
+
+        function closeImagery() {
+            if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
+            if (map.getSource('cog-source')) map.removeSource('cog-source');
+            // Show detection circles again
+            if (map.getLayer('detection-circles')) {
+                map.setLayoutProperty('detection-circles', 'visibility', 'visible');
+            }
+            document.getElementById('imagery-controls').classList.remove('visible');
+            const btn = document.getElementById('btn-imagery');
+            if (btn) {
+                btn.textContent = 'View SWIR';
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
