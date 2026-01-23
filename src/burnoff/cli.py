@@ -118,12 +118,13 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, out
 @click.option("--year", type=int, default=2024, help="Year to analyze (default: 2024)")
 @click.option("--start", help="Start date (YYYY-MM-DD, overrides --year)")
 @click.option("--end", help="End date (YYYY-MM-DD, overrides --year)")
-@click.option("--workers", default=4, help="Parallel terminals (default: 4)")
-@click.option("--image-workers", default=4, help="Parallel images per terminal (default: 4)")
+@click.option("--workers", default=6, help="Parallel terminals (default: 6)")
+@click.option("--image-workers", default=8, help="Parallel images per terminal (default: 8)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
-@click.option("--buffer", default=1000, help="Buffer around point in meters (default: 1000)")
+@click.option("--buffer", default=2000, help="Buffer around point in meters (default: 2000)")
+@click.option("--resume/--no-resume", default=True, help="Skip already-processed locations (default: resume)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, quiet):
+def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, resume, quiet):
     """Process multiple locations from a JSON file.
 
     \b
@@ -135,6 +136,9 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
     \b
     Example:
         burnoff bulk terminals.json -o detections.json --year 2024
+
+    Automatically resumes from previous run if output file exists.
+    Use --no-resume to reprocess all locations.
     """
     # Load input
     with open(input_file) as f:
@@ -149,9 +153,38 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
     else:
         start_date, end_date = year_bounds(year)
 
+    output_path = Path(output)
+
+    # Load existing results for resume
+    existing_results = []
+    processed_keys = set()
+    if resume and output_path.exists():
+        try:
+            existing_results = json.loads(output_path.read_text())
+            for r in existing_results:
+                # Use lat/lon as key (rounded to avoid float issues)
+                key = (round(r["lat"], 5), round(r["lon"], 5))
+                processed_keys.add(key)
+            if not quiet:
+                click.echo(f"Resuming: {len(processed_keys)} locations already processed", err=True)
+        except (json.JSONDecodeError, KeyError):
+            existing_results = []
+
+    # Filter to unprocessed locations
+    to_process = []
+    for loc in locations:
+        key = (round(loc["lat"], 5), round(loc["lon"], 5))
+        if key not in processed_keys:
+            to_process.append(loc)
+
+    if not to_process:
+        if not quiet:
+            click.echo("All locations already processed", err=True)
+        return
+
     if not quiet:
         click.echo(
-            f"Processing {len(locations)} locations for {start_date} to {end_date}",
+            f"Processing {len(to_process)}/{len(locations)} locations for {start_date} to {end_date}",
             err=True,
         )
 
@@ -167,16 +200,15 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
             workers=image_workers,
         )
 
-        output = result.to_dict()
+        out = result.to_dict()
         # Preserve extra fields from input
         for key in ("id", "name", "type"):
             if key in loc:
-                output[key] = loc[key]
-        return output
+                out[key] = loc[key]
+        return out
 
-    results = []
+    results = list(existing_results)  # Start with existing
     completed = 0
-    output_path = Path(output)
 
     def save_results():
         """Save current results to file."""
@@ -184,23 +216,28 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
         output_path.write_text(json.dumps(sorted_results, indent=2))
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(process_location, loc): loc for loc in locations}
+        futures = {executor.submit(process_location, loc): loc for loc in to_process}
 
         for future in as_completed(futures):
             completed += 1
             loc = futures[future]
-            result = future.result()
-            results.append(result)
+            try:
+                result = future.result()
+                results.append(result)
 
-            if not quiet:
-                name = loc.get("name", f"{loc['lat']:.2f},{loc['lon']:.2f}")
-                det = result["detections"]
-                imgs = result["images"]
-                rate = f"{result['detection_rate']:.0%}" if result["detection_rate"] else "N/A"
-                click.echo(f"[{completed}/{len(locations)}] {name}: {det}/{imgs} ({rate})", err=True)
+                if not quiet:
+                    name = loc.get("name", f"{loc['lat']:.2f},{loc['lon']:.2f}")
+                    det = result["detections"]
+                    imgs = result["images"]
+                    rate = f"{result['detection_rate']:.0%}" if result["detection_rate"] else "N/A"
+                    click.echo(f"[{completed}/{len(to_process)}] {name}: {det}/{imgs} ({rate})", err=True)
+            except Exception as e:
+                if not quiet:
+                    name = loc.get("name", f"{loc['lat']:.2f},{loc['lon']:.2f}")
+                    click.echo(f"[{completed}/{len(to_process)}] {name}: ERROR - {e}", err=True)
 
-            # Save incrementally every 10 results
-            if completed % 10 == 0:
+            # Save incrementally every 5 results
+            if completed % 5 == 0:
                 save_results()
 
     save_results()
