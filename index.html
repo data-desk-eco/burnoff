@@ -26,6 +26,7 @@
             top: 16px;
             left: 16px;
             padding: 12px 16px;
+            max-width: 200px;
         }
         .title h1 {
             font-size: 12px;
@@ -273,25 +274,11 @@
             <h3 id="info-name">-</h3>
             <span class="close" onclick="closeInfo()">&times;</span>
         </div>
-        <div class="info-stats">
-            <div class="stat">
-                <div class="stat-value" id="info-date">-</div>
-                <div class="stat-label">Date</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value" id="info-b12">-</div>
-                <div class="stat-label">Max B12</div>
-            </div>
+        <div class="events-header" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <span>Date</span>
+            <span style="text-align: right;">B12</span>
         </div>
-        <div class="info-stats" style="border-bottom: none; padding-top: 0;">
-            <div class="stat">
-                <div class="stat-value" id="info-pixels">-</div>
-                <div class="stat-label">Pixels</div>
-            </div>
-            <div class="stat">
-                <button class="btn-view-imagery" id="btn-imagery" onclick="loadCurrentImagery()">View SWIR</button>
-            </div>
-        </div>
+        <div class="events-list" id="events-list"></div>
         <div class="imagery-controls" id="imagery-controls">
             <label>
                 Opacity
@@ -339,6 +326,14 @@
         });
 
         let currentFeature = null;
+        let detectionsData = [];  // Loaded from detections.json
+        let selectedDetection = null;
+
+        // Load full detection data for event list
+        fetch('data/detections.json')
+            .then(r => r.json())
+            .then(data => { detectionsData = data; })
+            .catch(e => console.warn('Could not load detections.json:', e));
 
         // Format date as "6 Sep" to avoid wrapping
         function formatDate(dateStr) {
@@ -429,18 +424,51 @@
 
         function showInfo(feature) {
             currentFeature = feature;
+            selectedDetection = null;
             const props = feature.properties;
-            const bounds = typeof props.bounds === 'string' ? JSON.parse(props.bounds) : props.bounds;
 
             document.getElementById('info').classList.add('visible');
             document.getElementById('info-name').textContent = props.name || 'Unknown facility';
-            document.getElementById('info-date').textContent = formatDate(props.date);
-            document.getElementById('info-b12').textContent = props.max_b12 ? props.max_b12.toFixed(3) : '-';
-            document.getElementById('info-pixels').textContent = props.pixels || '-';
 
-            // Enable/disable imagery button
-            const btn = document.getElementById('btn-imagery');
-            btn.disabled = !props.cog_b12 || !bounds;
+            // Find all detections for this facility
+            const facilityId = props.facility_id;
+            const facility = detectionsData.find(f => f.id === facilityId);
+            const detections = facility?.detection_dates || [];
+
+            // Populate events list
+            const list = document.getElementById('events-list');
+            list.innerHTML = '';
+
+            // Sort by date descending
+            const sorted = [...detections].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            sorted.forEach((det, idx) => {
+                const item = document.createElement('div');
+                item.className = 'event-item';
+                item.innerHTML = `
+                    <span class="event-date">${formatDate(det.date)}</span>
+                    <span class="event-meta">${det.max_b12?.toFixed(3) || '-'}</span>
+                `;
+                item.onclick = () => selectDetection(det, item);
+                list.appendChild(item);
+
+                // Auto-select first item
+                if (idx === 0) selectDetection(det, item);
+            });
+
+            if (detections.length === 0) {
+                list.innerHTML = '<div style="padding: 16px; color: rgba(255,255,255,0.4); text-align: center;">No detections</div>';
+            }
+        }
+
+        function selectDetection(det, element) {
+            // Update selection UI
+            document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
+            element.classList.add('active');
+            selectedDetection = det;
+
+            // Auto-load imagery
+            loadImageryForDetection(det);
         }
 
         function closeInfo() {
@@ -449,25 +477,18 @@
             currentFeature = null;
         }
 
-        async function loadCurrentImagery() {
-            if (!currentFeature) return;
-            const props = currentFeature.properties;
+        async function loadImageryForDetection(det) {
+            if (!det || !det.cog?.b12) return;
 
-            // Parse JSON strings from vector tiles
-            let utmBounds = typeof props.utm_bounds === 'string' ? JSON.parse(props.utm_bounds) : props.utm_bounds;
-            const epsg = props.epsg;
+            const utmBounds = det.utm_bounds;
+            const epsg = det.epsg;
 
-            if (!props.cog_b12) {
-                console.error('Missing COG URL');
-                return;
-            }
-
-            const btn = document.getElementById('btn-imagery');
-            btn.textContent = 'Loading...';
-            btn.disabled = true;
+            // Mark row as loading
+            document.querySelectorAll('.event-item').forEach(el => el.classList.remove('loading'));
+            document.querySelector('.event-item.active')?.classList.add('loading');
 
             try {
-                const tiff = await GeoTIFF.fromUrl(props.cog_b12, { allowFullFile: false });
+                const tiff = await GeoTIFF.fromUrl(det.cog.b12, { allowFullFile: false });
                 const image = await tiff.getImage();
 
                 const imgBbox = image.getBoundingBox();  // [minX, minY, maxX, maxY] in UTM
@@ -499,14 +520,12 @@
                         imgMinX + x1 * resX,           // maxX
                         imgMaxY - y0 * resY            // maxY
                     ];
-                    console.log('Windowed read:', window, windowWidth, 'x', windowHeight);
                 } else {
                     // Fallback: read full image at reduced resolution
                     const scale = Math.pow(2, Math.max(0, Math.floor(Math.log2(Math.max(width, height) / 512))));
                     windowWidth = Math.ceil(width / scale);
                     windowHeight = Math.ceil(height / scale);
                     actualUtmBounds = [imgMinX, imgMinY, imgMaxX, imgMaxY];
-                    console.log('Full image at reduced res:', windowWidth, 'x', windowHeight);
                 }
 
                 // Convert actual UTM bounds to WGS84 using proj4
@@ -514,7 +533,6 @@
                 if (!bounds) {
                     throw new Error('Could not convert UTM bounds to WGS84');
                 }
-                console.log('Actual bounds (WGS84):', bounds);
 
                 const rasters = await image.readRasters({
                     window,
@@ -525,8 +543,6 @@
                 const data = rasters[0];
                 const w = rasters.width;
                 const h = rasters.height;
-
-                console.log('Raster dimensions:', w, 'x', h);
 
                 const canvas = document.createElement('canvas');
                 canvas.width = w;
@@ -539,7 +555,6 @@
                 for (let i = 0; i < data.length; i++) {
                     if (data[i] > maxVal) maxVal = data[i];
                 }
-                console.log('Max B12 value:', maxVal);
 
                 // Threshold-based coloring: dark below threshold, colored above
                 const threshold = 0.2;
@@ -581,7 +596,7 @@
                 // Hide detection circles while viewing imagery
                 map.setLayoutProperty('detection-circles', 'visibility', 'none');
 
-                btn.textContent = 'Viewing';
+                document.querySelector('.event-item.active')?.classList.remove('loading');
                 document.getElementById('imagery-controls').classList.add('visible');
                 document.getElementById('opacity-slider').value = 85;
 
@@ -592,8 +607,7 @@
 
             } catch (err) {
                 console.error('Failed to load COG:', err);
-                btn.textContent = 'Error';
-                setTimeout(() => { btn.textContent = 'View SWIR'; btn.disabled = false; }, 2000);
+                document.querySelector('.event-item.active')?.classList.remove('loading');
             }
         }
 
@@ -611,11 +625,6 @@
                 map.setLayoutProperty('detection-circles', 'visibility', 'visible');
             }
             document.getElementById('imagery-controls').classList.remove('visible');
-            const btn = document.getElementById('btn-imagery');
-            if (btn) {
-                btn.textContent = 'View SWIR';
-                btn.disabled = false;
-            }
         }
     </script>
 </body>

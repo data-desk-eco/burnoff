@@ -228,7 +228,7 @@ def process_image(
         # Find pixels that are both above threshold AND stand out from background
         mask = (b12 > b12_threshold) & (b11 > b11_threshold) & (b12 > background_median * min_contrast)
 
-        pixel_count = mask.sum()
+        pixel_count = int(mask.sum())
         if pixel_count > 0 and pixel_count <= MAX_FLARE_PIXELS:
             # Find location of max B12 pixel
             max_idx = np.unravel_index(b12.argmax(), b12.shape)
@@ -252,7 +252,7 @@ def process_image(
                 cog_urls={"b11": b11_url, "b12": b12_url, "visual": visual_url},
                 bounds=wgs_bounds,
                 utm_bounds=utm_bounds,
-                epsg=epsg,
+                epsg=int(epsg),
             )
     except Exception:
         pass
