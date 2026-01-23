@@ -304,6 +304,7 @@
     <script src="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js"></script>
     <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
     <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+    <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
     <script>
         // Register PMTiles protocol
         const protocol = new pmtiles.Protocol();
@@ -361,6 +362,24 @@
                 Math.round(c1[1] + f * (c2[1] - c1[1])),
                 Math.round(c1[2] + f * (c2[2] - c1[2]))
             ];
+        }
+
+        // Convert UTM bounds to WGS84 using proj4
+        function utmToWgs84(utmBounds, epsg) {
+            if (!epsg) {
+                console.warn('No EPSG code, using stored bounds');
+                return null;
+            }
+            // Define UTM projection from EPSG code
+            const zone = epsg % 100;
+            const isNorth = epsg < 32700;
+            const utmProj = `+proj=utm +zone=${zone} ${isNorth ? '' : '+south '}+datum=WGS84 +units=m +no_defs`;
+
+            const [minX, minY, maxX, maxY] = utmBounds;
+            const sw = proj4(utmProj, 'EPSG:4326', [minX, minY]);
+            const ne = proj4(utmProj, 'EPSG:4326', [maxX, maxY]);
+
+            return [sw[0], sw[1], ne[0], ne[1]];  // [minLon, minLat, maxLon, maxLat]
         }
 
         map.on('load', () => {
@@ -435,11 +454,11 @@
             const props = currentFeature.properties;
 
             // Parse JSON strings from vector tiles
-            let bounds = typeof props.bounds === 'string' ? JSON.parse(props.bounds) : props.bounds;
             let utmBounds = typeof props.utm_bounds === 'string' ? JSON.parse(props.utm_bounds) : props.utm_bounds;
+            const epsg = props.epsg;
 
-            if (!bounds || !props.cog_b12) {
-                console.error('Missing bounds or COG URL');
+            if (!props.cog_b12) {
+                console.error('Missing COG URL');
                 return;
             }
 
@@ -459,6 +478,7 @@
                 const resY = (imgMaxY - imgMinY) / height;
 
                 let window, windowWidth, windowHeight;
+                let actualUtmBounds;  // Actual bounds of pixels we read
 
                 if (utmBounds && utmBounds[0] != null) {
                     // Use UTM bounds for precise windowed read
@@ -471,14 +491,30 @@
                     window = [x0, y0, x1, y1];
                     windowWidth = x1 - x0;
                     windowHeight = y1 - y0;
+
+                    // Compute actual UTM bounds from pixel window
+                    actualUtmBounds = [
+                        imgMinX + x0 * resX,           // minX
+                        imgMaxY - y1 * resY,           // minY (Y is flipped)
+                        imgMinX + x1 * resX,           // maxX
+                        imgMaxY - y0 * resY            // maxY
+                    ];
                     console.log('Windowed read:', window, windowWidth, 'x', windowHeight);
                 } else {
                     // Fallback: read full image at reduced resolution
                     const scale = Math.pow(2, Math.max(0, Math.floor(Math.log2(Math.max(width, height) / 512))));
                     windowWidth = Math.ceil(width / scale);
                     windowHeight = Math.ceil(height / scale);
+                    actualUtmBounds = [imgMinX, imgMinY, imgMaxX, imgMaxY];
                     console.log('Full image at reduced res:', windowWidth, 'x', windowHeight);
                 }
+
+                // Convert actual UTM bounds to WGS84 using proj4
+                const bounds = utmToWgs84(actualUtmBounds, epsg);
+                if (!bounds) {
+                    throw new Error('Could not convert UTM bounds to WGS84');
+                }
+                console.log('Actual bounds (WGS84):', bounds);
 
                 const rasters = await image.readRasters({
                     window,
