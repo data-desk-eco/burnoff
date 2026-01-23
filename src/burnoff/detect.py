@@ -142,7 +142,7 @@ def process_image(
     item: dict,
     lat: float,
     lon: float,
-    buffer_m: int = 2000,
+    buffer_m: int = 3000,
     b11_threshold: float = B11_THRESHOLD,
     b12_threshold: float = B12_THRESHOLD,
     min_contrast: float = MIN_CONTRAST_RATIO,
@@ -266,7 +266,7 @@ def detect(
     start_date: date,
     end_date: date,
     max_cloud: int = 30,
-    buffer_m: int = 2000,
+    buffer_m: int = 3000,
     workers: int = 8,
     b11_threshold: float = B11_THRESHOLD,
     b12_threshold: float = B12_THRESHOLD,
@@ -283,7 +283,7 @@ def detect(
         start_date: Start of search period
         end_date: End of search period
         max_cloud: Maximum scene cloud cover percentage (default 30)
-        buffer_m: Buffer around point in meters (default 2000)
+        buffer_m: Buffer around point in meters (default 3000)
         workers: Parallel workers for image processing (default 8)
         b11_threshold: SWIR1 threshold in reflectance (default 0.3)
         b12_threshold: SWIR2 threshold in reflectance (default 0.5)

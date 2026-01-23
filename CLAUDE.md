@@ -27,7 +27,7 @@ make stats        # Detection statistics
 ## Detection Logic
 1. Search Sentinel-2 L2A via Element84 STAC
 2. Filter by scene cloud cover (<30%)
-3. Check local cloud cover via SCL band (<30% in 2km buffer)
+3. Check local cloud cover via SCL band (<30% in 3km buffer)
 4. Require B12 > 0.5 AND B11 > 0.3 (reflectance)
 5. Require flare 3x brighter than background median
 

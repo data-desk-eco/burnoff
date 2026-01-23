@@ -121,7 +121,7 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, out
 @click.option("--workers", default=6, help="Parallel terminals (default: 6)")
 @click.option("--image-workers", default=8, help="Parallel images per terminal (default: 8)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
-@click.option("--buffer", default=2000, help="Buffer around point in meters (default: 2000)")
+@click.option("--buffer", default=3000, help="Buffer around point in meters (default: 3000)")
 @click.option("--resume/--no-resume", default=True, help="Skip already-processed locations (default: resume)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
 def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, resume, quiet):
