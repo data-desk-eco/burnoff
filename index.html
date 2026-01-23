@@ -343,8 +343,11 @@
                         minLat = Math.min(minLat, f.lat);
                         maxLat = Math.max(maxLat, f.lat);
                     });
+                    // Ensure minimum 2 degree span for single points
+                    if (maxLon - minLon < 2) { minLon -= 1; maxLon += 1; }
+                    if (maxLat - minLat < 2) { minLat -= 1; maxLat += 1; }
                     // Fit map to data bounds
-                    map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 50, maxZoom: 10 });
+                    map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 50 });
                 }
             })
             .catch(e => console.warn('Could not load detections.json:', e));
@@ -361,7 +364,7 @@
             const colors = [
                 [0, 0, 4], [40, 11, 84], [101, 21, 110],
                 [159, 42, 99], [212, 72, 66], [245, 125, 21],
-                [250, 193, 39], [252, 255, 164]
+                [250, 193, 39], [255, 255, 0]
             ];
             const idx = Math.min(Math.floor(t * (colors.length - 1)), colors.length - 2);
             const f = t * (colors.length - 1) - idx;
@@ -427,7 +430,7 @@
             map.on('click', 'detection-circles', (e) => {
                 const feature = e.features[0];
                 showInfo(feature);
-                map.flyTo({ center: feature.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
+                map.flyTo({ center: feature.geometry.coordinates, zoom: Math.max(map.getZoom(), 8) });
             });
 
             map.on('click', (e) => {
@@ -440,6 +443,7 @@
             currentFeature = feature;
             selectedDetection = null;
             const props = feature.properties;
+            const clickedCoords = feature.geometry.coordinates;
 
             document.getElementById('info').classList.add('visible');
             document.getElementById('info-name').textContent = props.name || 'Unknown facility';
@@ -447,7 +451,14 @@
             // Find all detections for this facility
             const facilityId = props.facility_id;
             const facility = detectionsData.find(f => f.id === facilityId);
-            const detections = facility?.detection_dates || [];
+            const allDetections = facility?.detection_dates || [];
+
+            // Filter to only detections at clicked flare location (within ~100m)
+            const tolerance = 0.001;  // ~100m in degrees
+            const detections = allDetections.filter(det =>
+                Math.abs(det.flare_lon - clickedCoords[0]) < tolerance &&
+                Math.abs(det.flare_lat - clickedCoords[1]) < tolerance
+            );
 
             // Populate events list
             const list = document.getElementById('events-list');
@@ -456,6 +467,7 @@
             // Sort by date descending
             const sorted = [...detections].sort((a, b) => new Date(b.date) - new Date(a.date));
 
+            let firstItem = null;
             sorted.forEach((det, idx) => {
                 const item = document.createElement('div');
                 item.className = 'event-item';
@@ -466,12 +478,14 @@
                 item.onclick = () => selectDetection(det, item);
                 list.appendChild(item);
 
-                // Auto-select first item
-                if (idx === 0) selectDetection(det, item);
+                if (idx === 0) firstItem = { det, item };
             });
 
+            // Auto-select first detection
+            if (firstItem) selectDetection(firstItem.det, firstItem.item);
+
             if (detections.length === 0) {
-                list.innerHTML = '<div style="padding: 16px; color: rgba(255,255,255,0.4); text-align: center;">No detections</div>';
+                list.innerHTML = '<div style="padding: 16px; color: rgba(255,255,255,0.4); text-align: center;">No detections at this location</div>';
             }
         }
 
@@ -494,8 +508,18 @@
         async function loadImageryForDetection(det) {
             if (!det || !det.cog?.b12) return;
 
-            const utmBounds = det.utm_bounds;
             const epsg = det.epsg;
+
+            // Recenter bounds on flare location (not terminal)
+            const buffer = 1000;  // 1km buffer for display
+            const utmProj = `+proj=utm +zone=${epsg - 32600} +datum=WGS84 +units=m +no_defs`;
+            const [flareUtmX, flareUtmY] = proj4('EPSG:4326', utmProj, [det.flare_lon, det.flare_lat]);
+            const utmBounds = [
+                flareUtmX - buffer,
+                flareUtmY - buffer,
+                flareUtmX + buffer,
+                flareUtmY + buffer
+            ];
 
             // Mark row as loading
             document.querySelectorAll('.event-item').forEach(el => el.classList.remove('loading'));
