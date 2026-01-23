@@ -21,7 +21,7 @@ $(PMTILES): $(GEOJSON)
 		--no-tile-size-limit \
 		--minimum-zoom=0 \
 		--maximum-zoom=14 \
-		--cluster-distance=50 \
+		--cluster-distance=20 \
 		--accumulate-attribute=max_b12:max \
 		--accumulate-attribute=pixels:sum \
 		$<
@@ -70,7 +70,7 @@ refresh:
 	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map.sql > $(GEOJSON)
 	tippecanoe -o $(PMTILES) --force --layer=detections \
 		--no-feature-limit --no-tile-size-limit \
-		-Z0 -z14 --cluster-distance=50 \
+		-Z0 -z14 --cluster-distance=20 \
 		--accumulate-attribute=max_b12:max \
 		--accumulate-attribute=pixels:sum \
 		$(GEOJSON)
