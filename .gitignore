@@ -1,0 +1,10 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Data (generated)
+data/
+
+# OS
+.DS_Store

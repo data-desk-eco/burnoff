@@ -26,7 +26,7 @@ SELECT
 FROM read_json('data/detections.json');
 
 -- Load individual detection events with COG metadata
--- Use union_by_name to handle schema differences (old data lacks some fields)
+-- json_extract returns NULL for missing keys (backwards compatible)
 INSERT OR REPLACE INTO detection_events
 SELECT
     CAST(d.lat AS DOUBLE) as lat,
@@ -34,8 +34,8 @@ SELECT
     CAST(e.date AS DATE) as date,
     CAST(e.max_b12 AS DOUBLE) as max_b12,
     CAST(e.pixels AS INTEGER) as pixels,
-    CAST(e.flare_lon AS DOUBLE) as flare_lon,
-    CAST(e.flare_lat AS DOUBLE) as flare_lat,
+    json_extract(e, '$.flare_lon')::DOUBLE as flare_lon,
+    json_extract(e, '$.flare_lat')::DOUBLE as flare_lat,
     e.cog.b11 as cog_b11,
     e.cog.b12 as cog_b12,
     e.cog.visual as cog_visual,
@@ -43,11 +43,11 @@ SELECT
     e.bounds[2] as bounds_miny,
     e.bounds[3] as bounds_maxx,
     e.bounds[4] as bounds_maxy,
-    e.utm_bounds[1] as utm_minx,
-    e.utm_bounds[2] as utm_miny,
-    e.utm_bounds[3] as utm_maxx,
-    e.utm_bounds[4] as utm_maxy,
-    CAST(e.epsg AS INTEGER) as epsg
+    json_extract(e, '$.utm_bounds[0]')::DOUBLE as utm_minx,
+    json_extract(e, '$.utm_bounds[1]')::DOUBLE as utm_miny,
+    json_extract(e, '$.utm_bounds[2]')::DOUBLE as utm_maxx,
+    json_extract(e, '$.utm_bounds[3]')::DOUBLE as utm_maxy,
+    json_extract(e, '$.epsg')::INTEGER as epsg
 FROM read_json('data/detections.json', union_by_name=true) d,
      unnest(d.detection_dates) as t(e)
 WHERE d.detection_dates IS NOT NULL;
