@@ -48,7 +48,7 @@ def main():
 @click.option("--year", type=int, help="Year to analyze (shorthand for full year)")
 @click.option("--start", help="Start date (YYYY-MM-DD)")
 @click.option("--end", help="End date (YYYY-MM-DD)")
-@click.option("--buffer", default=1000, help="Buffer around point in meters (default: 1000)")
+@click.option("--buffer", default=3000, help="Buffer around point in meters (default: 3000)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
 @click.option("--workers", default=8, help="Parallel workers (default: 8)")
 @click.option("--b11", default=0.3, help="B11 (SWIR1) threshold (default: 0.3)")
