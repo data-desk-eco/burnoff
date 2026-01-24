@@ -11,6 +11,7 @@ import numpy as np
 import rasterio
 from rasterio.windows import from_bounds
 from pyproj import Transformer
+from scipy import ndimage
 
 # GDAL/rasterio environment for COG access
 os.environ.setdefault("GDAL_HTTP_UNSAFESSL", "YES")
@@ -218,7 +219,7 @@ def process_image(
     min_contrast: float = MIN_CONTRAST_RATIO,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
     max_pixels: int = 128,
-) -> Detection | None:
+) -> list[Detection]:
     """Process a single Sentinel-2 image and detect thermal anomalies.
 
     Detection requires:
@@ -226,6 +227,8 @@ def process_image(
     2. B12 and B11 above absolute thresholds
     3. Peak B12 above minimum intensity (absolute filter for real flares)
     4. B12 significantly brighter than local background (contrast ratio)
+
+    Returns a list of detections (one per distinct flare cluster in the image).
     """
     try:
         b11_url = item["assets"]["swir16"]["href"]
@@ -243,7 +246,7 @@ def process_image(
         b12_scale = b12_band.get("scale", 0.0001)
         b12_offset = b12_band.get("offset", -0.1)
     except (KeyError, IndexError):
-        return None
+        return []
 
     # Transform coordinates to image CRS
     transformer_to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
@@ -267,7 +270,7 @@ def process_image(
                 cloud_mask = np.isin(scl, [3, 8, 9, 10])
                 cloud_fraction = cloud_mask.sum() / cloud_mask.size
                 if cloud_fraction > max_local_cloud:
-                    return None  # Too cloudy locally
+                    return []  # Too cloudy locally
 
         with rasterio.open(b11_url) as src:
             window = from_bounds(*utm_bounds, src.transform)
@@ -284,26 +287,37 @@ def process_image(
         background_mask = b12 < b12_threshold
         if background_mask.sum() < 10:
             # Not enough background pixels to compare
-            return None
+            return []
         background_median = np.median(b12[background_mask])
-
-        # Detection requires:
-        # 1. Both bands above absolute thresholds
-        # 2. Peak B12 above minimum intensity (catches real flares, not warehouses/clouds)
-        # 3. B12 significantly brighter than background (contrast check)
-        max_b12 = b12.max()
-        contrast_ratio = max_b12 / max(background_median, 0.01)  # Avoid division by zero
-
-        if max_b12 < b12_threshold or max_b12 < min_peak_b12 or contrast_ratio < min_contrast:
-            return None
 
         # Find pixels that are both above threshold AND stand out from background
         mask = (b12 > b12_threshold) & (b11 > b11_threshold) & (b12 > background_median * min_contrast)
 
-        pixel_count = int(mask.sum())
-        if pixel_count > 0 and pixel_count <= MAX_FLARE_PIXELS:
-            # Find location of max B12 pixel
-            max_idx = np.unravel_index(b12.argmax(), b12.shape)
+        if not mask.any():
+            return []
+
+        # Find connected components (separate flare clusters)
+        labeled, num_features = ndimage.label(mask)
+
+        detections = []
+        for label_id in range(1, num_features + 1):
+            cluster_mask = labeled == label_id
+            pixel_count = int(cluster_mask.sum())
+
+            # Skip clusters that are too large (not point sources)
+            if pixel_count > MAX_FLARE_PIXELS:
+                continue
+
+            # Get max B12 within this cluster
+            cluster_b12 = np.where(cluster_mask, b12, 0)
+            cluster_max_b12 = float(cluster_b12.max())
+
+            # Check if this cluster meets the intensity threshold
+            if cluster_max_b12 < min_peak_b12:
+                continue
+
+            # Find location of max B12 pixel in this cluster
+            max_idx = np.unravel_index(cluster_b12.argmax(), cluster_b12.shape)
             row, col = max_idx
 
             # Convert pixel coords back to UTM
@@ -315,9 +329,9 @@ def process_image(
             # Convert to WGS84
             flare_lon, flare_lat = transformer_to_wgs.transform(flare_utm_x, flare_utm_y)
 
-            return Detection(
+            detections.append(Detection(
                 date=img_date,
-                max_b12=float(b12[mask].max()),
+                max_b12=cluster_max_b12,
                 pixel_count=pixel_count,
                 flare_lon=flare_lon,
                 flare_lat=flare_lat,
@@ -325,11 +339,13 @@ def process_image(
                 bounds=wgs_bounds,
                 utm_bounds=utm_bounds,
                 epsg=int(epsg),
-            )
+            ))
+
+        return detections
     except Exception:
         pass
 
-    return None
+    return []
 
 
 def detect(
@@ -377,6 +393,7 @@ def detect(
         )
 
     detections = []
+    images_with_detection = 0
     completed = 0
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -393,11 +410,12 @@ def detect(
             if progress_callback:
                 progress_callback(completed, len(items))
 
-            result = future.result()
-            if result:
-                detections.append(result)
+            results = future.result()
+            if results:
+                images_with_detection += 1
+                detections.extend(results)
 
-    # Cluster nearby flare locations
+    # Cluster nearby flare locations across all images
     detections = cluster_detections(detections)
     detections.sort(key=lambda d: d.date)
 
@@ -407,6 +425,6 @@ def detect(
         start_date=start_date,
         end_date=end_date,
         images_searched=len(items),
-        images_with_detection=len(detections),
+        images_with_detection=images_with_detection,
         detections=detections,
     )
