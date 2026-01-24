@@ -304,6 +304,70 @@
             margin-top: 16px;
             letter-spacing: 0.05em;
         }
+
+        /* Mobile layout */
+        @media (max-width: 768px) {
+            .title {
+                top: 8px;
+                left: 8px;
+                padding: 8px 12px;
+                max-width: 180px;
+            }
+            .title h1 { font-size: 10px; }
+            .title p { font-size: 9px; margin-top: 3px; }
+
+            .legend {
+                bottom: auto;
+                top: 8px;
+                right: 8px;
+                left: auto;
+                padding: 8px 10px;
+            }
+            .legend h4 { font-size: 9px; margin-bottom: 6px; }
+            .legend-item { font-size: 10px; margin: 4px 0; }
+            .legend-circle { width: 8px; height: 8px; margin-right: 6px; }
+
+            .info-panel {
+                top: auto;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                width: 100%;
+                max-height: 45vh;
+                border-left: none;
+                border-right: none;
+                border-bottom: none;
+            }
+
+            .info-header {
+                padding: 12px 16px;
+            }
+            .info-header h3 {
+                font-size: 12px;
+            }
+
+            .events-header {
+                padding: 8px 16px;
+            }
+
+            .events-list {
+                max-height: 25vh;
+            }
+
+            .event-item {
+                padding: 10px 16px;
+            }
+
+            .imagery-controls {
+                padding: 12px 16px;
+            }
+
+            .modal-content {
+                margin: 16px;
+                padding: 20px;
+                max-width: calc(100vw - 32px);
+            }
+        }
     </style>
 </head>
 <body>
@@ -383,7 +447,9 @@
                 }]
             },
             center: [100, 10],
-            zoom: 3
+            zoom: 2,
+            minZoom: 1.5,
+            maxZoom: 18
         });
 
         map.on('style.load', () => {
@@ -450,7 +516,8 @@
                 'source-layer': 'detections',
                 paint: {
                     'circle-radius': ['interpolate', ['exponential', 1.5], ['zoom'],
-                        2, ['+', 5, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
+                        0, ['+', 3, ['*', ['coalesce', ['get', 'max_b12'], 0], 3]],
+                        6, ['+', 5, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
                         14, ['+', 8, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
                     ],
                     'circle-color': ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
@@ -675,8 +742,10 @@
                     paint: { 'raster-opacity': 0.85, 'raster-resampling': 'nearest' }
                 }, 'detection-circles');
 
-                // Hide detection circles while viewing imagery
-                map.setLayoutProperty('detection-circles', 'visibility', 'none');
+                // Make detection circles transparent but keep border visible
+                map.setPaintProperty('detection-circles', 'circle-opacity', 0);
+                map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 1);
+                map.setPaintProperty('detection-circles', 'circle-stroke-width', 2);
 
                 document.querySelector('.event-item.active')?.classList.remove('loading');
                 document.getElementById('imagery-controls').classList.add('visible');
@@ -697,9 +766,11 @@
         function closeImagery() {
             if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
             if (map.getSource('cog-source')) map.removeSource('cog-source');
-            // Show detection circles again
+            // Restore detection circle opacity
             if (map.getLayer('detection-circles')) {
-                map.setLayoutProperty('detection-circles', 'visibility', 'visible');
+                map.setPaintProperty('detection-circles', 'circle-opacity', 0.9);
+                map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 0.5);
+                map.setPaintProperty('detection-circles', 'circle-stroke-width', 1);
             }
             document.getElementById('imagery-controls').classList.remove('visible');
         }

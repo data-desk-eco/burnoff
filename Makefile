@@ -6,27 +6,29 @@ DATA_DIR := data
 QUERIES_DIR := queries
 DB := $(DATA_DIR)/flares.duckdb
 GEOJSON := $(DATA_DIR)/detections.geojson
+GEOJSON_LIGHT := $(DATA_DIR)/detections_light.geojson
 PMTILES := $(DATA_DIR)/detections.pmtiles
 
 # Default: build PMTiles
 all: $(PMTILES)
 
-# Create PMTiles from GeoJSON
-$(PMTILES): $(GEOJSON)
-	tippecanoe \
-		--output=$@ \
-		--force \
-		--layer=detections \
-		--no-feature-limit \
-		--no-tile-size-limit \
-		--minimum-zoom=0 \
-		--maximum-zoom=14 \
-		$<
+# Create PMTiles: light tiles (z0-9) + full tiles (z10-14), then merge
+$(PMTILES): $(GEOJSON) $(GEOJSON_LIGHT)
+	tippecanoe -o $(DATA_DIR)/low.pmtiles --force --layer=detections \
+		-Z0 -z9 -r1 -pk -pf $(GEOJSON_LIGHT)
+	tippecanoe -o $(DATA_DIR)/high.pmtiles --force --layer=detections \
+		-Z10 -z14 -r1 -pk -pf $(GEOJSON)
+	tile-join -o $@ --force $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
+	rm -f $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
 	@echo "Created: $@ ($$(du -h $@ | cut -f1))"
 
-# Export GeoJSON of individual detections
+# Export full GeoJSON (with detection details)
 $(GEOJSON): $(DB)
 	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map.sql > $@
+
+# Export light GeoJSON (no detection details, smaller)
+$(GEOJSON_LIGHT): $(DB)
+	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map_light.sql > $@
 
 # Build database from detections
 $(DB): $(DATA_DIR)/detections.json $(DATA_DIR)/terminals.json | $(DATA_DIR)
@@ -65,10 +67,13 @@ refresh:
 	duckdb $(DB) < $(QUERIES_DIR)/init.sql
 	duckdb $(DB) < $(QUERIES_DIR)/load.sql
 	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map.sql > $(GEOJSON)
-	tippecanoe -o $(PMTILES) --force --layer=detections \
-		--no-feature-limit --no-tile-size-limit \
-		-Z0 -z14 \
-		$(GEOJSON)
+	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map_light.sql > $(GEOJSON_LIGHT)
+	tippecanoe -o $(DATA_DIR)/low.pmtiles --force --layer=detections \
+		-Z0 -z9 -r1 -pk -pf $(GEOJSON_LIGHT)
+	tippecanoe -o $(DATA_DIR)/high.pmtiles --force --layer=detections \
+		-Z10 -z14 -r1 -pk -pf $(GEOJSON)
+	tile-join -o $(PMTILES) --force $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
+	rm -f $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
 	@echo "Refreshed: $$(duckdb -noheader -list $(DB) 'SELECT COUNT(*) FROM detections') detections"
 
 # Sync terminals from research repo
