@@ -38,12 +38,12 @@ $(DB): $(DATA_DIR)/detections.json $(DATA_DIR)/terminals.json | $(DATA_DIR)
 
 # Run detection on all terminals
 $(DATA_DIR)/detections.json: $(DATA_DIR)/terminals.json
-	uv run burnoff bulk $< -o $@ --year 2024
+	uv run burnoff bulk $< -o $@ --year 2025
 
 # Single location detection (interactive)
 detect:
-	@test -n "$(LAT)" -a -n "$(LON)" || { echo "Usage: make detect LAT=-12.51 LON=130.92 [YEAR=2024]"; exit 1; }
-	uv run burnoff detect --lat $(LAT) --lon $(LON) --year $(or $(YEAR),2024)
+	@test -n "$(LAT)" -a -n "$(LON)" || { echo "Usage: make detect LAT=-12.51 LON=130.92 [YEAR=2025]"; exit 1; }
+	uv run burnoff detect --lat $(LAT) --lon $(LON) --year $(or $(YEAR),2025)
 
 # Interactive DuckDB shell
 db: $(DB)

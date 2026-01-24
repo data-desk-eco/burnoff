@@ -34,10 +34,10 @@ def main():
 
     \b
     Examples:
-        burnoff detect --lat -12.51 --lon 130.92 --year 2024
-        burnoff detect --lat -12.51 --lon 130.92 --start 2024-01-01 --end 2024-06-30
-        burnoff bulk terminals.json --output detections.json --year 2024
-        burnoff search --lat -12.51 --lon 130.92 --year 2024
+        burnoff detect --lat -12.51 --lon 130.92 --year 2025
+        burnoff detect --lat -12.51 --lon 130.92 --start 2025-01-01 --end 2025-06-30
+        burnoff bulk terminals.json --output detections.json --year 2025
+        burnoff search --lat -12.51 --lon 130.92 --year 2025
     """
     pass
 
@@ -53,9 +53,10 @@ def main():
 @click.option("--workers", default=8, help="Parallel workers (default: 8)")
 @click.option("--b11", default=0.3, help="B11 (SWIR1) threshold (default: 0.3)")
 @click.option("--b12", default=0.5, help="B12 (SWIR2) threshold (default: 0.5)")
+@click.option("--min-peak", default=0.8, help="Minimum peak B12 intensity (default: 0.8)")
 @click.option("-o", "--output", type=click.Path(), help="Output JSON file (default: stdout)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, output, quiet):
+def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, min_peak, output, quiet):
     """Detect thermal anomalies at a single location.
 
     \b
@@ -90,6 +91,7 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, out
         workers=workers,
         b11_threshold=b11,
         b12_threshold=b12,
+        min_peak_b12=min_peak,
         progress_callback=progress,
     )
 
@@ -115,16 +117,17 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, out
 @main.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("-o", "--output", type=click.Path(), required=True, help="Output JSON file")
-@click.option("--year", type=int, default=2024, help="Year to analyze (default: 2024)")
+@click.option("--year", type=int, default=2025, help="Year to analyze (default: 2025)")
 @click.option("--start", help="Start date (YYYY-MM-DD, overrides --year)")
 @click.option("--end", help="End date (YYYY-MM-DD, overrides --year)")
 @click.option("--workers", default=6, help="Parallel terminals (default: 6)")
 @click.option("--image-workers", default=8, help="Parallel images per terminal (default: 8)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
 @click.option("--buffer", default=3000, help="Buffer around point in meters (default: 3000)")
+@click.option("--min-peak", default=0.8, help="Minimum peak B12 intensity (default: 0.8)")
 @click.option("--resume/--no-resume", default=True, help="Skip already-processed locations (default: resume)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, resume, quiet):
+def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, min_peak, resume, quiet):
     """Process multiple locations from a JSON file.
 
     \b
@@ -135,7 +138,7 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
 
     \b
     Example:
-        burnoff bulk terminals.json -o detections.json --year 2024
+        burnoff bulk terminals.json -o detections.json --year 2025
 
     Automatically resumes from previous run if output file exists.
     Use --no-resume to reprocess all locations.
@@ -198,6 +201,7 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
             max_cloud=cloud,
             buffer_m=buffer,
             workers=image_workers,
+            min_peak_b12=min_peak,
         )
 
         out = result.to_dict()

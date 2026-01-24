@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  # Deploy web app to GitHub Pages
+  deploy-pages:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,3 +30,29 @@ jobs:
           path: dist
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Deploy PMTiles to GCS (only if credentials are configured)
+  deploy-gcs:
+    runs-on: ubuntu-latest
+    if: ${{ vars.GCS_BUCKET != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCS_SERVICE_ACCOUNT_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Download existing PMTiles from GCS
+        run: |
+          mkdir -p data
+          gsutil cp gs://${{ vars.GCS_BUCKET }}/detections.pmtiles data/detections.pmtiles || echo "No existing PMTiles found"
+
+      - name: Upload PMTiles to GCS
+        if: ${{ hashFiles('data/detections.pmtiles') != '' }}
+        run: |
+          gsutil -h "Cache-Control:public, max-age=3600" cp data/detections.pmtiles gs://${{ vars.GCS_BUCKET }}/
+          echo "Deployed to: https://storage.googleapis.com/${{ vars.GCS_BUCKET }}/detections.pmtiles"
