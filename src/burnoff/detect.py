@@ -30,8 +30,8 @@ STAC_API = "https://earth-search.aws.element84.com/v1"
 # Based on DAFI methodology (Faruolo et al. 2024) and empirical tuning
 B12_THRESHOLD = 0.3  # SWIR2 (2190nm) - lowered to catch weaker flares
 B11_THRESHOLD = 0.2  # SWIR1 (1610nm) - confirmation band
-MIN_PEAK_B12 = 0.35  # Minimum peak B12 for detection (lowered from 0.8 for ground flares)
-MIN_CONTRAST_RATIO = 2.0  # Flare must be Nx brighter than background median
+MIN_PEAK_B12 = 0.6  # Minimum peak B12 for detection (raised to reduce false positives)
+MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than background median
 MIN_NHISWNIR = -1.0  # NHISWNIR threshold disabled by default; set > 0 to enable stricter filtering
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
 MAX_FLARE_PIXELS = 50  # Allow larger clusters for ground flares (was 16)
@@ -311,12 +311,15 @@ def process_image(
             # Not enough background pixels to compare
             return []
         background_median = np.median(b12[background_mask])
+        # Ensure reasonable baseline for contrast ratio (reflectance offset can make median negative)
+        # Use 0.15 as minimum to ensure flares are significantly brighter than typical surfaces
+        background_baseline = max(background_median, 0.15)
 
         # Build detection mask combining multiple criteria:
         # 1. B12 above threshold (primary thermal indicator)
         # 2. B11 above threshold (confirmation)
         # 3. Contrast ratio check (stands out from background)
-        mask = (b12 > b12_threshold) & (b11 > b11_threshold) & (b12 > background_median * min_contrast)
+        mask = (b12 > b12_threshold) & (b11 > b11_threshold) & (b12 > background_baseline * min_contrast)
 
         # Optional NHISWNIR filter: (B11 - B8A) / (B11 + B8A) > threshold
         # Based on DAFI methodology (Faruolo et al. 2024), positive NHISWNIR indicates
