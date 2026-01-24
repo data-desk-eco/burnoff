@@ -417,7 +417,7 @@
         <div class="imagery-controls" id="imagery-controls">
             <label class="label-sm">
                 Transparency
-                <input type="range" id="opacity-slider" min="0" max="100" value="15" oninput="setOpacity(100 - this.value)">
+                <input type="range" id="opacity-slider" min="0" max="100" value="25" oninput="setOpacity(100 - this.value)">
             </label>
         </div>
     </div>
@@ -504,23 +504,22 @@
             return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
         }
 
-        // Circle style helpers
-        const defaultCircleColor = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
+        // Circle style helpers - default is outline-only with color based on max_b12
+        const defaultStrokeColor = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
             0.3, '#b63679', 0.6, '#f8765c', 1.0, '#ffff00'];
 
         function setCirclesGreyed() {
             if (!map.getLayer('detection-circles')) return;
             map.setPaintProperty('detection-circles', 'circle-opacity', 0);
-            map.setPaintProperty('detection-circles', 'circle-stroke-color', '#999');
-            map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 0.5);
+            map.setPaintProperty('detection-circles', 'circle-stroke-color', '#bbb');
+            map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 0.6);
         }
 
         function setCirclesDefault() {
             if (!map.getLayer('detection-circles')) return;
-            map.setPaintProperty('detection-circles', 'circle-color', defaultCircleColor);
-            map.setPaintProperty('detection-circles', 'circle-opacity', 0.9);
-            map.setPaintProperty('detection-circles', 'circle-stroke-color', '#fff');
-            map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 0.7);
+            map.setPaintProperty('detection-circles', 'circle-opacity', 0);
+            map.setPaintProperty('detection-circles', 'circle-stroke-color', defaultStrokeColor);
+            map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 1);
         }
 
         // Magma-like colormap for SWIR visualization
@@ -643,7 +642,7 @@
                 url: `pmtiles://${DATA_URL}/detections.pmtiles`
             });
 
-            // Detection circles layer
+            // Detection circles layer - outline-only by default, colored by max_b12
             map.addLayer({
                 id: 'detection-circles',
                 type: 'circle',
@@ -656,15 +655,15 @@
                         10, ['+', 10, ['*', ['coalesce', ['get', 'max_b12'], 0], 8]],
                         14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
                     ],
-                    'circle-color': ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
+                    'circle-color': 'transparent',
+                    'circle-opacity': 0,
+                    'circle-stroke-color': ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
                         0.3, '#b63679',
                         0.6, '#f8765c',
                         1.0, '#ffff00'
                     ],
-                    'circle-opacity': 0.9,
-                    'circle-stroke-color': '#fff',
                     'circle-stroke-width': 2,
-                    'circle-stroke-opacity': 0.7
+                    'circle-stroke-opacity': 1
                 }
             });
 
@@ -752,7 +751,7 @@
             if (!params) return;
 
             // Fly to coordinates first, then query features after tiles load
-            map.flyTo({ center: [params.lon, params.lat], zoom: 14 });
+            map.flyTo({ center: [params.lon, params.lat], zoom: 14, duration: 800 });
 
             // Wait for tiles to load at the target location, then find and select feature
             const onIdle = () => {
@@ -975,25 +974,22 @@
                 const ctx = canvas.getContext('2d');
                 const imgData = ctx.createImageData(w, h);
 
-                // Find max to set scale ceiling
-                let maxVal = 0;
-                for (let i = 0; i < data.length; i++) {
-                    if (data[i] > maxVal) maxVal = data[i];
-                }
-
-                // Threshold-based coloring: dark below threshold, colored above
-                const threshold = 0.2;
-                const ceiling = Math.max(1.0, maxVal);  // scale to max or 1.0, whichever is higher
+                // Convert raw DN to surface reflectance (L2A: scale=0.0001, offset=-0.1)
+                // Then apply absolute scale for visualization
+                const scale = 0.0001;
+                const offset = -0.1;
+                const threshold = 0.4;  // Below this = dark purple
+                const ceiling = 1.5;    // Flares often reach 1.0-1.5+
 
                 for (let i = 0; i < data.length; i++) {
-                    const v = data[i];
-                    // Below threshold = dark purple, above = scale to ceiling
+                    const v = data[i] * scale + offset;  // Convert DN to reflectance
+                    // Below threshold = dark purple, above = scale to fixed ceiling
                     const t = v <= threshold ? 0 : Math.min(1, (v - threshold) / (ceiling - threshold));
                     const [r, g, b] = magmaColor(t);
                     imgData.data[i * 4] = r;
                     imgData.data[i * 4 + 1] = g;
                     imgData.data[i * 4 + 2] = b;
-                    imgData.data[i * 4 + 3] = v > 0 ? 255 : 0;
+                    imgData.data[i * 4 + 3] = 255;  // Always opaque - show full square
                 }
                 ctx.putImageData(imgData, 0, 0);
 
@@ -1021,9 +1017,12 @@
                 // Keep circles greyed while imagery visible
                 setCirclesGreyed();
 
+                // Apply current slider opacity to new layer
+                const sliderValue = document.getElementById('opacity-slider').value;
+                map.setPaintProperty('cog-layer', 'raster-opacity', (100 - sliderValue) / 100);
+
                 document.querySelector('.event-item.active')?.classList.remove('loading');
                 document.getElementById('imagery-controls').classList.add('visible');
-                document.getElementById('opacity-slider').value = 15;
 
             } catch (err) {
                 console.error('Failed to load COG:', err);

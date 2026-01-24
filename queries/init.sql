@@ -24,18 +24,16 @@ CREATE TABLE IF NOT EXISTS detections (
 );
 
 -- Individual detection events with COG references for on-demand imagery
+-- Raw detections at actual max B12 pixel location - clustering done in export
 CREATE TABLE IF NOT EXISTS detection_events (
-    lat DOUBLE NOT NULL,
-    lon DOUBLE NOT NULL,
+    lat DOUBLE NOT NULL,          -- Terminal latitude
+    lon DOUBLE NOT NULL,          -- Terminal longitude
     date DATE NOT NULL,
     max_b12 DOUBLE,
     pixels INTEGER,
-    -- Clustered flare location (centroid of nearby detections)
+    -- Raw flare location (actual max B12 pixel)
     flare_lon DOUBLE,
     flare_lat DOUBLE,
-    -- Original flare location (actual max B12 pixel before clustering)
-    original_flare_lon DOUBLE,
-    original_flare_lat DOUBLE,
     -- COG URLs for on-demand rendering
     cog_b11 VARCHAR,
     cog_b12 VARCHAR,
@@ -51,8 +49,6 @@ CREATE TABLE IF NOT EXISTS detection_events (
     utm_maxx DOUBLE,
     utm_maxy DOUBLE,
     epsg INTEGER,
-    -- Temporal persistence: number of unique dates this flare location was detected
-    detection_count INTEGER,
     -- Primary key includes flare location since multiple flares can be detected per facility per date
     PRIMARY KEY (lat, lon, date, flare_lat, flare_lon)
 );
