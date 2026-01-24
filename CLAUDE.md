@@ -30,7 +30,7 @@ Based on DAFI methodology (Faruolo et al. 2024) with empirical tuning for ground
 2. Filter by scene cloud cover (<30%)
 3. Check local cloud cover via SCL band (<30% in 3km buffer)
 4. Require B12 > 0.3 AND B11 > 0.2 (reflectance thresholds)
-5. Require peak B12 > 0.35 (lowered from 0.8 to catch cooler ground flares)
+5. Require peak B12 > 0.6 (lowered from 0.8 to catch cooler ground flares)
 6. Require flare 2x brighter than background median
 7. Cluster detections within 200m, max 50 pixels per cluster
 
