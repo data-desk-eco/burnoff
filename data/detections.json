@@ -1,0 +1,2822 @@
+[
+  {
+    "lat": 19.010408,
+    "lon": -104.264421,
+    "start_date": "2025-01-01",
+    "end_date": "2025-12-31",
+    "images": 85,
+    "detections": 39,
+    "detection_rate": 0.4588235294117647,
+    "max_b12": 1.4231998920440674,
+    "detection_dates": [
+      {
+        "date": "2025-01-21",
+        "max_b12": 1.0817999839782715,
+        "pixels": 5,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2C_13QEB_20250121_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2C_13QEB_20250121_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2C_13QEB_20250121_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-01-26",
+        "max_b12": 1.3811999559402466,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2B_13QEB_20250126_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2B_13QEB_20250126_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2B_13QEB_20250126_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-01-31",
+        "max_b12": 1.2941999435424805,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2C_13QEB_20250131_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2C_13QEB_20250131_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/1/S2C_13QEB_20250131_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-02-05",
+        "max_b12": 1.2942999601364136,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2B_13QEB_20250205_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2B_13QEB_20250205_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2B_13QEB_20250205_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-02-10",
+        "max_b12": 1.2972999811172485,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2C_13QEB_20250210_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2C_13QEB_20250210_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2C_13QEB_20250210_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-02-15",
+        "max_b12": 1.2661999464035034,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2B_13QEB_20250215_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2B_13QEB_20250215_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/2/S2B_13QEB_20250215_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-03-02",
+        "max_b12": 1.3250999450683594,
+        "pixels": 5,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250302_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250302_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250302_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-03-12",
+        "max_b12": 1.095099925994873,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250312_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250312_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250312_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-03-17",
+        "max_b12": 1.152899980545044,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2B_13QEB_20250317_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2B_13QEB_20250317_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2B_13QEB_20250317_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-03-22",
+        "max_b12": 0.9086999893188477,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250322_1_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250322_1_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2C_13QEB_20250322_1_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-03-27",
+        "max_b12": 1.1624999046325684,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2B_13QEB_20250327_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2B_13QEB_20250327_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/3/S2B_13QEB_20250327_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-04-01",
+        "max_b12": 0.9386999607086182,
+        "pixels": 5,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250401_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250401_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250401_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-04-06",
+        "max_b12": 1.1810998916625977,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250406_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250406_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250406_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-04-11",
+        "max_b12": 1.0738999843597412,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250411_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250411_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250411_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-04-16",
+        "max_b12": 1.1723999977111816,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250416_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250416_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250416_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-04-21",
+        "max_b12": 0.9810999631881714,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250421_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250421_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2C_13QEB_20250421_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-04-26",
+        "max_b12": 1.180999994277954,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250426_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250426_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/4/S2B_13QEB_20250426_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-05-01",
+        "max_b12": 1.0573999881744385,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250501_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250501_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250501_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-05-06",
+        "max_b12": 1.1666998863220215,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2B_13QEB_20250506_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2B_13QEB_20250506_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2B_13QEB_20250506_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-05-11",
+        "max_b12": 0.9341999292373657,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250511_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250511_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250511_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-05-16",
+        "max_b12": 1.2268999814987183,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2B_13QEB_20250516_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2B_13QEB_20250516_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2B_13QEB_20250516_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-05-21",
+        "max_b12": 1.2357999086380005,
+        "pixels": 6,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250521_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250521_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/5/S2C_13QEB_20250521_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-07-15",
+        "max_b12": 1.227799892425537,
+        "pixels": 6,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2B_13QEB_20250715_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2B_13QEB_20250715_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2B_13QEB_20250715_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-07-20",
+        "max_b12": 1.08489990234375,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2C_13QEB_20250720_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2C_13QEB_20250720_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2C_13QEB_20250720_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-07-22",
+        "max_b12": 1.3167999982833862,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2A_13QEB_20250722_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2A_13QEB_20250722_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/7/S2A_13QEB_20250722_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-08-04",
+        "max_b12": 1.17739999294281,
+        "pixels": 6,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2B_13QEB_20250804_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2B_13QEB_20250804_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2B_13QEB_20250804_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-08-11",
+        "max_b12": 1.1628999710083008,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2A_13QEB_20250811_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2A_13QEB_20250811_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2A_13QEB_20250811_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-08-29",
+        "max_b12": 1.133099913597107,
+        "pixels": 3,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2C_13QEB_20250829_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2C_13QEB_20250829_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/8/S2C_13QEB_20250829_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-10-08",
+        "max_b12": 1.3674999475479126,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/10/S2C_13QEB_20251008_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/10/S2C_13QEB_20251008_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/10/S2C_13QEB_20251008_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-10-13",
+        "max_b12": 1.3141999244689941,
+        "pixels": 3,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/10/S2B_13QEB_20251013_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/10/S2B_13QEB_20251013_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/10/S2B_13QEB_20251013_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-11-02",
+        "max_b12": 1.2186999320983887,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2B_13QEB_20251102_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2B_13QEB_20251102_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2B_13QEB_20251102_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-11-07",
+        "max_b12": 1.3072999715805054,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251107_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251107_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251107_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-11-17",
+        "max_b12": 1.3761999607086182,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251117_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251117_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251117_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-11-19",
+        "max_b12": 1.4198999404907227,
+        "pixels": 9,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2A_13QEB_20251119_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2A_13QEB_20251119_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2A_13QEB_20251119_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-11-22",
+        "max_b12": 1.3222999572753906,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2B_13QEB_20251122_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2B_13QEB_20251122_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2B_13QEB_20251122_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-11-27",
+        "max_b12": 1.3898999691009521,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251127_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251127_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/11/S2C_13QEB_20251127_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-12-17",
+        "max_b12": 1.4142999649047852,
+        "pixels": 5,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2C_13QEB_20251217_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2C_13QEB_20251217_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2C_13QEB_20251217_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-12-22",
+        "max_b12": 1.4231998920440674,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2B_13QEB_20251222_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2B_13QEB_20251222_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2B_13QEB_20251222_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      },
+      {
+        "date": "2025-12-27",
+        "max_b12": 1.3685998916625977,
+        "pixels": 4,
+        "flare_lon": -104.25803033799045,
+        "flare_lat": 19.008139491992097,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2C_13QEB_20251227_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2C_13QEB_20251227_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/13/Q/EB/2025/12/S2C_13QEB_20251227_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          -104.29303859213127,
+          18.983408194501383,
+          -104.23579417177434,
+          19.037402985305143
+        ],
+        "utm_bounds": [
+          574416.4824598492,
+          2099140.956455104,
+          580416.4824598492,
+          2105140.956455104
+        ],
+        "epsg": 32613
+      }
+    ],
+    "id": 3489,
+    "name": "Manzanillo LNG Terminal",
+    "type": "Import"
+  },
+  {
+    "lat": 25.909678,
+    "lon": 51.57398,
+    "start_date": "2025-01-01",
+    "end_date": "2025-12-31",
+    "images": 64,
+    "detections": 44,
+    "detection_rate": 0.6875,
+    "max_b12": 1.479699969291687,
+    "detection_dates": [
+      {
+        "date": "2025-01-18",
+        "max_b12": 1.4286999702453613,
+        "pixels": 14,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/1/S2A_39RWJ_20250118_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/1/S2A_39RWJ_20250118_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/1/S2A_39RWJ_20250118_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-01-28",
+        "max_b12": 1.4310998916625977,
+        "pixels": 12,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/1/S2C_39RWJ_20250128_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/1/S2C_39RWJ_20250128_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/1/S2C_39RWJ_20250128_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-02-22",
+        "max_b12": 1.4224998950958252,
+        "pixels": 11,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/2/S2B_39RWJ_20250222_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/2/S2B_39RWJ_20250222_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/2/S2B_39RWJ_20250222_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-03-19",
+        "max_b12": 1.3280999660491943,
+        "pixels": 13,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/3/S2C_39RWJ_20250319_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/3/S2C_39RWJ_20250319_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/3/S2C_39RWJ_20250319_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-03-29",
+        "max_b12": 1.2844998836517334,
+        "pixels": 10,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/3/S2C_39RWJ_20250329_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/3/S2C_39RWJ_20250329_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/3/S2C_39RWJ_20250329_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-08",
+        "max_b12": 1.3036999702453613,
+        "pixels": 8,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250408_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250408_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250408_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-10",
+        "max_b12": 1.3785998821258545,
+        "pixels": 10,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2A_39RWJ_20250410_1_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2A_39RWJ_20250410_1_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2A_39RWJ_20250410_1_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-18",
+        "max_b12": 1.2834999561309814,
+        "pixels": 15,
+        "flare_lon": 51.55220423693385,
+        "flare_lat": 25.906870243409312,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250418_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250418_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250418_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-23",
+        "max_b12": 1.3162999153137207,
+        "pixels": 10,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2B_39RWJ_20250423_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2B_39RWJ_20250423_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2B_39RWJ_20250423_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-28",
+        "max_b12": 1.2249999046325684,
+        "pixels": 13,
+        "flare_lon": 51.549556723313486,
+        "flare_lat": 25.903635246211934,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250428_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250428_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/4/S2C_39RWJ_20250428_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-08",
+        "max_b12": 1.205199956893921,
+        "pixels": 11,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250508_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250508_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250508_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-13",
+        "max_b12": 1.2958999872207642,
+        "pixels": 11,
+        "flare_lon": 51.55220423693385,
+        "flare_lat": 25.906870243409312,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2B_39RWJ_20250513_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2B_39RWJ_20250513_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2B_39RWJ_20250513_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-18",
+        "max_b12": 1.0666999816894531,
+        "pixels": 9,
+        "flare_lon": 51.549556723313486,
+        "flare_lat": 25.903635246211934,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250518_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250518_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250518_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-20",
+        "max_b12": 1.2917999029159546,
+        "pixels": 10,
+        "flare_lon": 51.549556723313486,
+        "flare_lat": 25.903635246211934,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2A_39RWJ_20250520_1_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2A_39RWJ_20250520_1_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2A_39RWJ_20250520_1_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-23",
+        "max_b12": 1.1530998945236206,
+        "pixels": 11,
+        "flare_lon": 51.55220423693385,
+        "flare_lat": 25.906870243409312,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2B_39RWJ_20250523_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2B_39RWJ_20250523_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2B_39RWJ_20250523_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-28",
+        "max_b12": 1.0799999237060547,
+        "pixels": 10,
+        "flare_lon": 51.549556723313486,
+        "flare_lat": 25.903635246211934,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250528_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250528_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/5/S2C_39RWJ_20250528_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-07",
+        "max_b12": 1.1859999895095825,
+        "pixels": 12,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2C_39RWJ_20250607_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2C_39RWJ_20250607_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2C_39RWJ_20250607_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-09",
+        "max_b12": 1.289199948310852,
+        "pixels": 13,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2A_39RWJ_20250609_1_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2A_39RWJ_20250609_1_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2A_39RWJ_20250609_1_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-12",
+        "max_b12": 1.2404999732971191,
+        "pixels": 10,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2B_39RWJ_20250612_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2B_39RWJ_20250612_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2B_39RWJ_20250612_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-17",
+        "max_b12": 1.1516999006271362,
+        "pixels": 11,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2C_39RWJ_20250617_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2C_39RWJ_20250617_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2C_39RWJ_20250617_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-22",
+        "max_b12": 1.2322999238967896,
+        "pixels": 12,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2B_39RWJ_20250622_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2B_39RWJ_20250622_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/6/S2B_39RWJ_20250622_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-07-07",
+        "max_b12": 1.2983999252319336,
+        "pixels": 8,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250707_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250707_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250707_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-07-17",
+        "max_b12": 1.4161999225616455,
+        "pixels": 15,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250717_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250717_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250717_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-07-27",
+        "max_b12": 1.3328999280929565,
+        "pixels": 16,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250727_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250727_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/7/S2C_39RWJ_20250727_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-01",
+        "max_b12": 1.4155999422073364,
+        "pixels": 11,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250801_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250801_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250801_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-06",
+        "max_b12": 1.3965998888015747,
+        "pixels": 15,
+        "flare_lon": 51.549556723313486,
+        "flare_lat": 25.903635246211934,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250806_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250806_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250806_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-08",
+        "max_b12": 1.479699969291687,
+        "pixels": 14,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2A_39RWJ_20250808_1_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2A_39RWJ_20250808_1_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2A_39RWJ_20250808_1_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-16",
+        "max_b12": 1.4506999254226685,
+        "pixels": 13,
+        "flare_lon": 51.549556723313486,
+        "flare_lat": 25.903635246211934,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250816_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250816_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250816_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-21",
+        "max_b12": 1.4503999948501587,
+        "pixels": 11,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250821_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250821_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250821_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-26",
+        "max_b12": 1.4082999229431152,
+        "pixels": 13,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250826_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250826_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2C_39RWJ_20250826_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-28",
+        "max_b12": 1.4788999557495117,
+        "pixels": 15,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2A_39RWJ_20250828_1_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2A_39RWJ_20250828_1_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2A_39RWJ_20250828_1_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-31",
+        "max_b12": 1.438099980354309,
+        "pixels": 11,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250831_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250831_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/8/S2B_39RWJ_20250831_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-09-05",
+        "max_b12": 1.4328999519348145,
+        "pixels": 14,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2C_39RWJ_20250905_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2C_39RWJ_20250905_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2C_39RWJ_20250905_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-09-10",
+        "max_b12": 1.3909999132156372,
+        "pixels": 16,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250910_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250910_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250910_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-09-20",
+        "max_b12": 1.3803999423980713,
+        "pixels": 12,
+        "flare_lon": 51.549556723313486,
+        "flare_lat": 25.903635246211934,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250920_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250920_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250920_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-09-25",
+        "max_b12": 1.3416999578475952,
+        "pixels": 12,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2C_39RWJ_20250925_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2C_39RWJ_20250925_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2C_39RWJ_20250925_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-09-30",
+        "max_b12": 1.4234999418258667,
+        "pixels": 13,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250930_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250930_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/9/S2B_39RWJ_20250930_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-10-05",
+        "max_b12": 1.399999976158142,
+        "pixels": 14,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251005_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251005_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251005_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-10-07",
+        "max_b12": 1.4350999593734741,
+        "pixels": 13,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2A_39RWJ_20251007_1_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2A_39RWJ_20251007_1_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2A_39RWJ_20251007_1_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-10-10",
+        "max_b12": 1.440999984741211,
+        "pixels": 16,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2B_39RWJ_20251010_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2B_39RWJ_20251010_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2B_39RWJ_20251010_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-10-15",
+        "max_b12": 1.390899896621704,
+        "pixels": 16,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251015_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251015_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251015_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-10-20",
+        "max_b12": 1.38729989528656,
+        "pixels": 16,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2B_39RWJ_20251020_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2B_39RWJ_20251020_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2B_39RWJ_20251020_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-10-25",
+        "max_b12": 1.3709999322891235,
+        "pixels": 15,
+        "flare_lon": 51.55786864044302,
+        "flare_lat": 25.917148066537102,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251025_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251025_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2C_39RWJ_20251025_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-10-27",
+        "max_b12": 1.3260999917984009,
+        "pixels": 14,
+        "flare_lon": 51.549556723313486,
+        "flare_lat": 25.903635246211934,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2A_39RWJ_20251027_1_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2A_39RWJ_20251027_1_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/WJ/2025/10/S2A_39RWJ_20251027_1_L2A/TCI.tif"
+        },
+        "bounds": [
+          51.54390338276323,
+          25.882704741537196,
+          51.604070299593545,
+          25.936644685318893
+        ],
+        "utm_bounds": [
+          554487.0336876969,
+          2862807.1334939185,
+          560487.0336876969,
+          2868807.1334939185
+        ],
+        "epsg": 32639
+      }
+    ],
+    "id": 3548,
+    "name": "Qatargas / Rasgas Plants",
+    "type": "Export"
+  },
+  {
+    "lat": 25.159056,
+    "lon": 52.875867,
+    "start_date": "2025-01-01",
+    "end_date": "2025-12-31",
+    "images": 68,
+    "detections": 28,
+    "detection_rate": 0.4117647058823529,
+    "max_b12": 1.497499942779541,
+    "detection_dates": [
+      {
+        "date": "2025-03-01",
+        "max_b12": 1.4014999866485596,
+        "pixels": 12,
+        "flare_lon": 52.866417556690436,
+        "flare_lat": 25.164465182449028,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250301_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250301_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250301_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-03-11",
+        "max_b12": 1.4863998889923096,
+        "pixels": 15,
+        "flare_lon": 52.8755803651365,
+        "flare_lat": 25.175775128881853,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250311_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250311_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250311_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-03-26",
+        "max_b12": 1.201799988746643,
+        "pixels": 11,
+        "flare_lon": 52.8755803651365,
+        "flare_lat": 25.175775128881853,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2C_39RXH_20250326_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2C_39RXH_20250326_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2C_39RXH_20250326_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-03-31",
+        "max_b12": 1.327799916267395,
+        "pixels": 11,
+        "flare_lon": 52.8755803651365,
+        "flare_lat": 25.175775128881853,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250331_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250331_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/3/S2B_39RXH_20250331_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-05",
+        "max_b12": 1.2520999908447266,
+        "pixels": 6,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2C_39RXH_20250405_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2C_39RXH_20250405_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2C_39RXH_20250405_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-10",
+        "max_b12": 1.2050999402999878,
+        "pixels": 10,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250410_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250410_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250410_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-20",
+        "max_b12": 1.3243999481201172,
+        "pixels": 15,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250420_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250420_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250420_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-04-30",
+        "max_b12": 1.2207999229431152,
+        "pixels": 14,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250430_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250430_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/4/S2B_39RXH_20250430_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-05",
+        "max_b12": 1.1892999410629272,
+        "pixels": 11,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250505_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250505_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250505_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-10",
+        "max_b12": 1.222599983215332,
+        "pixels": 11,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250510_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250510_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250510_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-15",
+        "max_b12": 1.2010999917984009,
+        "pixels": 8,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250515_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250515_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250515_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-17",
+        "max_b12": 1.2690999507904053,
+        "pixels": 11,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2A_39RXH_20250517_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2A_39RXH_20250517_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2A_39RXH_20250517_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-20",
+        "max_b12": 1.260699987411499,
+        "pixels": 6,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250520_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250520_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250520_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-25",
+        "max_b12": 1.2346999645233154,
+        "pixels": 6,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250525_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250525_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2C_39RXH_20250525_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-05-30",
+        "max_b12": 1.2598999738693237,
+        "pixels": 6,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250530_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250530_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/5/S2B_39RXH_20250530_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-04",
+        "max_b12": 1.128499984741211,
+        "pixels": 6,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250604_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250604_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250604_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-06",
+        "max_b12": 1.365299940109253,
+        "pixels": 8,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2A_39RXH_20250606_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2A_39RXH_20250606_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2A_39RXH_20250606_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-09",
+        "max_b12": 1.2157999277114868,
+        "pixels": 12,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2B_39RXH_20250609_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2B_39RXH_20250609_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2B_39RXH_20250609_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-14",
+        "max_b12": 1.2201999425888062,
+        "pixels": 11,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250614_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250614_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250614_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-19",
+        "max_b12": 1.213499903678894,
+        "pixels": 5,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2B_39RXH_20250619_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2B_39RXH_20250619_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2B_39RXH_20250619_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-06-24",
+        "max_b12": 1.227799892425537,
+        "pixels": 13,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250624_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250624_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/6/S2C_39RXH_20250624_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-07-09",
+        "max_b12": 1.3125,
+        "pixels": 12,
+        "flare_lon": 52.8672957953733,
+        "flare_lat": 25.16106867541771,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250709_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250709_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250709_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-07-19",
+        "max_b12": 1.2578999996185303,
+        "pixels": 10,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250719_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250719_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250719_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-07-24",
+        "max_b12": 1.2970999479293823,
+        "pixels": 7,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2C_39RXH_20250724_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2C_39RXH_20250724_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2C_39RXH_20250724_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-07-29",
+        "max_b12": 1.403899908065796,
+        "pixels": 16,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250729_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250729_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/7/S2B_39RXH_20250729_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-08-08",
+        "max_b12": 1.497499942779541,
+        "pixels": 11,
+        "flare_lon": 52.87757505173255,
+        "flare_lat": 25.164324058778078,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/8/S2B_39RXH_20250808_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/8/S2B_39RXH_20250808_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/8/S2B_39RXH_20250808_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-10-02",
+        "max_b12": 1.4103999137878418,
+        "pixels": 16,
+        "flare_lon": 52.8672957953733,
+        "flare_lat": 25.16106867541771,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/10/S2C_39RXH_20251002_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/10/S2C_39RXH_20251002_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/10/S2C_39RXH_20251002_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      },
+      {
+        "date": "2025-12-21",
+        "max_b12": 1.400499939918518,
+        "pixels": 6,
+        "flare_lon": 52.8672957953733,
+        "flare_lat": 25.16106867541771,
+        "cog": {
+          "b11": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/12/S2C_39RXH_20251221_0_L2A/B11.tif",
+          "b12": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/12/S2C_39RXH_20251221_0_L2A/B12.tif",
+          "visual": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/39/R/XH/2025/12/S2C_39RXH_20251221_0_L2A/TCI.tif"
+        },
+        "bounds": [
+          52.8457073355211,
+          25.13235142515398,
+          52.90603978644467,
+          25.18575357448086
+        ],
+        "utm_bounds": [
+          686070.4974686933,
+          2780876.117846635,
+          692070.4974686933,
+          2786876.117846635
+        ],
+        "epsg": 32639
+      }
+    ],
+    "id": 3552,
+    "name": "Das Island I, II, III",
+    "type": "Export"
+  }
+]

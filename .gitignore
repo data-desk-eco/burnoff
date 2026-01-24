@@ -3,8 +3,10 @@
 __pycache__/
 *.pyc
 
-# Data (generated, served from GCS)
-data/
+# Data - intermediate files only
+data/*.duckdb
+data/*.geojson
+data/test_terminals.json
 
 # OS
 .DS_Store
