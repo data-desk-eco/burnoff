@@ -31,8 +31,15 @@ Based on DAFI methodology (Faruolo et al. 2024) with empirical tuning for ground
 3. Check local cloud cover via SCL band (<30% in 3km buffer)
 4. Require B12 > 0.3 AND B11 > 0.2 (reflectance thresholds)
 5. Require peak B12 > 0.6 (lowered from 0.8 to catch cooler ground flares)
-6. Require flare 2x brighter than background median
-7. Cluster detections within 200m, max 50 pixels per cluster
+6. Require flare 3x brighter than background median
+7. Cluster detections within 200m, max 200 pixels per cluster
+8. Filter to locations detected on 2+ separate dates (removes one-off false positives)
+
+## Changing Detection Parameters
+When modifying detection logic in `src/burnoff/detect.py`:
+1. Re-run detections: `uv run burnoff bulk data/terminals-run.json -o data/detections.json --year 2025 --no-resume`
+2. Rebuild geodata: `make refresh`
+3. Commit all generated files (detections.json, .geojson, .pmtiles)
 
 ## Notes
 - Sentinel-2 COGs are UTM-projected; converted to WGS84 via proj4
