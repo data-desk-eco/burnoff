@@ -626,20 +626,41 @@
             });
             map.on('mouseleave', 'detection-circles', () => map.getCanvas().style.cursor = '');
 
-            map.on('click', 'detection-circles', (e) => {
-                if (map.getZoom() < MIN_INTERACTIVE_ZOOM) {
-                    // Zoom in to enable interaction
-                    map.flyTo({ center: e.features[0].geometry.coordinates, zoom: MIN_INTERACTIVE_ZOOM });
+            map.on('click', (e) => {
+                // Use bbox query for reliable hit testing (globe projection can be finicky)
+                const tolerance = 15;
+                const bbox = [
+                    [e.point.x - tolerance, e.point.y - tolerance],
+                    [e.point.x + tolerance, e.point.y + tolerance]
+                ];
+                const features = map.queryRenderedFeatures(bbox, { layers: ['detection-circles'] });
+
+                if (features.length === 0) {
+                    closeInfo();
                     return;
                 }
-                const feature = e.features[0];
-                showInfo(feature);
-                map.flyTo({ center: feature.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
-            });
 
-            map.on('click', (e) => {
-                const features = map.queryRenderedFeatures(e.point, { layers: ['detection-circles'] });
-                if (features.length === 0) closeInfo();
+                // Find closest feature to click point
+                const clickLngLat = e.lngLat;
+                let closest = features[0];
+                let minDist = Infinity;
+                for (const f of features) {
+                    const [lng, lat] = f.geometry.coordinates;
+                    const dist = Math.hypot(lng - clickLngLat.lng, lat - clickLngLat.lat);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closest = f;
+                    }
+                }
+
+                if (map.getZoom() < MIN_INTERACTIVE_ZOOM) {
+                    // Zoom in to enable interaction
+                    map.flyTo({ center: closest.geometry.coordinates, zoom: MIN_INTERACTIVE_ZOOM });
+                    return;
+                }
+
+                showInfo(closest);
+                map.flyTo({ center: closest.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
             });
 
             // Restore from URL hash after tiles load
