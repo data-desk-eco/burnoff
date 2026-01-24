@@ -499,6 +499,25 @@
             return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
         }
 
+        // Circle style helpers
+        const defaultCircleColor = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
+            0.3, '#b63679', 0.6, '#f8765c', 1.0, '#ffff00'];
+
+        function setCirclesGreyed() {
+            if (!map.getLayer('detection-circles')) return;
+            map.setPaintProperty('detection-circles', 'circle-opacity', 0);
+            map.setPaintProperty('detection-circles', 'circle-stroke-color', '#999');
+            map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 0.5);
+        }
+
+        function setCirclesDefault() {
+            if (!map.getLayer('detection-circles')) return;
+            map.setPaintProperty('detection-circles', 'circle-color', defaultCircleColor);
+            map.setPaintProperty('detection-circles', 'circle-opacity', 0.9);
+            map.setPaintProperty('detection-circles', 'circle-stroke-color', '#fff');
+            map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 0.7);
+        }
+
         // Magma-like colormap for SWIR visualization
         function magmaColor(t) {
             const colors = [
@@ -644,6 +663,31 @@
                 }
             });
 
+            // Selection highlight layer (shows selected flare with white outline)
+            map.addSource('selection-highlight', {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: [] }
+            });
+            map.addLayer({
+                id: 'selection-highlight',
+                type: 'circle',
+                source: 'selection-highlight',
+                layout: { visibility: 'none' },
+                paint: {
+                    'circle-radius': ['interpolate', ['exponential', 1.5], ['zoom'],
+                        0, ['+', 4, ['*', ['coalesce', ['get', 'max_b12'], 0], 4]],
+                        6, ['+', 6, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
+                        10, ['+', 10, ['*', ['coalesce', ['get', 'max_b12'], 0], 8]],
+                        14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
+                    ],
+                    'circle-color': 'transparent',
+                    'circle-opacity': 0,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-stroke-width': 2.5,
+                    'circle-stroke-opacity': 1
+                }
+            });
+
             // Only enable interaction at zoom 10+ (where detection details are available)
             const MIN_INTERACTIVE_ZOOM = 10;
 
@@ -695,6 +739,11 @@
             map.once('sourcedata', () => {
                 setTimeout(() => restoreFromHash(), 500);
             });
+
+            // Hide about modal if deep-linked
+            if (window.location.hash && window.location.hash.length > 1) {
+                document.getElementById('about-modal').classList.add('hidden');
+            }
         });
 
         function restoreFromHash() {
@@ -737,6 +786,18 @@
             currentFeature = feature;
             selectedDetection = null;
             const props = feature.properties;
+
+            // Grey out all circles and show selection highlight
+            setCirclesGreyed();
+
+            // Update selection highlight
+            const selectionSource = map.getSource('selection-highlight');
+            if (selectionSource) {
+                selectionSource.setData(feature);
+            }
+            if (map.getLayer('selection-highlight')) {
+                map.setLayoutProperty('selection-highlight', 'visibility', 'visible');
+            }
 
             document.getElementById('info').classList.add('visible');
             document.getElementById('info-name').textContent = props.name || 'Unknown facility';
@@ -812,6 +873,12 @@
             closeImagery();
             currentFeature = null;
             updateHash(null, null);
+
+            // Restore circle colors and hide selection
+            setCirclesDefault();
+            if (map.getLayer('selection-highlight')) {
+                map.setLayoutProperty('selection-highlight', 'visibility', 'none');
+            }
         }
 
         async function loadImageryForDetection(det) {
@@ -950,10 +1017,8 @@
                     paint: { 'raster-opacity': 0.85, 'raster-resampling': 'nearest' }
                 }, 'detection-circles');
 
-                // Make detection circles transparent but keep border visible
-                map.setPaintProperty('detection-circles', 'circle-opacity', 0);
-                map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 1);
-                map.setPaintProperty('detection-circles', 'circle-stroke-width', 2);
+                // Keep circles greyed while imagery visible
+                setCirclesGreyed();
 
                 document.querySelector('.event-item.active')?.classList.remove('loading');
                 document.getElementById('imagery-controls').classList.add('visible');
@@ -974,11 +1039,11 @@
         function closeImagery() {
             if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
             if (map.getSource('cog-source')) map.removeSource('cog-source');
-            // Restore detection circle opacity
-            if (map.getLayer('detection-circles')) {
-                map.setPaintProperty('detection-circles', 'circle-opacity', 0.9);
-                map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 0.7);
-                map.setPaintProperty('detection-circles', 'circle-stroke-width', 2);
+            // Restore detection circle style (greyed if selection active)
+            if (currentFeature) {
+                setCirclesGreyed();
+            } else {
+                setCirclesDefault();
             }
             document.getElementById('imagery-controls').classList.remove('visible');
         }
