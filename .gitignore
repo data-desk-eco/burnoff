@@ -3,11 +3,8 @@
 __pycache__/
 *.pyc
 
-# Data (generated, except deployment files)
-data/*.duckdb
-data/*_light.geojson
-data/low.pmtiles
-data/high.pmtiles
+# Data (generated, served from GCS)
+data/
 
 # OS
 .DS_Store
