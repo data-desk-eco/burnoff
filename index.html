@@ -391,7 +391,7 @@
     <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
     <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
     <script>
-        // Configuration
+        // Configuration - PMTiles served from GCS (supports range requests)
         const DATA_URL = 'https://storage.googleapis.com/burnoff-data';
 
         // Register PMTiles protocol
@@ -431,11 +431,11 @@
         let currentFeature = null;
         let selectedDetection = null;
 
-        // Format date as "6 Sep" to avoid wrapping
+        // Format date as "6 Sep 2025" for historical tracking across years
         function formatDate(dateStr) {
             if (!dateStr) return '-';
             const d = new Date(dateStr);
-            return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' });
+            return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
         }
 
         // Magma-like colormap for SWIR visualization

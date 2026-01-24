@@ -29,7 +29,8 @@ make stats        # Detection statistics
 2. Filter by scene cloud cover (<30%)
 3. Check local cloud cover via SCL band (<30% in 3km buffer)
 4. Require B12 > 0.5 AND B11 > 0.3 (reflectance)
-5. Require flare 3x brighter than background median
+5. Require peak B12 > 0.8 (absolute intensity filter - excludes warehouses/clouds)
+6. Require flare 3x brighter than background median
 
 ## Notes
 - Sentinel-2 COGs are UTM-projected; converted to WGS84 via proj4

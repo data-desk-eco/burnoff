@@ -28,6 +28,7 @@ STAC_API = "https://earth-search.aws.element84.com/v1"
 # Detection thresholds (reflectance units)
 B12_THRESHOLD = 0.5  # SWIR2 (2190nm) - primary thermal indicator
 B11_THRESHOLD = 0.3  # SWIR1 (1610nm) - confirmation band
+MIN_PEAK_B12 = 0.8  # Minimum peak B12 for detection (absolute intensity filter)
 MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than background median
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
 MAX_FLARE_PIXELS = 16  # Flares are point sources; reject large hot areas
@@ -213,6 +214,7 @@ def process_image(
     buffer_m: int = 3000,
     b11_threshold: float = B11_THRESHOLD,
     b12_threshold: float = B12_THRESHOLD,
+    min_peak_b12: float = MIN_PEAK_B12,
     min_contrast: float = MIN_CONTRAST_RATIO,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
     max_pixels: int = 128,
@@ -222,7 +224,8 @@ def process_image(
     Detection requires:
     1. Local area mostly cloud-free (SCL band check)
     2. B12 and B11 above absolute thresholds
-    3. B12 significantly brighter than local background (contrast ratio)
+    3. Peak B12 above minimum intensity (absolute filter for real flares)
+    4. B12 significantly brighter than local background (contrast ratio)
     """
     try:
         b11_url = item["assets"]["swir16"]["href"]
@@ -286,11 +289,12 @@ def process_image(
 
         # Detection requires:
         # 1. Both bands above absolute thresholds
-        # 2. B12 significantly brighter than background (contrast check)
+        # 2. Peak B12 above minimum intensity (catches real flares, not warehouses/clouds)
+        # 3. B12 significantly brighter than background (contrast check)
         max_b12 = b12.max()
         contrast_ratio = max_b12 / max(background_median, 0.01)  # Avoid division by zero
 
-        if max_b12 < b12_threshold or contrast_ratio < min_contrast:
+        if max_b12 < b12_threshold or max_b12 < min_peak_b12 or contrast_ratio < min_contrast:
             return None
 
         # Find pixels that are both above threshold AND stand out from background
@@ -338,6 +342,7 @@ def detect(
     workers: int = 8,
     b11_threshold: float = B11_THRESHOLD,
     b12_threshold: float = B12_THRESHOLD,
+    min_peak_b12: float = MIN_PEAK_B12,
     min_contrast: float = MIN_CONTRAST_RATIO,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
     progress_callback=None,
@@ -355,6 +360,7 @@ def detect(
         workers: Parallel workers for image processing (default 8)
         b11_threshold: SWIR1 threshold in reflectance (default 0.3)
         b12_threshold: SWIR2 threshold in reflectance (default 0.5)
+        min_peak_b12: Minimum peak B12 for detection (default 0.8)
         min_contrast: Minimum ratio of flare brightness to background (default 3.0)
         max_local_cloud: Maximum local cloud fraction (default 0.3)
         progress_callback: Optional callback(current, total) for progress updates
@@ -377,7 +383,7 @@ def detect(
         futures = {
             executor.submit(
                 process_image, item, lat, lon, buffer_m,
-                b11_threshold, b12_threshold, min_contrast, max_local_cloud
+                b11_threshold, b12_threshold, min_peak_b12, min_contrast, max_local_cloud
             ): item
             for item in items
         }
