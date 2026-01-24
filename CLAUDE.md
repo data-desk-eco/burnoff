@@ -24,22 +24,33 @@ make stats        # Detection statistics
 - `queries/` - DuckDB SQL for loading, export, and analysis
 - `index.html` - Single-file web map
 
-## Detection Logic
-Implements DAFI v2 algorithm (Faruolo et al. 2024):
-1. Search Sentinel-2 L2A via Element84 STAC
-2. Filter by scene cloud cover (<30%)
-3. Check local cloud cover via SCL band (<30% in 3km buffer)
-4. Primary test: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0
-   - Positive values indicate thermal source (SWIR brighter than NIR)
-5. Fallback: Extremely Hot Pixel (EP) test for saturated sources
-   - B11 > 0.5 AND B8A < 0.3
-6. Cluster detections within 50m, max 200 pixels per cluster
-7. Track Occurrence Frequency (OF) = detections / images searched
-8. Classify persistence: high (≥30%), mid-high (≥20%), mid-low (≥15%), low (≥10%), intermittent (<10%)
+## Detection Algorithm
+
+Uses Sentinel-2 L2A surface reflectance (B8A, B11, B12 bands) via Element84 STAC.
+Search radius: 6km around each terminal.
+
+**Per-pixel detection** (must pass ALL tests):
+1. **Intensity**: B12 > 0.3 AND B11 > 0.2 (bright in SWIR)
+2. **Contrast**: B12 > 3× local background median (stands out from surroundings)
+3. **Thermal**: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0 (SWIR > NIR confirms heat)
+
+**Per-cluster filtering** (at detection time, permissive):
+4. Peak B12 ≥ 0.5 within connected component
+5. Cluster size ≤ 200 pixels (point source, not large fire)
+6. Scene cloud cover < 30%, local cloud cover < 30% (via SCL band)
+
+**Export filtering** (in SQL, stricter):
+7. Peak B12 ≥ 0.75 (high confidence flares only)
+8. Detection count ≥ 3 (temporal persistence)
+9. Cluster detections within 75m across dates
+
+**Output metrics**:
+- Occurrence Frequency (OF) = detection days / images searched
+- Persistence: high (≥30%), mid-high (≥20%), mid-low (≥15%), low (≥10%), intermittent (<10%)
 
 ## Changing Detection Parameters
 When modifying detection logic in `src/burnoff/detect.py`:
-1. Re-run detections: `uv run burnoff bulk data/terminals-run.json -o data/detections.json --year 2025 --no-resume`
+1. Re-run detections: `uv run burnoff bulk data/terminals-run.json -o data/detections.json --year 2025`
 2. Rebuild geodata: `make refresh`
 3. Commit all generated files (detections.json, .geojson, .pmtiles)
 
