@@ -27,12 +27,14 @@ os.environ.setdefault("VSI_CACHE_SIZE", "10000000")  # 10MB cache
 STAC_API = "https://earth-search.aws.element84.com/v1"
 
 # Detection thresholds (reflectance units)
-B12_THRESHOLD = 0.5  # SWIR2 (2190nm) - primary thermal indicator
-B11_THRESHOLD = 0.3  # SWIR1 (1610nm) - confirmation band
-MIN_PEAK_B12 = 0.8  # Minimum peak B12 for detection (absolute intensity filter)
-MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than background median
+# Based on DAFI methodology (Faruolo et al. 2024) and empirical tuning
+B12_THRESHOLD = 0.3  # SWIR2 (2190nm) - lowered to catch weaker flares
+B11_THRESHOLD = 0.2  # SWIR1 (1610nm) - confirmation band
+MIN_PEAK_B12 = 0.35  # Minimum peak B12 for detection (lowered from 0.8 for ground flares)
+MIN_CONTRAST_RATIO = 2.0  # Flare must be Nx brighter than background median
+MIN_NHISWNIR = -1.0  # NHISWNIR threshold disabled by default; set > 0 to enable stricter filtering
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
-MAX_FLARE_PIXELS = 16  # Flares are point sources; reject large hot areas
+MAX_FLARE_PIXELS = 50  # Allow larger clusters for ground flares (was 16)
 CLUSTER_DISTANCE_M = 200  # Cluster flares within this distance
 
 
@@ -218,21 +220,27 @@ def process_image(
     min_peak_b12: float = MIN_PEAK_B12,
     min_contrast: float = MIN_CONTRAST_RATIO,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
+    min_nhiswnir: float = MIN_NHISWNIR,
     max_pixels: int = 128,
 ) -> list[Detection]:
     """Process a single Sentinel-2 image and detect thermal anomalies.
 
+    Detection uses NHISWNIR index from DAFI methodology (Faruolo et al. 2024):
+    NHISWNIR = (B11 - B8A) / (B11 + B8A) where positive values indicate thermal sources.
+
     Detection requires:
     1. Local area mostly cloud-free (SCL band check)
-    2. B12 and B11 above absolute thresholds
-    3. Peak B12 above minimum intensity (absolute filter for real flares)
-    4. B12 significantly brighter than local background (contrast ratio)
+    2. NHISWNIR > 0 (SWIR brighter than NIR = thermal anomaly)
+    3. B12 and B11 above minimum thresholds
+    4. Peak B12 above minimum intensity
+    5. B12 significantly brighter than local background (contrast ratio)
 
     Returns a list of detections (one per distinct flare cluster in the image).
     """
     try:
         b11_url = item["assets"]["swir16"]["href"]
         b12_url = item["assets"]["swir22"]["href"]
+        b8a_url = item["assets"].get("nir08", {}).get("href")  # B8A (865nm) NIR band
         scl_url = item["assets"].get("scl", {}).get("href")
         visual_url = item["assets"].get("visual", {}).get("href")
         epsg = item["properties"]["proj:epsg"]
@@ -241,10 +249,13 @@ def process_image(
         # Get scale/offset for reflectance conversion
         b11_band = item["assets"]["swir16"].get("raster:bands", [{}])[0]
         b12_band = item["assets"]["swir22"].get("raster:bands", [{}])[0]
+        b8a_band = item["assets"].get("nir08", {}).get("raster:bands", [{}])[0] if b8a_url else {}
         b11_scale = b11_band.get("scale", 0.0001)
         b11_offset = b11_band.get("offset", -0.1)
         b12_scale = b12_band.get("scale", 0.0001)
         b12_offset = b12_band.get("offset", -0.1)
+        b8a_scale = b8a_band.get("scale", 0.0001) if b8a_band else 0.0001
+        b8a_offset = b8a_band.get("offset", -0.1) if b8a_band else -0.1
     except (KeyError, IndexError):
         return []
 
@@ -282,6 +293,17 @@ def process_image(
             out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
             b12 = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b12_scale + b12_offset
 
+        # Read NIR band (B8A) for NHISWNIR calculation if available
+        b8a = None
+        if b8a_url:
+            try:
+                with rasterio.open(b8a_url) as src:
+                    window = from_bounds(*utm_bounds, src.transform)
+                    out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
+                    b8a = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b8a_scale + b8a_offset
+            except Exception:
+                b8a = None
+
         # Calculate background statistics (exclude potential flare pixels)
         # Use median of non-bright pixels as background reference
         background_mask = b12 < b12_threshold
@@ -290,8 +312,21 @@ def process_image(
             return []
         background_median = np.median(b12[background_mask])
 
-        # Find pixels that are both above threshold AND stand out from background
+        # Build detection mask combining multiple criteria:
+        # 1. B12 above threshold (primary thermal indicator)
+        # 2. B11 above threshold (confirmation)
+        # 3. Contrast ratio check (stands out from background)
         mask = (b12 > b12_threshold) & (b11 > b11_threshold) & (b12 > background_median * min_contrast)
+
+        # Optional NHISWNIR filter: (B11 - B8A) / (B11 + B8A) > threshold
+        # Based on DAFI methodology (Faruolo et al. 2024), positive NHISWNIR indicates
+        # a thermal source where SWIR is brighter than NIR.
+        # However, this filter can be overly restrictive for cooler flares where
+        # surface NIR reflectance dominates. Only apply for min_nhiswnir > 0.
+        if b8a is not None and min_nhiswnir > 0:
+            denominator = b11 + b8a
+            nhiswnir = np.where(denominator > 0.01, (b11 - b8a) / denominator, 0)
+            mask = mask & (nhiswnir > min_nhiswnir)
 
         if not mask.any():
             return []
@@ -361,10 +396,14 @@ def detect(
     min_peak_b12: float = MIN_PEAK_B12,
     min_contrast: float = MIN_CONTRAST_RATIO,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
+    min_nhiswnir: float = MIN_NHISWNIR,
     progress_callback=None,
 ) -> DetectionResult:
     """
     Detect thermal anomalies at a location using Sentinel-2 SWIR bands.
+
+    Uses NHISWNIR index from DAFI methodology (Faruolo et al. 2024):
+    NHISWNIR = (B11 - B8A) / (B11 + B8A) where positive values indicate thermal sources.
 
     Args:
         lat: Latitude (WGS84)
@@ -374,11 +413,12 @@ def detect(
         max_cloud: Maximum scene cloud cover percentage (default 30)
         buffer_m: Buffer around point in meters (default 3000)
         workers: Parallel workers for image processing (default 8)
-        b11_threshold: SWIR1 threshold in reflectance (default 0.3)
-        b12_threshold: SWIR2 threshold in reflectance (default 0.5)
-        min_peak_b12: Minimum peak B12 for detection (default 0.8)
-        min_contrast: Minimum ratio of flare brightness to background (default 3.0)
+        b11_threshold: SWIR1 threshold in reflectance (default 0.2)
+        b12_threshold: SWIR2 threshold in reflectance (default 0.3)
+        min_peak_b12: Minimum peak B12 for detection (default 0.5)
+        min_contrast: Minimum ratio of flare brightness to background (default 2.5)
         max_local_cloud: Maximum local cloud fraction (default 0.3)
+        min_nhiswnir: Minimum NHISWNIR value for detection (default 0.0)
         progress_callback: Optional callback(current, total) for progress updates
 
     Returns:
@@ -400,7 +440,7 @@ def detect(
         futures = {
             executor.submit(
                 process_image, item, lat, lon, buffer_m,
-                b11_threshold, b12_threshold, min_peak_b12, min_contrast, max_local_cloud
+                b11_threshold, b12_threshold, min_peak_b12, min_contrast, max_local_cloud, min_nhiswnir
             ): item
             for item in items
         }
