@@ -15,7 +15,9 @@ WITH flare_detections AS (
                 'pixels', e.pixels,
                 'cog_b12', e.cog_b12,
                 'epsg', e.epsg,
-                'utm_bounds', json_array(e.utm_minx, e.utm_miny, e.utm_maxx, e.utm_maxy)
+                'utm_bounds', json_array(e.utm_minx, e.utm_miny, e.utm_maxx, e.utm_maxy),
+                'original_flare_lon', e.original_flare_lon,
+                'original_flare_lat', e.original_flare_lat
             )
         ) as detections
     FROM detections d
