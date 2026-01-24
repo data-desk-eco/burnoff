@@ -90,7 +90,6 @@
         .legend-circle {
             width: 10px; height: 10px; border-radius: 50%;
             margin-right: 10px;
-            box-shadow: 0 0 6px currentColor;
         }
 
         .info-panel {
@@ -242,19 +241,6 @@
             letter-spacing: 0.08em;
             transition: all 0.15s;
         }
-        .btn-close-imagery {
-            width: 100%;
-            padding: 10px;
-            margin-top: 12px;
-            background: rgba(255,255,255,0.08);
-            border: 1px solid var(--border-light);
-            color: var(--text-muted);
-        }
-        .btn-close-imagery:hover {
-            background: rgba(255,255,255,0.12);
-            color: var(--text-primary);
-        }
-
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -315,7 +301,6 @@
             width: 50px;
             height: 50px;
             color: #fff;
-            filter: drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 6px rgba(0,0,0,0.7));
             pointer-events: none;
         }
 
@@ -382,12 +367,6 @@
             .imagery-controls input[type="range"] {
                 margin-top: 4px;
             }
-            .btn-close-imagery {
-                width: auto;
-                margin-top: 0;
-                padding: 8px 12px;
-                white-space: nowrap;
-            }
         }
     </style>
 </head>
@@ -413,13 +392,11 @@
     <div class="modal-overlay" id="about-modal">
         <div class="modal-content">
             <h2>About this map</h2>
-            <p>This map detects gas flaring at LNG facilities using the DAFI v2 algorithm on Sentinel-2 SWIR imagery. Thermal anomalies are identified where NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0, indicating SWIR emission exceeds NIR reflectance. Click any detection to view the underlying imagery.</p>
+            <p>Detects gas flaring at LNG terminals using Sentinel-2 shortwave infrared imagery. Flares appear bright in SWIR bands due to thermal emission. Click any detection to view the satellite imagery.</p>
             <div class="modal-citations">
-                <h4 class="label-sm">REFERENCES</h4>
+                <h4 class="label-sm">INSPIRATION</h4>
                 <p style="font-size: 12px; line-height: 1.5;">
-                    Faruolo et al. (2024) <a href="https://doi.org/10.1088/1748-9326/ad82fb" target="_blank">The first global catalogue of gas flaring sources: the DAFI v2 algorithm</a>. Environ. Res. Lett.
-                    · Hu et al. (2023) <a href="https://doi.org/10.1016/j.jag.2023.103534" target="_blank">Detecting gas flaring with Sentinel-2 MSI and VIIRS</a>. Int. J. Appl. Earth Obs.
-                    · Wu et al. (2022) <a href="https://doi.org/10.1016/j.jag.2022.103075" target="_blank">Monitoring gas flaring in Texas</a>. Int. J. Appl. Earth Obs.
+                    Faruolo et al. (2024) <a href="https://doi.org/10.1088/1748-9326/ad82fb" target="_blank">The DAFI v2 algorithm for gas flare detection</a>. Environ. Res. Lett.
                 </p>
             </div>
             <div class="modal-dismiss">Click anywhere to dismiss</div>
@@ -439,10 +416,9 @@
         <div class="events-list custom-scroll" id="events-list"></div>
         <div class="imagery-controls" id="imagery-controls">
             <label class="label-sm">
-                Opacity
-                <input type="range" id="opacity-slider" min="0" max="100" value="85" oninput="setOpacity(this.value)">
+                Transparency
+                <input type="range" id="opacity-slider" min="0" max="100" value="15" oninput="setOpacity(100 - this.value)">
             </label>
-            <button class="btn btn-close-imagery" onclick="closeImagery()">Close imagery</button>
         </div>
     </div>
 
@@ -451,8 +427,9 @@
     <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
     <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
     <script>
-        // Configuration - PMTiles served from GCS (supports range requests)
-        const DATA_URL = 'https://storage.googleapis.com/burnoff-data';
+        // Configuration - Use local files on localhost, GCS in production
+        const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        const DATA_URL = isLocal ? 'data' : 'https://storage.googleapis.com/burnoff-data';
 
         // Register PMTiles protocol
         const protocol = new pmtiles.Protocol();
@@ -541,8 +518,9 @@
 
         // B12 intensity to color string (for chart)
         function b12Color(b12) {
-            // Map 0.8-1.5 to 0-1 for color scale
-            const t = Math.max(0, Math.min(1, (b12 - 0.8) / 0.7));
+            // Map 0.5-1.2 to 0-1 for color scale
+            // Clamp low end to ensure visibility (min ~purple, not black)
+            const t = Math.max(0.15, Math.min(1, (b12 - 0.5) / 0.7));
             const [r, g, b] = magmaColor(t);
             return `rgb(${r},${g},${b})`;
         }
@@ -570,9 +548,14 @@
             const maxDate = Math.max(...dates);
             const dateRange = maxDate - minDate || 1;  // Avoid division by zero
 
-            // B12 scale (fixed range for consistency)
-            const minB12 = 0.8;
-            const maxB12 = 1.5;
+            // B12 scale - dynamic based on actual data with padding
+            const b12Values = sorted.map(d => d.max_b12 || 0.5).filter(v => v > 0);
+            const dataMin = Math.min(...b12Values);
+            const dataMax = Math.max(...b12Values);
+            const padding = (dataMax - dataMin) * 0.1 || 0.1;
+            const minB12 = Math.max(0, dataMin - padding);
+            const maxB12 = dataMax + padding;
+            const b12Range = maxB12 - minB12 || 0.1;
 
             // Build SVG
             let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
@@ -580,18 +563,12 @@
             // Baseline
             svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
 
-            // Y-axis reference lines
-            [0.8, 1.0, 1.2].forEach(b12 => {
-                const y = margin.top + innerH - ((b12 - minB12) / (maxB12 - minB12)) * innerH;
-                svg += `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>`;
-            });
-
             // Dots for each detection
             sorted.forEach((det, i) => {
                 const date = new Date(det.date);
                 const x = margin.left + ((date - minDate) / dateRange) * innerW;
-                const b12 = det.max_b12 || 0.8;
-                const y = margin.top + innerH - ((Math.min(b12, maxB12) - minB12) / (maxB12 - minB12)) * innerH;
+                const b12 = det.max_b12 || 0.5;
+                const y = margin.top + innerH - ((b12 - minB12) / b12Range) * innerH;
                 const color = b12Color(b12);
 
                 svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${color}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
@@ -724,22 +701,21 @@
             const params = parseHash();
             if (!params) return;
 
-            // Query all features to find matching coordinates (within tolerance)
-            const features = map.querySourceFeatures('detections', { sourceLayer: 'detections' });
-            const match = features.find(f => {
-                const [fLon, fLat] = f.geometry.coordinates;
-                // Match within ~100m (0.001 degrees)
-                return Math.abs(fLat - params.lat) < 0.002 && Math.abs(fLon - params.lon) < 0.002;
-            });
+            // Fly to coordinates first, then query features after tiles load
+            map.flyTo({ center: [params.lon, params.lat], zoom: 14 });
 
-            if (match) {
-                // Navigate to feature
-                map.flyTo({ center: match.geometry.coordinates, zoom: 12 });
+            // Wait for tiles to load at the target location, then find and select feature
+            const onIdle = () => {
+                map.off('idle', onIdle);
 
-                // Wait for flyTo and show info with specific date selected
-                setTimeout(() => {
+                const features = map.querySourceFeatures('detections', { sourceLayer: 'detections' });
+                const match = features.find(f => {
+                    const [fLon, fLat] = f.geometry.coordinates;
+                    return Math.abs(fLat - params.lat) < 0.002 && Math.abs(fLon - params.lon) < 0.002;
+                });
+
+                if (match) {
                     showInfo(match);
-                    // Find and select the matching date
                     const item = document.querySelector(`.event-item[data-date="${params.date}"]`);
                     if (item) {
                         let detections = match.properties.detections || [];
@@ -749,8 +725,9 @@
                         const det = detections.find(d => d.date === params.date);
                         if (det) selectDetection(det, item, true);
                     }
-                }, 1000);
-            }
+                }
+            };
+            map.on('idle', onIdle);
         }
 
         // Handle back/forward navigation
@@ -973,30 +950,6 @@
                     paint: { 'raster-opacity': 0.85, 'raster-resampling': 'nearest' }
                 }, 'detection-circles');
 
-                // Add crosshair marker at original detection location (actual max B12 pixel)
-                if (map.getLayer('detection-marker')) map.removeLayer('detection-marker');
-                if (map.getSource('detection-marker-source')) map.removeSource('detection-marker-source');
-
-                const origLon = det.original_flare_lon || det.flare_lon;
-                const origLat = det.original_flare_lat || det.flare_lat;
-                if (origLon && origLat) {
-                    map.addSource('detection-marker-source', {
-                        type: 'geojson',
-                        data: { type: 'Point', coordinates: [origLon, origLat] }
-                    });
-                    map.addLayer({
-                        id: 'detection-marker',
-                        type: 'circle',
-                        source: 'detection-marker-source',
-                        paint: {
-                            'circle-radius': 8,
-                            'circle-color': 'transparent',
-                            'circle-stroke-color': '#00ffff',
-                            'circle-stroke-width': 2
-                        }
-                    });
-                }
-
                 // Make detection circles transparent but keep border visible
                 map.setPaintProperty('detection-circles', 'circle-opacity', 0);
                 map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 1);
@@ -1004,7 +957,7 @@
 
                 document.querySelector('.event-item.active')?.classList.remove('loading');
                 document.getElementById('imagery-controls').classList.add('visible');
-                document.getElementById('opacity-slider').value = 85;
+                document.getElementById('opacity-slider').value = 15;
 
             } catch (err) {
                 console.error('Failed to load COG:', err);
@@ -1021,8 +974,6 @@
         function closeImagery() {
             if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
             if (map.getSource('cog-source')) map.removeSource('cog-source');
-            if (map.getLayer('detection-marker')) map.removeLayer('detection-marker');
-            if (map.getSource('detection-marker-source')) map.removeSource('detection-marker-source');
             // Restore detection circle opacity
             if (map.getLayer('detection-circles')) {
                 map.setPaintProperty('detection-circles', 'circle-opacity', 0.9);
