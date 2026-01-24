@@ -34,8 +34,9 @@ MIN_PEAK_B12 = 0.6  # Minimum peak B12 for detection (raised to reduce false pos
 MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than background median
 MIN_NHISWNIR = -1.0  # NHISWNIR threshold disabled by default; set > 0 to enable stricter filtering
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
-MAX_FLARE_PIXELS = 50  # Allow larger clusters for ground flares (was 16)
+MAX_FLARE_PIXELS = 200  # Allow larger clusters - flares can be quite spread out
 CLUSTER_DISTANCE_M = 200  # Cluster flares within this distance
+MIN_DETECTION_COUNT = 2  # Require at least 2 detections at same location to filter noise
 
 
 @dataclass
@@ -117,6 +118,61 @@ def haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     dlam = np.radians(lon2 - lon1)
     a = np.sin(dphi/2)**2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlam/2)**2
     return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+
+
+def filter_by_detection_count(
+    detections: list[Detection],
+    min_count: int = MIN_DETECTION_COUNT,
+    distance_m: float = CLUSTER_DISTANCE_M,
+) -> list[Detection]:
+    """Filter detections to only include locations detected at least min_count times.
+
+    This helps filter out one-off false positives from thermal noise, heated surfaces,
+    or other transient anomalies. Real flares tend to be detected repeatedly.
+
+    Args:
+        detections: List of detections (after clustering)
+        min_count: Minimum number of unique dates a location must be detected
+        distance_m: Distance threshold for considering locations as the same
+
+    Returns:
+        Filtered list of detections
+    """
+    if min_count <= 1 or not detections:
+        return detections
+
+    # Group detections by location (using their clustered flare_lon/flare_lat)
+    # We need to group detections that share the same centroid
+    location_groups: dict[tuple[float, float], list[Detection]] = {}
+
+    for det in detections:
+        if det.flare_lon is None or det.flare_lat is None:
+            continue
+
+        # Round to ~10m precision for grouping (avoids floating point issues)
+        key = (round(det.flare_lon, 5), round(det.flare_lat, 5))
+
+        # Find if there's an existing group nearby
+        found_group = None
+        for group_key in location_groups:
+            dist = haversine_m(det.flare_lon, det.flare_lat, group_key[0], group_key[1])
+            if dist <= distance_m:
+                found_group = group_key
+                break
+
+        if found_group:
+            location_groups[found_group].append(det)
+        else:
+            location_groups[key] = [det]
+
+    # Count unique dates per location and filter
+    result = []
+    for group_detections in location_groups.values():
+        unique_dates = set(d.date for d in group_detections)
+        if len(unique_dates) >= min_count:
+            result.extend(group_detections)
+
+    return result
 
 
 def cluster_detections(detections: list[Detection], distance_m: float = CLUSTER_DISTANCE_M) -> list[Detection]:
@@ -440,6 +496,7 @@ def detect(
     min_contrast: float = MIN_CONTRAST_RATIO,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
     min_nhiswnir: float = MIN_NHISWNIR,
+    min_detection_count: int = MIN_DETECTION_COUNT,
     progress_callback=None,
 ) -> DetectionResult:
     """
@@ -462,6 +519,7 @@ def detect(
         min_contrast: Minimum ratio of flare brightness to background (default 2.5)
         max_local_cloud: Maximum local cloud fraction (default 0.3)
         min_nhiswnir: Minimum NHISWNIR value for detection (default 0.0)
+        min_detection_count: Minimum times a location must be detected to be included (default 2)
         progress_callback: Optional callback(current, total) for progress updates
 
     Returns:
@@ -500,6 +558,12 @@ def detect(
 
     # Cluster nearby flare locations across all images
     detections = cluster_detections(detections)
+
+    # Filter to locations detected at least min_detection_count times
+    # This removes one-off false positives from thermal noise
+    if min_detection_count > 1:
+        detections = filter_by_detection_count(detections, min_detection_count)
+
     detections.sort(key=lambda d: d.date)
 
     return DetectionResult(
