@@ -970,6 +970,30 @@
                     paint: { 'raster-opacity': 0.85, 'raster-resampling': 'nearest' }
                 }, 'detection-circles');
 
+                // Add crosshair marker at original detection location (actual max B12 pixel)
+                if (map.getLayer('detection-marker')) map.removeLayer('detection-marker');
+                if (map.getSource('detection-marker-source')) map.removeSource('detection-marker-source');
+
+                const origLon = det.original_flare_lon || det.flare_lon;
+                const origLat = det.original_flare_lat || det.flare_lat;
+                if (origLon && origLat) {
+                    map.addSource('detection-marker-source', {
+                        type: 'geojson',
+                        data: { type: 'Point', coordinates: [origLon, origLat] }
+                    });
+                    map.addLayer({
+                        id: 'detection-marker',
+                        type: 'circle',
+                        source: 'detection-marker-source',
+                        paint: {
+                            'circle-radius': 8,
+                            'circle-color': 'transparent',
+                            'circle-stroke-color': '#00ffff',
+                            'circle-stroke-width': 2
+                        }
+                    });
+                }
+
                 // Make detection circles transparent but keep border visible
                 map.setPaintProperty('detection-circles', 'circle-opacity', 0);
                 map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 1);
@@ -994,6 +1018,8 @@
         function closeImagery() {
             if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
             if (map.getSource('cog-source')) map.removeSource('cog-source');
+            if (map.getLayer('detection-marker')) map.removeLayer('detection-marker');
+            if (map.getSource('detection-marker-source')) map.removeSource('detection-marker-source');
             // Restore detection circle opacity
             if (map.getLayer('detection-circles')) {
                 map.setPaintProperty('detection-circles', 'circle-opacity', 0.9);
