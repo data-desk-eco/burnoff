@@ -427,6 +427,11 @@
     <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
     <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
     <script>
+        // Hide about modal if deep-linked (must run before anything else)
+        if (window.location.hash && window.location.hash.length > 1) {
+            document.getElementById('about-modal').classList.add('hidden');
+        }
+
         // Configuration - Use local files on localhost, GCS in production
         const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
         const DATA_URL = isLocal ? 'data' : 'https://storage.googleapis.com/burnoff-data';
@@ -740,10 +745,6 @@
                 setTimeout(() => restoreFromHash(), 500);
             });
 
-            // Hide about modal if deep-linked
-            if (window.location.hash && window.location.hash.length > 1) {
-                document.getElementById('about-modal').classList.add('hidden');
-            }
         });
 
         function restoreFromHash() {
