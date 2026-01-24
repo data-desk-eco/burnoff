@@ -431,11 +431,11 @@
         let currentFeature = null;
         let selectedDetection = null;
 
-        // Format date as "6 Sep" to avoid wrapping
+        // Format date as "6 Sep 2025" for historical tracking across years
         function formatDate(dateStr) {
             if (!dateStr) return '-';
             const d = new Date(dateStr);
-            return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' });
+            return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
         }
 
         // Magma-like colormap for SWIR visualization

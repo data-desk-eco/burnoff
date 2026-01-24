@@ -1,0 +1,100 @@
+name: Run Detection Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Year to analyze'
+        required: true
+        default: '2025'
+        type: string
+      min_peak:
+        description: 'Minimum peak B12 threshold'
+        required: false
+        default: '0.8'
+        type: string
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours for large detection runs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install tippecanoe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libsqlite3-dev zlib1g-dev
+          git clone https://github.com/felt/tippecanoe.git
+          cd tippecanoe && make -j && sudo make install
+
+      - name: Install DuckDB
+        run: |
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.1.3/duckdb_cli-linux-amd64.zip -o duckdb.zip
+          unzip duckdb.zip && sudo mv duckdb /usr/local/bin/
+
+      - name: Prepare terminals
+        run: |
+          mkdir -p data
+          # Use existing terminals or create sample
+          if [ -f "data/terminals.json" ]; then
+            echo "Using existing terminals.json"
+          else
+            echo '[{"id":3586,"name":"Ichthys LNG","lat":-12.514821,"lon":130.918253,"type":"Export"}]' > data/terminals.json
+            echo "Created sample terminals.json"
+          fi
+
+      - name: Run detection
+        run: |
+          uv run burnoff bulk data/terminals.json -o data/detections.json \
+            --year ${{ inputs.year }} \
+            --min-peak ${{ inputs.min_peak }} \
+            --workers 4
+
+      - name: Build database and PMTiles
+        run: |
+          duckdb data/flares.duckdb < queries/init.sql
+          duckdb data/flares.duckdb < queries/load.sql
+          duckdb -noheader -list data/flares.duckdb < queries/export_map.sql > data/detections.geojson
+          duckdb -noheader -list data/flares.duckdb < queries/export_map_light.sql > data/detections_light.geojson
+
+          # Build PMTiles (low-zoom light, high-zoom full)
+          tippecanoe -o data/low.pmtiles --force --layer=detections -Z0 -z9 -r1 -pk -pf data/detections_light.geojson
+          tippecanoe -o data/high.pmtiles --force --layer=detections -Z10 -z14 -r1 -pk -pf data/detections.geojson
+          tile-join -o data/detections.pmtiles --force data/low.pmtiles data/high.pmtiles
+          rm -f data/low.pmtiles data/high.pmtiles
+
+          echo "Created PMTiles: $(du -h data/detections.pmtiles | cut -f1)"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: detection-data
+          path: |
+            data/detections.json
+            data/detections.pmtiles
+          retention-days: 30
+
+      - name: Authenticate to Google Cloud
+        if: ${{ vars.GCS_BUCKET != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCS_SERVICE_ACCOUNT_KEY }}
+
+      - name: Set up Cloud SDK
+        if: ${{ vars.GCS_BUCKET != '' }}
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to GCS
+        if: ${{ vars.GCS_BUCKET != '' }}
+        run: |
+          gsutil -h "Cache-Control:public, max-age=3600" cp data/detections.pmtiles gs://${{ vars.GCS_BUCKET }}/
+          echo "Deployed to: https://storage.googleapis.com/${{ vars.GCS_BUCKET }}/detections.pmtiles"
