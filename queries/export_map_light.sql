@@ -12,6 +12,7 @@ WITH flare_detections AS (
     JOIN detection_events e ON d.lat = e.lat AND d.lon = e.lon
     WHERE e.flare_lon IS NOT NULL AND e.flare_lat IS NOT NULL
     GROUP BY d.id, d.name, e.flare_lon, e.flare_lat
+    HAVING COUNT(*) >= 6  -- Filter out one-off fires, require persistent flaring
 )
 SELECT json_object(
     'type', 'FeatureCollection',

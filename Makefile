@@ -74,7 +74,9 @@ refresh:
 		-Z10 -z14 -r1 -pk -pf $(GEOJSON)
 	tile-join -o $(PMTILES) --force $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
 	rm -f $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
+	gcloud storage cp $(PMTILES) $(GCS_BUCKET)/
 	@echo "Refreshed: $$(duckdb -noheader -list $(DB) 'SELECT COUNT(*) FROM detections') detections"
+	@echo "Deployed to: https://storage.googleapis.com/burnoff-data/detections.pmtiles"
 
 # Sync terminals from research repo
 $(DATA_DIR)/terminals.json: | $(DATA_DIR)
