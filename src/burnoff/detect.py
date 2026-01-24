@@ -44,9 +44,12 @@ class Detection:
     date: date
     max_b12: float
     pixel_count: int
-    # Actual location of max B12 pixel
+    # Actual location of max B12 pixel (may be adjusted to cluster centroid)
     flare_lon: float | None = None
     flare_lat: float | None = None
+    # Original location before clustering (always the actual max B12 pixel)
+    original_flare_lon: float | None = None
+    original_flare_lat: float | None = None
     # COG URLs for on-demand rendering
     cog_urls: dict | None = None  # {b11, b12, visual} URLs
     bounds: tuple | None = None   # (minx, miny, maxx, maxy) in EPSG:4326
@@ -94,6 +97,8 @@ class DetectionResult:
                     "pixels": d.pixel_count,
                     "flare_lon": d.flare_lon,
                     "flare_lat": d.flare_lat,
+                    "original_flare_lon": d.original_flare_lon,
+                    "original_flare_lat": d.original_flare_lat,
                     "cog": d.cog_urls,
                     "bounds": d.bounds,
                     "utm_bounds": d.utm_bounds,
@@ -148,20 +153,22 @@ def cluster_detections(detections: list[Detection], distance_m: float = CLUSTER_
         if not assigned:
             clusters.append([det])
 
-    # Update each detection's flare location to cluster centroid
+    # Update each detection's flare location to cluster centroid, preserving original
     result = []
     for cluster in clusters:
         centroid_lon = sum(d.flare_lon for d in cluster) / len(cluster)
         centroid_lat = sum(d.flare_lat for d in cluster) / len(cluster)
 
         for det in cluster:
-            # Create new detection with updated coordinates
+            # Create new detection with centroid coordinates but preserve original
             result.append(Detection(
                 date=det.date,
                 max_b12=det.max_b12,
                 pixel_count=det.pixel_count,
                 flare_lon=centroid_lon,
                 flare_lat=centroid_lat,
+                original_flare_lon=det.flare_lon,  # Preserve actual max B12 pixel location
+                original_flare_lat=det.flare_lat,
                 cog_urls=det.cog_urls,
                 bounds=det.bounds,
                 utm_bounds=det.utm_bounds,
@@ -275,7 +282,15 @@ def process_image(
         # SCL classes: 8=cloud_medium_prob, 9=cloud_high_prob, 10=thin_cirrus, 3=cloud_shadow
         if scl_url:
             with rasterio.open(scl_url) as src:
-                window = from_bounds(*utm_bounds, src.transform)
+                # Clip bounds to image extent
+                img_bounds = src.bounds
+                clipped = (
+                    max(utm_bounds[0], img_bounds.left),
+                    max(utm_bounds[1], img_bounds.bottom),
+                    min(utm_bounds[2], img_bounds.right),
+                    min(utm_bounds[3], img_bounds.top),
+                )
+                window = from_bounds(*clipped, src.transform)
                 out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
                 scl = src.read(1, window=window, out_shape=out_shape)
                 cloud_mask = np.isin(scl, [3, 8, 9, 10])
@@ -284,21 +299,45 @@ def process_image(
                     return []  # Too cloudy locally
 
         with rasterio.open(b11_url) as src:
-            window = from_bounds(*utm_bounds, src.transform)
+            img_bounds = src.bounds
+            clipped = (
+                max(utm_bounds[0], img_bounds.left),
+                max(utm_bounds[1], img_bounds.bottom),
+                min(utm_bounds[2], img_bounds.right),
+                min(utm_bounds[3], img_bounds.top),
+            )
+            window = from_bounds(*clipped, src.transform)
             out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
             b11 = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b11_scale + b11_offset
 
         with rasterio.open(b12_url) as src:
-            window = from_bounds(*utm_bounds, src.transform)
+            # Clip requested bounds to image extent to avoid coordinate errors
+            # (resampling with out-of-bounds areas causes spatial displacement)
+            img_bounds = src.bounds
+            clipped_bounds = (
+                max(utm_bounds[0], img_bounds.left),
+                max(utm_bounds[1], img_bounds.bottom),
+                min(utm_bounds[2], img_bounds.right),
+                min(utm_bounds[3], img_bounds.top),
+            )
+            window = from_bounds(*clipped_bounds, src.transform)
             out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
             b12 = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b12_scale + b12_offset
+            actual_bounds = clipped_bounds
 
         # Read NIR band (B8A) for NHISWNIR calculation if available
         b8a = None
         if b8a_url:
             try:
                 with rasterio.open(b8a_url) as src:
-                    window = from_bounds(*utm_bounds, src.transform)
+                    img_bounds = src.bounds
+                    clipped = (
+                        max(utm_bounds[0], img_bounds.left),
+                        max(utm_bounds[1], img_bounds.bottom),
+                        min(utm_bounds[2], img_bounds.right),
+                        min(utm_bounds[3], img_bounds.top),
+                    )
+                    window = from_bounds(*clipped, src.transform)
                     out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
                     b8a = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b8a_scale + b8a_offset
             except Exception:
@@ -358,11 +397,12 @@ def process_image(
             max_idx = np.unravel_index(cluster_b12.argmax(), cluster_b12.shape)
             row, col = max_idx
 
-            # Convert pixel coords back to UTM
+            # Convert pixel coords back to UTM using actual window bounds
+            # (not utm_bounds, which may extend beyond the image)
             col_frac = (col + 0.5) / b12.shape[1]
             row_frac = (row + 0.5) / b12.shape[0]
-            flare_utm_x = utm_bounds[0] + col_frac * (utm_bounds[2] - utm_bounds[0])
-            flare_utm_y = utm_bounds[3] - row_frac * (utm_bounds[3] - utm_bounds[1])
+            flare_utm_x = actual_bounds[0] + col_frac * (actual_bounds[2] - actual_bounds[0])
+            flare_utm_y = actual_bounds[3] - row_frac * (actual_bounds[3] - actual_bounds[1])
 
             # Convert to WGS84
             flare_lon, flare_lat = transformer_to_wgs.transform(flare_utm_x, flare_utm_y)
