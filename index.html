@@ -519,9 +519,10 @@
                 'source-layer': 'detections',
                 paint: {
                     'circle-radius': ['interpolate', ['exponential', 1.5], ['zoom'],
-                        0, ['+', 3, ['*', ['coalesce', ['get', 'max_b12'], 0], 3]],
-                        6, ['+', 5, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
-                        14, ['+', 8, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
+                        0, ['+', 4, ['*', ['coalesce', ['get', 'max_b12'], 0], 4]],
+                        6, ['+', 6, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
+                        10, ['+', 10, ['*', ['coalesce', ['get', 'max_b12'], 0], 8]],
+                        14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
                     ],
                     'circle-color': ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
                         0.3, '#b63679',
@@ -535,13 +536,25 @@
                 }
             });
 
-            map.on('mouseenter', 'detection-circles', () => map.getCanvas().style.cursor = 'pointer');
+            // Only enable interaction at zoom 10+ (where detection details are available)
+            const MIN_INTERACTIVE_ZOOM = 10;
+
+            map.on('mouseenter', 'detection-circles', () => {
+                if (map.getZoom() >= MIN_INTERACTIVE_ZOOM) {
+                    map.getCanvas().style.cursor = 'pointer';
+                }
+            });
             map.on('mouseleave', 'detection-circles', () => map.getCanvas().style.cursor = '');
 
             map.on('click', 'detection-circles', (e) => {
+                if (map.getZoom() < MIN_INTERACTIVE_ZOOM) {
+                    // Zoom in to enable interaction
+                    map.flyTo({ center: e.features[0].geometry.coordinates, zoom: MIN_INTERACTIVE_ZOOM });
+                    return;
+                }
                 const feature = e.features[0];
                 showInfo(feature);
-                map.flyTo({ center: feature.geometry.coordinates, zoom: Math.max(map.getZoom(), 8) });
+                map.flyTo({ center: feature.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
             });
 
             map.on('click', (e) => {
