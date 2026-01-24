@@ -1,4 +1,15 @@
-"""Core detection logic using Sentinel-2 SWIR bands."""
+"""Core detection logic using Sentinel-2 SWIR bands.
+
+Implements the DAFI v2 algorithm (Faruolo et al. 2024) for daytime gas flare detection:
+- Primary test: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0 indicates thermal source
+- Fallback: Extremely Hot Pixel (EP) test for saturated sources
+- Occurrence Frequency (OF) tracking across multi-temporal series
+
+Reference:
+Faruolo et al. (2024) "The first global catalogue of gas flaring sources derived from
+a multi-temporal time series of OLI and MSI daytime data: the DAFI v2 algorithm"
+Environ. Res. Lett. 19 114053. https://doi.org/10.1088/1748-9326/ad82fb
+"""
 
 import os
 from dataclasses import dataclass, field
@@ -26,17 +37,14 @@ os.environ.setdefault("VSI_CACHE_SIZE", "10000000")  # 10MB cache
 
 STAC_API = "https://earth-search.aws.element84.com/v1"
 
-# Detection thresholds (reflectance units)
-# Based on DAFI methodology (Faruolo et al. 2024) and empirical tuning
-B12_THRESHOLD = 0.3  # SWIR2 (2190nm) - lowered to catch weaker flares
-B11_THRESHOLD = 0.2  # SWIR1 (1610nm) - confirmation band
-MIN_PEAK_B12 = 0.6  # Minimum peak B12 for detection (raised to reduce false positives)
-MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than background median
-MIN_NHISWNIR = -1.0  # NHISWNIR threshold disabled by default; set > 0 to enable stricter filtering
+# DAFI v2 detection parameters
+# Primary: NHISWNIR > 0 means SWIR brighter than NIR (thermal source)
+# EP test: Extremely hot pixels with very high SWIR reflectance
+EP_B11_THRESHOLD = 0.5  # High B11 reflectance for EP test (extremely hot)
+EP_B8A_MAX = 0.3  # Max NIR to exclude bright reflective surfaces in EP test
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
-MAX_FLARE_PIXELS = 200  # Allow larger clusters - flares can be quite spread out
-CLUSTER_DISTANCE_M = 200  # Cluster flares within this distance
-MIN_DETECTION_COUNT = 2  # Require at least 2 detections at same location to filter noise
+MAX_FLARE_PIXELS = 200  # Max pixels per cluster (larger = not point source)
+CLUSTER_DISTANCE_M = 50  # Cluster flares within this distance (tighter than before)
 
 
 @dataclass
@@ -56,6 +64,8 @@ class Detection:
     bounds: tuple | None = None   # (minx, miny, maxx, maxy) in EPSG:4326
     utm_bounds: tuple | None = None  # (minx, miny, maxx, maxy) in native UTM
     epsg: int | None = None  # UTM zone EPSG code
+    # DAFI v2: NHISWNIR value at detection (for diagnostics)
+    nhiswnir: float | None = None
 
 
 @dataclass
@@ -70,10 +80,28 @@ class DetectionResult:
     detections: list[Detection]
 
     @property
-    def detection_rate(self) -> float | None:
+    def occurrence_frequency(self) -> float | None:
+        """DAFI v2 Occurrence Frequency: detection days / total images (%)."""
         if self.images_searched == 0:
             return None
-        return self.images_with_detection / self.images_searched
+        return (self.images_with_detection / self.images_searched) * 100
+
+    @property
+    def persistence_level(self) -> str | None:
+        """DAFI v2 persistence classification based on OF."""
+        of = self.occurrence_frequency
+        if of is None:
+            return None
+        if of >= 30:
+            return "high"
+        elif of >= 20:
+            return "mid-high"
+        elif of >= 15:
+            return "mid-low"
+        elif of >= 10:
+            return "low"
+        else:
+            return "intermittent"
 
     @property
     def max_b12(self) -> float | None:
@@ -89,7 +117,8 @@ class DetectionResult:
             "end_date": self.end_date.isoformat(),
             "images": self.images_searched,
             "detections": self.images_with_detection,
-            "detection_rate": self.detection_rate,
+            "occurrence_frequency": self.occurrence_frequency,
+            "persistence_level": self.persistence_level,
             "max_b12": self.max_b12,
             "detection_dates": [
                 {
@@ -118,61 +147,6 @@ def haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     dlam = np.radians(lon2 - lon1)
     a = np.sin(dphi/2)**2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlam/2)**2
     return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-
-
-def filter_by_detection_count(
-    detections: list[Detection],
-    min_count: int = MIN_DETECTION_COUNT,
-    distance_m: float = CLUSTER_DISTANCE_M,
-) -> list[Detection]:
-    """Filter detections to only include locations detected at least min_count times.
-
-    This helps filter out one-off false positives from thermal noise, heated surfaces,
-    or other transient anomalies. Real flares tend to be detected repeatedly.
-
-    Args:
-        detections: List of detections (after clustering)
-        min_count: Minimum number of unique dates a location must be detected
-        distance_m: Distance threshold for considering locations as the same
-
-    Returns:
-        Filtered list of detections
-    """
-    if min_count <= 1 or not detections:
-        return detections
-
-    # Group detections by location (using their clustered flare_lon/flare_lat)
-    # We need to group detections that share the same centroid
-    location_groups: dict[tuple[float, float], list[Detection]] = {}
-
-    for det in detections:
-        if det.flare_lon is None or det.flare_lat is None:
-            continue
-
-        # Round to ~10m precision for grouping (avoids floating point issues)
-        key = (round(det.flare_lon, 5), round(det.flare_lat, 5))
-
-        # Find if there's an existing group nearby
-        found_group = None
-        for group_key in location_groups:
-            dist = haversine_m(det.flare_lon, det.flare_lat, group_key[0], group_key[1])
-            if dist <= distance_m:
-                found_group = group_key
-                break
-
-        if found_group:
-            location_groups[found_group].append(det)
-        else:
-            location_groups[key] = [det]
-
-    # Count unique dates per location and filter
-    result = []
-    for group_detections in location_groups.values():
-        unique_dates = set(d.date for d in group_detections)
-        if len(unique_dates) >= min_count:
-            result.extend(group_detections)
-
-    return result
 
 
 def cluster_detections(detections: list[Detection], distance_m: float = CLUSTER_DISTANCE_M) -> list[Detection]:
@@ -278,25 +252,15 @@ def process_image(
     lat: float,
     lon: float,
     buffer_m: int = 3000,
-    b11_threshold: float = B11_THRESHOLD,
-    b12_threshold: float = B12_THRESHOLD,
-    min_peak_b12: float = MIN_PEAK_B12,
-    min_contrast: float = MIN_CONTRAST_RATIO,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
-    min_nhiswnir: float = MIN_NHISWNIR,
     max_pixels: int = 128,
 ) -> list[Detection]:
-    """Process a single Sentinel-2 image and detect thermal anomalies.
+    """Process a single Sentinel-2 image using DAFI v2 algorithm.
 
-    Detection uses NHISWNIR index from DAFI methodology (Faruolo et al. 2024):
-    NHISWNIR = (B11 - B8A) / (B11 + B8A) where positive values indicate thermal sources.
-
-    Detection requires:
+    DAFI v2 detection criteria (Faruolo et al. 2024):
     1. Local area mostly cloud-free (SCL band check)
-    2. NHISWNIR > 0 (SWIR brighter than NIR = thermal anomaly)
-    3. B12 and B11 above minimum thresholds
-    4. Peak B12 above minimum intensity
-    5. B12 significantly brighter than local background (contrast ratio)
+    2. Primary: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0 (SWIR > NIR = thermal)
+    3. Fallback: Extremely Hot Pixel (EP) test for saturated sources
 
     Returns a list of detections (one per distinct flare cluster in the image).
     """
@@ -338,7 +302,6 @@ def process_image(
         # SCL classes: 8=cloud_medium_prob, 9=cloud_high_prob, 10=thin_cirrus, 3=cloud_shadow
         if scl_url:
             with rasterio.open(scl_url) as src:
-                # Clip bounds to image extent
                 img_bounds = src.bounds
                 clipped = (
                     max(utm_bounds[0], img_bounds.left),
@@ -367,8 +330,6 @@ def process_image(
             b11 = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b11_scale + b11_offset
 
         with rasterio.open(b12_url) as src:
-            # Clip requested bounds to image extent to avoid coordinate errors
-            # (resampling with out-of-bounds areas causes spatial displacement)
             img_bounds = src.bounds
             clipped_bounds = (
                 max(utm_bounds[0], img_bounds.left),
@@ -381,7 +342,7 @@ def process_image(
             b12 = src.read(1, window=window, out_shape=out_shape).astype(np.float32) * b12_scale + b12_offset
             actual_bounds = clipped_bounds
 
-        # Read NIR band (B8A) for NHISWNIR calculation if available
+        # Read NIR band (B8A) for NHISWNIR calculation
         b8a = None
         if b8a_url:
             try:
@@ -399,32 +360,27 @@ def process_image(
             except Exception:
                 b8a = None
 
-        # Calculate background statistics (exclude potential flare pixels)
-        # Use median of non-bright pixels as background reference
-        background_mask = b12 < b12_threshold
-        if background_mask.sum() < 10:
-            # Not enough background pixels to compare
-            return []
-        background_median = np.median(b12[background_mask])
-        # Ensure reasonable baseline for contrast ratio (reflectance offset can make median negative)
-        # Use 0.15 as minimum to ensure flares are significantly brighter than typical surfaces
-        background_baseline = max(background_median, 0.15)
-
-        # Build detection mask combining multiple criteria:
-        # 1. B12 above threshold (primary thermal indicator)
-        # 2. B11 above threshold (confirmation)
-        # 3. Contrast ratio check (stands out from background)
-        mask = (b12 > b12_threshold) & (b11 > b11_threshold) & (b12 > background_baseline * min_contrast)
-
-        # Optional NHISWNIR filter: (B11 - B8A) / (B11 + B8A) > threshold
-        # Based on DAFI methodology (Faruolo et al. 2024), positive NHISWNIR indicates
-        # a thermal source where SWIR is brighter than NIR.
-        # However, this filter can be overly restrictive for cooler flares where
-        # surface NIR reflectance dominates. Only apply for min_nhiswnir > 0.
-        if b8a is not None and min_nhiswnir > 0:
+        # DAFI v2 Detection Algorithm
+        # Primary test: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0
+        # This indicates thermal emission where SWIR is brighter than NIR
+        nhiswnir = np.zeros_like(b11)
+        if b8a is not None:
             denominator = b11 + b8a
             nhiswnir = np.where(denominator > 0.01, (b11 - b8a) / denominator, 0)
-            mask = mask & (nhiswnir > min_nhiswnir)
+            nhiswnir_mask = nhiswnir > 0
+        else:
+            # Fallback if B8A unavailable: use high SWIR threshold
+            nhiswnir_mask = b11 > 0.3
+
+        # EP (Extremely Hot Pixel) test: very high SWIR with low NIR
+        # Catches saturated thermal sources that might fail NHISWNIR
+        if b8a is not None:
+            ep_mask = (b11 > EP_B11_THRESHOLD) & (b8a < EP_B8A_MAX)
+        else:
+            ep_mask = b11 > EP_B11_THRESHOLD
+
+        # Combined mask: NHISWNIR > 0 OR EP test passes
+        mask = nhiswnir_mask | ep_mask
 
         if not mask.any():
             return []
@@ -441,20 +397,16 @@ def process_image(
             if pixel_count > MAX_FLARE_PIXELS:
                 continue
 
-            # Get max B12 within this cluster
+            # Get max B12 within this cluster (for intensity ranking)
             cluster_b12 = np.where(cluster_mask, b12, 0)
             cluster_max_b12 = float(cluster_b12.max())
 
-            # Check if this cluster meets the intensity threshold
-            if cluster_max_b12 < min_peak_b12:
-                continue
-
-            # Find location of max B12 pixel in this cluster
+            # Get NHISWNIR at max B12 location
             max_idx = np.unravel_index(cluster_b12.argmax(), cluster_b12.shape)
             row, col = max_idx
+            cluster_nhiswnir = float(nhiswnir[row, col]) if b8a is not None else None
 
             # Convert pixel coords back to UTM using actual window bounds
-            # (not utm_bounds, which may extend beyond the image)
             col_frac = (col + 0.5) / b12.shape[1]
             row_frac = (row + 0.5) / b12.shape[0]
             flare_utm_x = actual_bounds[0] + col_frac * (actual_bounds[2] - actual_bounds[0])
@@ -473,6 +425,7 @@ def process_image(
                 bounds=wgs_bounds,
                 utm_bounds=utm_bounds,
                 epsg=int(epsg),
+                nhiswnir=cluster_nhiswnir,
             ))
 
         return detections
@@ -490,20 +443,16 @@ def detect(
     max_cloud: int = 30,
     buffer_m: int = 3000,
     workers: int = 8,
-    b11_threshold: float = B11_THRESHOLD,
-    b12_threshold: float = B12_THRESHOLD,
-    min_peak_b12: float = MIN_PEAK_B12,
-    min_contrast: float = MIN_CONTRAST_RATIO,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
-    min_nhiswnir: float = MIN_NHISWNIR,
-    min_detection_count: int = MIN_DETECTION_COUNT,
     progress_callback=None,
 ) -> DetectionResult:
     """
-    Detect thermal anomalies at a location using Sentinel-2 SWIR bands.
+    Detect gas flares at a location using DAFI v2 algorithm.
 
-    Uses NHISWNIR index from DAFI methodology (Faruolo et al. 2024):
-    NHISWNIR = (B11 - B8A) / (B11 + B8A) where positive values indicate thermal sources.
+    Implements Faruolo et al. (2024) methodology:
+    - Primary: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0 indicates thermal source
+    - Fallback: Extremely Hot Pixel (EP) test for saturated sources
+    - Tracks Occurrence Frequency (OF) for persistence classification
 
     Args:
         lat: Latitude (WGS84)
@@ -513,17 +462,11 @@ def detect(
         max_cloud: Maximum scene cloud cover percentage (default 30)
         buffer_m: Buffer around point in meters (default 3000)
         workers: Parallel workers for image processing (default 8)
-        b11_threshold: SWIR1 threshold in reflectance (default 0.2)
-        b12_threshold: SWIR2 threshold in reflectance (default 0.3)
-        min_peak_b12: Minimum peak B12 for detection (default 0.5)
-        min_contrast: Minimum ratio of flare brightness to background (default 2.5)
         max_local_cloud: Maximum local cloud fraction (default 0.3)
-        min_nhiswnir: Minimum NHISWNIR value for detection (default 0.0)
-        min_detection_count: Minimum times a location must be detected to be included (default 2)
         progress_callback: Optional callback(current, total) for progress updates
 
     Returns:
-        DetectionResult with all detections found
+        DetectionResult with all detections and occurrence frequency stats
     """
     items = search_stac(lat, lon, start_date, end_date, max_cloud)
 
@@ -540,8 +483,7 @@ def detect(
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(
-                process_image, item, lat, lon, buffer_m,
-                b11_threshold, b12_threshold, min_peak_b12, min_contrast, max_local_cloud, min_nhiswnir
+                process_image, item, lat, lon, buffer_m, max_local_cloud
             ): item
             for item in items
         }
@@ -557,12 +499,7 @@ def detect(
                 detections.extend(results)
 
     # Cluster nearby flare locations across all images
-    detections = cluster_detections(detections)
-
-    # Filter to locations detected at least min_detection_count times
-    # This removes one-off false positives from thermal noise
-    if min_detection_count > 1:
-        detections = filter_by_detection_count(detections, min_detection_count)
+    detections = cluster_detections(detections, CLUSTER_DISTANCE_M)
 
     detections.sort(key=lambda d: d.date)
 
