@@ -252,6 +252,58 @@
             opacity: 0.4;
             cursor: not-allowed;
         }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            cursor: pointer;
+        }
+        .modal-overlay.hidden { display: none; }
+        .modal-content {
+            background: rgba(20, 20, 25, 0.95);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 28px 32px;
+            max-width: 520px;
+            color: rgba(255, 255, 255, 0.85);
+            font-size: 13px;
+            line-height: 1.7;
+            cursor: default;
+        }
+        .modal-content h2 {
+            font-size: 14px;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin: 0 0 16px 0;
+            color: #fff;
+        }
+        .modal-content p { margin: 0 0 16px 0; }
+        .modal-citations {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.5);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 14px;
+            margin-top: 8px;
+        }
+        .modal-citations a {
+            color: rgba(255, 200, 150, 0.7);
+            text-decoration: none;
+        }
+        .modal-citations a:hover { color: #fff; }
+        .modal-dismiss {
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.35);
+            text-align: center;
+            margin-top: 16px;
+            letter-spacing: 0.05em;
+        }
     </style>
 </head>
 <body>
@@ -264,9 +316,22 @@
 
     <div class="panel legend">
         <h4>B12 Intensity</h4>
-        <div class="legend-item"><div class="legend-circle" style="background: #f7f7f7; color: #f7f7f7;"></div>High</div>
-        <div class="legend-item"><div class="legend-circle" style="background: #fc8d59; color: #fc8d59;"></div>Medium</div>
-        <div class="legend-item"><div class="legend-circle" style="background: #b30000; color: #b30000;"></div>Low</div>
+        <div class="legend-item"><div class="legend-circle" style="background: #ffff00; color: #ffff00;"></div>High</div>
+        <div class="legend-item"><div class="legend-circle" style="background: #f8765c; color: #f8765c;"></div>Medium</div>
+        <div class="legend-item"><div class="legend-circle" style="background: #b63679; color: #b63679;"></div>Low</div>
+    </div>
+
+    <div class="modal-overlay" id="about-modal">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h2>About this map</h2>
+            <p>This map detects gas flaring at LNG facilities using Sentinel-2 shortwave infrared (SWIR) imagery. Thermal anomalies are identified where B12 (2190nm) and B11 (1610nm) reflectance exceeds background levels, indicating active combustion. Click any detection to view the underlying SWIR imagery.</p>
+            <div class="modal-citations">
+                <h4 style="font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 10px 0; color: rgba(255,255,255,0.5);">INSPIRATION</h4>
+                <p>Hu et al. (2023) <a href="https://doi.org/10.1016/j.jag.2023.103534" target="_blank">An approach to detect gas flaring sites using Sentinel-2 MSI and NOAA-20 VIIRS images</a>. Int. J. Appl. Earth Obs. Geoinf.<br><br>
+                Wu et al. (2022) <a href="https://doi.org/10.1016/j.jag.2022.103075" target="_blank">Monitoring gas flaring in Texas using time-series Sentinel-2 MSI and Landsat-8 OLI images</a>. Int. J. Appl. Earth Obs. Geoinf.</p>
+            </div>
+            <div class="modal-dismiss">Click anywhere to dismiss</div>
+        </div>
     </div>
 
     <div class="panel info-panel" id="info">
@@ -326,31 +391,7 @@
         });
 
         let currentFeature = null;
-        let detectionsData = [];  // Loaded from detections.json
         let selectedDetection = null;
-
-        // Load full detection data for event list and zoom to bounds
-        fetch('data/detections.json')
-            .then(r => r.json())
-            .then(data => {
-                detectionsData = data;
-                // Compute bounds from all facilities
-                if (data.length > 0) {
-                    let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
-                    data.forEach(f => {
-                        minLon = Math.min(minLon, f.lon);
-                        maxLon = Math.max(maxLon, f.lon);
-                        minLat = Math.min(minLat, f.lat);
-                        maxLat = Math.max(maxLat, f.lat);
-                    });
-                    // Ensure minimum 2 degree span for single points
-                    if (maxLon - minLon < 2) { minLon -= 1; maxLon += 1; }
-                    if (maxLat - minLat < 2) { minLat -= 1; maxLat += 1; }
-                    // Fit map to data bounds
-                    map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 50 });
-                }
-            })
-            .catch(e => console.warn('Could not load detections.json:', e));
 
         // Format date as "6 Sep" to avoid wrapping
         function formatDate(dateStr) {
@@ -413,9 +454,9 @@
                         14, ['+', 8, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
                     ],
                     'circle-color': ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
-                        0.3, '#b30000',
-                        0.6, '#fc8d59',
-                        1.0, '#f7f7f7'
+                        0.3, '#b63679',
+                        0.6, '#f8765c',
+                        1.0, '#ffff00'
                     ],
                     'circle-opacity': 0.9,
                     'circle-stroke-color': '#fff',
@@ -443,22 +484,15 @@
             currentFeature = feature;
             selectedDetection = null;
             const props = feature.properties;
-            const clickedCoords = feature.geometry.coordinates;
 
             document.getElementById('info').classList.add('visible');
             document.getElementById('info-name').textContent = props.name || 'Unknown facility';
 
-            // Find all detections for this facility
-            const facilityId = props.facility_id;
-            const facility = detectionsData.find(f => f.id === facilityId);
-            const allDetections = facility?.detection_dates || [];
-
-            // Filter to only detections at clicked flare location (within ~100m)
-            const tolerance = 0.001;  // ~100m in degrees
-            const detections = allDetections.filter(det =>
-                Math.abs(det.flare_lon - clickedCoords[0]) < tolerance &&
-                Math.abs(det.flare_lat - clickedCoords[1]) < tolerance
-            );
+            // Parse detections from tile properties (may be string or already parsed)
+            let detections = props.detections || [];
+            if (typeof detections === 'string') {
+                try { detections = JSON.parse(detections); } catch (e) { detections = []; }
+            }
 
             // Populate events list
             const list = document.getElementById('events-list');
@@ -506,14 +540,18 @@
         }
 
         async function loadImageryForDetection(det) {
-            if (!det || !det.cog?.b12) return;
+            if (!det || !det.cog_b12) return;
 
             const epsg = det.epsg;
+            // Flare location comes from the current feature geometry
+            const [flareLon, flareLat] = currentFeature.geometry.coordinates;
 
             // Recenter bounds on flare location (not terminal)
             const buffer = 1000;  // 1km buffer for display
-            const utmProj = `+proj=utm +zone=${epsg - 32600} +datum=WGS84 +units=m +no_defs`;
-            const [flareUtmX, flareUtmY] = proj4('EPSG:4326', utmProj, [det.flare_lon, det.flare_lat]);
+            const zone = epsg % 100;
+            const isNorth = epsg < 32700;
+            const utmProj = `+proj=utm +zone=${zone} ${isNorth ? '' : '+south '}+datum=WGS84 +units=m +no_defs`;
+            const [flareUtmX, flareUtmY] = proj4('EPSG:4326', utmProj, [flareLon, flareLat]);
             const utmBounds = [
                 flareUtmX - buffer,
                 flareUtmY - buffer,
@@ -526,7 +564,7 @@
             document.querySelector('.event-item.active')?.classList.add('loading');
 
             try {
-                const tiff = await GeoTIFF.fromUrl(det.cog.b12, { allowFullFile: false });
+                const tiff = await GeoTIFF.fromUrl(det.cog_b12, { allowFullFile: false });
                 const image = await tiff.getImage();
 
                 const imgBbox = image.getBoundingBox();  // [minX, minY, maxX, maxY] in UTM
@@ -547,9 +585,15 @@
                     const x1 = Math.min(width, Math.ceil((maxX - imgMinX) / resX));
                     const y1 = Math.min(height, Math.ceil((imgMaxY - minY) / resY));
 
-                    window = [x0, y0, x1, y1];
                     windowWidth = x1 - x0;
                     windowHeight = y1 - y0;
+
+                    // Validate window dimensions
+                    if (windowWidth <= 0 || windowHeight <= 0) {
+                        throw new Error('Requested area is outside image bounds');
+                    }
+
+                    window = [x0, y0, x1, y1];
 
                     // Compute actual UTM bounds from pixel window
                     actualUtmBounds = [
@@ -659,6 +703,11 @@
             }
             document.getElementById('imagery-controls').classList.remove('visible');
         }
+
+        // About modal - dismiss on click anywhere
+        document.getElementById('about-modal').addEventListener('click', function() {
+            this.classList.add('hidden');
+        });
     </script>
 </body>
 </html>

@@ -31,6 +31,7 @@ B11_THRESHOLD = 0.3  # SWIR1 (1610nm) - confirmation band
 MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than background median
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
 MAX_FLARE_PIXELS = 16  # Flares are point sources; reject large hot areas
+CLUSTER_DISTANCE_M = 200  # Cluster flares within this distance
 
 
 @dataclass
@@ -97,6 +98,73 @@ class DetectionResult:
                 for d in self.detections
             ],
         }
+
+
+def haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    """Calculate distance between two points in meters."""
+    R = 6371000  # Earth radius in meters
+    phi1, phi2 = np.radians(lat1), np.radians(lat2)
+    dphi = np.radians(lat2 - lat1)
+    dlam = np.radians(lon2 - lon1)
+    a = np.sin(dphi/2)**2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlam/2)**2
+    return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+
+
+def cluster_detections(detections: list[Detection], distance_m: float = CLUSTER_DISTANCE_M) -> list[Detection]:
+    """Cluster nearby flare detections to reduce visual clutter.
+
+    Detections within distance_m of each other are assigned to the same cluster.
+    Each detection's flare location is updated to the cluster centroid.
+    """
+    if not detections:
+        return detections
+
+    # Filter out detections without valid coordinates
+    valid = [d for d in detections if d.flare_lon is not None and d.flare_lat is not None]
+    invalid = [d for d in detections if d.flare_lon is None or d.flare_lat is None]
+
+    if not valid:
+        return detections
+
+    # Simple greedy clustering
+    clusters: list[list[Detection]] = []
+
+    for det in valid:
+        assigned = False
+        for cluster in clusters:
+            # Check distance to cluster centroid
+            centroid_lon = sum(d.flare_lon for d in cluster) / len(cluster)
+            centroid_lat = sum(d.flare_lat for d in cluster) / len(cluster)
+            dist = haversine_m(det.flare_lon, det.flare_lat, centroid_lon, centroid_lat)
+            if dist <= distance_m:
+                cluster.append(det)
+                assigned = True
+                break
+
+        if not assigned:
+            clusters.append([det])
+
+    # Update each detection's flare location to cluster centroid
+    result = []
+    for cluster in clusters:
+        centroid_lon = sum(d.flare_lon for d in cluster) / len(cluster)
+        centroid_lat = sum(d.flare_lat for d in cluster) / len(cluster)
+
+        for det in cluster:
+            # Create new detection with updated coordinates
+            result.append(Detection(
+                date=det.date,
+                max_b12=det.max_b12,
+                pixel_count=det.pixel_count,
+                flare_lon=centroid_lon,
+                flare_lat=centroid_lat,
+                cog_urls=det.cog_urls,
+                bounds=det.bounds,
+                utm_bounds=det.utm_bounds,
+                epsg=det.epsg,
+            ))
+
+    return result + invalid
 
 
 def search_stac(
@@ -323,6 +391,8 @@ def detect(
             if result:
                 detections.append(result)
 
+    # Cluster nearby flare locations
+    detections = cluster_detections(detections)
     detections.sort(key=lambda d: d.date)
 
     return DetectionResult(

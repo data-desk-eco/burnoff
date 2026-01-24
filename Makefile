@@ -21,9 +21,6 @@ $(PMTILES): $(GEOJSON)
 		--no-tile-size-limit \
 		--minimum-zoom=0 \
 		--maximum-zoom=14 \
-		--cluster-distance=20 \
-		--accumulate-attribute=max_b12:max \
-		--accumulate-attribute=pixels:sum \
 		$<
 	@echo "Created: $@ ($$(du -h $@ | cut -f1))"
 

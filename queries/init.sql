@@ -47,5 +47,6 @@ CREATE TABLE IF NOT EXISTS detection_events (
     utm_maxx DOUBLE,
     utm_maxy DOUBLE,
     epsg INTEGER,
-    PRIMARY KEY (lat, lon, date)
+    -- Primary key includes flare location since multiple flares can be detected per facility per date
+    PRIMARY KEY (lat, lon, date, flare_lat, flare_lon)
 );
