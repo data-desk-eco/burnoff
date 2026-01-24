@@ -413,11 +413,14 @@
     <div class="modal-overlay" id="about-modal">
         <div class="modal-content">
             <h2>About this map</h2>
-            <p>This map detects gas flaring at LNG facilities using Sentinel-2 shortwave infrared (SWIR) imagery. Thermal anomalies are identified where B12 (2190nm) and B11 (1610nm) reflectance exceeds background levels, indicating active combustion. Click any detection to view the underlying SWIR imagery.</p>
+            <p>This map detects gas flaring at LNG facilities using the DAFI v2 algorithm on Sentinel-2 SWIR imagery. Thermal anomalies are identified where NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0, indicating SWIR emission exceeds NIR reflectance. Click any detection to view the underlying imagery.</p>
             <div class="modal-citations">
-                <h4 class="label-sm">INSPIRATION</h4>
-                <p>Hu et al. (2023) <a href="https://doi.org/10.1016/j.jag.2023.103534" target="_blank">An approach to detect gas flaring sites using Sentinel-2 MSI and NOAA-20 VIIRS images</a>. Int. J. Appl. Earth Obs. Geoinf.<br><br>
-                Wu et al. (2022) <a href="https://doi.org/10.1016/j.jag.2022.103075" target="_blank">Monitoring gas flaring in Texas using time-series Sentinel-2 MSI and Landsat-8 OLI images</a>. Int. J. Appl. Earth Obs. Geoinf.</p>
+                <h4 class="label-sm">REFERENCES</h4>
+                <p style="font-size: 12px; line-height: 1.5;">
+                    Faruolo et al. (2024) <a href="https://doi.org/10.1088/1748-9326/ad82fb" target="_blank">The first global catalogue of gas flaring sources: the DAFI v2 algorithm</a>. Environ. Res. Lett.
+                    · Hu et al. (2023) <a href="https://doi.org/10.1016/j.jag.2023.103534" target="_blank">Detecting gas flaring with Sentinel-2 MSI and VIIRS</a>. Int. J. Appl. Earth Obs.
+                    · Wu et al. (2022) <a href="https://doi.org/10.1016/j.jag.2022.103075" target="_blank">Monitoring gas flaring in Texas</a>. Int. J. Appl. Earth Obs.
+                </p>
             </div>
             <div class="modal-dismiss">Click anywhere to dismiss</div>
         </div>

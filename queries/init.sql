@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS detections (
     end_date DATE,
     images INTEGER,
     detection_count INTEGER,
-    detection_rate DOUBLE,
+    occurrence_frequency DOUBLE,  -- DAFI v2: detection_count / images * 100
+    persistence_level VARCHAR,    -- DAFI v2: high/mid-high/mid-low/low/intermittent
     max_b12 DOUBLE,
     PRIMARY KEY (lat, lon, start_date)
 );
@@ -29,9 +30,12 @@ CREATE TABLE IF NOT EXISTS detection_events (
     date DATE NOT NULL,
     max_b12 DOUBLE,
     pixels INTEGER,
-    -- Actual flare location (max B12 pixel)
+    -- Clustered flare location (centroid of nearby detections)
     flare_lon DOUBLE,
     flare_lat DOUBLE,
+    -- Original flare location (actual max B12 pixel before clustering)
+    original_flare_lon DOUBLE,
+    original_flare_lat DOUBLE,
     -- COG URLs for on-demand rendering
     cog_b11 VARCHAR,
     cog_b12 VARCHAR,
