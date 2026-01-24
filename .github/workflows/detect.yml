@@ -18,6 +18,8 @@ jobs:
   detect:
     runs-on: ubuntu-latest
     timeout-minutes: 360  # 6 hours for large detection runs
+    permissions:
+      contents: write  # Needed for creating releases
     steps:
       - uses: actions/checkout@v4
 
@@ -83,18 +85,15 @@ jobs:
             data/detections.pmtiles
           retention-days: 30
 
-      - name: Authenticate to Google Cloud
-        if: ${{ vars.GCS_BUCKET != '' }}
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCS_SERVICE_ACCOUNT_KEY }}
-
-      - name: Set up Cloud SDK
-        if: ${{ vars.GCS_BUCKET != '' }}
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Deploy to GCS
-        if: ${{ vars.GCS_BUCKET != '' }}
+      - name: Create/Update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gsutil -h "Cache-Control:public, max-age=3600" cp data/detections.pmtiles gs://${{ vars.GCS_BUCKET }}/
-          echo "Deployed to: https://storage.googleapis.com/${{ vars.GCS_BUCKET }}/detections.pmtiles"
+          # Create or update the 'data' release with PMTiles
+          gh release delete data --yes 2>/dev/null || true
+          gh release create data data/detections.pmtiles \
+            --title "Detection Data" \
+            --notes "Auto-generated detection data for ${{ inputs.year }}" \
+            --latest=false
+
+          echo "Deployed to: https://github.com/${{ github.repository }}/releases/download/data/detections.pmtiles"
