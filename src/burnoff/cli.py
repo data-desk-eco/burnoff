@@ -51,20 +51,16 @@ def main():
 @click.option("--buffer", default=6000, help="Buffer around point in meters (default: 6000)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
 @click.option("--workers", default=8, help="Parallel workers (default: 8)")
-@click.option("--min-detections", default=3, help="Minimum detections for temporal filter (default: 3)")
 @click.option("-o", "--output", type=click.Path(), help="Output JSON file (default: stdout)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, min_detections, output, quiet):
+def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, output, quiet):
     """Detect gas flares using DAFI v2 algorithm.
 
     \b
-    Uses Sentinel-2 L1C data with L2A SCL for cloud masking.
-    Uses NHISWNIR index (Faruolo et al. 2024) to detect thermal sources:
-    - Primary: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0
-    - Fallback: Extremely Hot Pixel test for saturated sources
+    Uses Sentinel-2 L2A surface reflectance with SCL for cloud masking.
+    Uses NHISWNIR index (Faruolo et al. 2024) to detect thermal sources.
 
-    Applies temporal persistence filter (default: 3+ detections).
-    Reports Occurrence Frequency (OF) for persistence classification.
+    Outputs raw detections - clustering and filtering done in SQL export.
     """
     # Resolve date range
     if year:
@@ -89,7 +85,6 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, min_detection
         max_cloud=cloud,
         buffer_m=buffer,
         workers=workers,
-        min_detections=min_detections,
         progress_callback=progress,
     )
 
@@ -98,14 +93,10 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, min_detection
         of = result.occurrence_frequency
         of_str = f"{of:.1f}%" if of is not None else "N/A"
         level = result.persistence_level or "none"
-        n_flares = len(set((d.flare_lon, d.flare_lat) for d in result.detections if d.flare_lon))
+        n_detections = len(result.detections)
         click.echo(
-            f"Found {result.images_with_detection} detections in "
+            f"Found {n_detections} raw detections in "
             f"{result.images_searched} images (OF: {of_str}, {level})",
-            err=True,
-        )
-        click.echo(
-            f"Filtered to {n_flares} flare locations (min {min_detections} detections)",
             err=True,
         )
 
@@ -129,10 +120,9 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, min_detection
 @click.option("--image-workers", default=8, help="Parallel images per terminal (default: 8)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
 @click.option("--buffer", default=6000, help="Buffer around point in meters (default: 6000)")
-@click.option("--min-detections", default=3, help="Minimum detections for temporal filter (default: 3)")
 @click.option("--resume", is_flag=True, help="Skip already-processed locations")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, min_detections, resume, quiet):
+def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, resume, quiet):
     """Process multiple locations using DAFI v2 algorithm.
 
     \b
@@ -206,7 +196,6 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
             max_cloud=cloud,
             buffer_m=buffer,
             workers=image_workers,
-            min_detections=min_detections,
         )
 
         out = result.to_dict()

@@ -47,23 +47,22 @@ BACKGROUND_FLOOR = 0.15   # Minimum baseline for contrast calculation
 
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
 MAX_FLARE_PIXELS = 200    # Max pixels per cluster (larger = not point source)
-CLUSTER_DISTANCE_M = 75   # Cluster detections within this distance
-MIN_TEMPORAL_DETECTIONS = 3  # Min detections across images for persistence
 DEFAULT_BUFFER_M = 6000   # Search radius around terminal (6km)
 
 
 @dataclass
 class Detection:
-    """A single flare detection result."""
+    """A single flare detection result.
+
+    Represents a raw detection at the actual max B12 pixel location.
+    Clustering is done in SQL export, not here.
+    """
     date: date
     max_b12: float
     pixel_count: int
-    # Actual location of max B12 pixel (may be adjusted to cluster centroid)
+    # Actual location of max B12 pixel (raw, unclustered)
     flare_lon: float | None = None
     flare_lat: float | None = None
-    # Original location before clustering (always the actual max B12 pixel)
-    original_flare_lon: float | None = None
-    original_flare_lat: float | None = None
     # COG URLs for on-demand rendering
     cog_urls: dict | None = None  # {b11, b12, visual} URLs
     bounds: tuple | None = None   # (minx, miny, maxx, maxy) in EPSG:4326
@@ -71,8 +70,6 @@ class Detection:
     epsg: int | None = None  # UTM zone EPSG code
     # DAFI v2: NHISWNIR value at detection (for diagnostics)
     nhiswnir: float | None = None
-    # Temporal persistence: number of unique dates this flare location was detected
-    detection_count: int | None = None
 
 
 @dataclass
@@ -134,86 +131,14 @@ class DetectionResult:
                     "pixels": d.pixel_count,
                     "flare_lon": d.flare_lon,
                     "flare_lat": d.flare_lat,
-                    "original_flare_lon": d.original_flare_lon,
-                    "original_flare_lat": d.original_flare_lat,
                     "cog": d.cog_urls,
                     "bounds": d.bounds,
                     "utm_bounds": d.utm_bounds,
                     "epsg": d.epsg,
-                    "detection_count": d.detection_count,
                 }
                 for d in self.detections
             ],
         }
-
-
-def haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
-    """Calculate distance between two points in meters."""
-    R = 6371000  # Earth radius in meters
-    phi1, phi2 = np.radians(lat1), np.radians(lat2)
-    dphi = np.radians(lat2 - lat1)
-    dlam = np.radians(lon2 - lon1)
-    a = np.sin(dphi/2)**2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlam/2)**2
-    return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
-
-
-def cluster_detections(detections: list[Detection], distance_m: float = CLUSTER_DISTANCE_M) -> list[Detection]:
-    """Cluster nearby flare detections to reduce visual clutter.
-
-    Detections within distance_m of each other are assigned to the same cluster.
-    Each detection's flare location is updated to the cluster centroid.
-    """
-    if not detections:
-        return detections
-
-    # Filter out detections without valid coordinates
-    valid = [d for d in detections if d.flare_lon is not None and d.flare_lat is not None]
-    invalid = [d for d in detections if d.flare_lon is None or d.flare_lat is None]
-
-    if not valid:
-        return detections
-
-    # Simple greedy clustering
-    clusters: list[list[Detection]] = []
-
-    for det in valid:
-        assigned = False
-        for cluster in clusters:
-            # Check distance to cluster centroid
-            centroid_lon = sum(d.flare_lon for d in cluster) / len(cluster)
-            centroid_lat = sum(d.flare_lat for d in cluster) / len(cluster)
-            dist = haversine_m(det.flare_lon, det.flare_lat, centroid_lon, centroid_lat)
-            if dist <= distance_m:
-                cluster.append(det)
-                assigned = True
-                break
-
-        if not assigned:
-            clusters.append([det])
-
-    # Update each detection's flare location to cluster centroid, preserving original
-    result = []
-    for cluster in clusters:
-        centroid_lon = sum(d.flare_lon for d in cluster) / len(cluster)
-        centroid_lat = sum(d.flare_lat for d in cluster) / len(cluster)
-
-        for det in cluster:
-            # Create new detection with centroid coordinates but preserve original
-            result.append(Detection(
-                date=det.date,
-                max_b12=det.max_b12,
-                pixel_count=det.pixel_count,
-                flare_lon=centroid_lon,
-                flare_lat=centroid_lat,
-                original_flare_lon=det.flare_lon,  # Preserve actual max B12 pixel location
-                original_flare_lat=det.flare_lat,
-                cog_urls=det.cog_urls,
-                bounds=det.bounds,
-                utm_bounds=det.utm_bounds,
-                epsg=det.epsg,
-            ))
-
-    return result + invalid
 
 
 def search_stac(
@@ -487,71 +412,6 @@ def process_image(
     return []
 
 
-def apply_temporal_filter(
-    detections: list[Detection],
-    min_detections: int = MIN_TEMPORAL_DETECTIONS,
-    cluster_distance_m: float = CLUSTER_DISTANCE_M,
-) -> list[Detection]:
-    """Filter detections to only include flares seen in multiple images.
-
-    Groups detections by location and only keeps those detected >= min_detections times.
-    This implements DAFI v2's temporal persistence requirement.
-
-    Args:
-        detections: List of all detections
-        min_detections: Minimum number of separate image dates required
-        cluster_distance_m: Distance for grouping detections into same flare
-
-    Returns:
-        Filtered list of detections with detection_count set
-    """
-    if not detections or min_detections <= 1:
-        # Set detection_count for all detections
-        for d in detections:
-            d.detection_count = 1
-        return detections
-
-    # Filter out detections without valid coordinates
-    valid = [d for d in detections if d.flare_lon is not None and d.flare_lat is not None]
-    invalid = [d for d in detections if d.flare_lon is None or d.flare_lat is None]
-
-    if not valid:
-        return detections
-
-    # Group detections into location clusters
-    clusters: list[list[Detection]] = []
-
-    for det in valid:
-        assigned = False
-        for cluster in clusters:
-            # Check distance to cluster centroid
-            centroid_lon = sum(d.flare_lon for d in cluster) / len(cluster)
-            centroid_lat = sum(d.flare_lat for d in cluster) / len(cluster)
-            dist = haversine_m(det.flare_lon, det.flare_lat, centroid_lon, centroid_lat)
-            if dist <= cluster_distance_m:
-                cluster.append(det)
-                assigned = True
-                break
-
-        if not assigned:
-            clusters.append([det])
-
-    # Filter clusters by temporal persistence
-    result = []
-    for cluster in clusters:
-        # Count unique dates
-        unique_dates = set(d.date for d in cluster)
-        detection_count = len(unique_dates)
-
-        if detection_count >= min_detections:
-            # Keep all detections in this cluster, set detection_count
-            for det in cluster:
-                det.detection_count = detection_count
-                result.append(det)
-
-    return result + invalid
-
-
 def detect(
     lat: float,
     lon: float,
@@ -561,19 +421,18 @@ def detect(
     buffer_m: int = DEFAULT_BUFFER_M,
     workers: int = 8,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
-    min_detections: int = MIN_TEMPORAL_DETECTIONS,
     progress_callback=None,
 ) -> DetectionResult:
     """
     Detect gas flares at a location using DAFI v2 algorithm.
 
     Implements Faruolo et al. (2024) methodology:
-    - Uses Sentinel-2 L1C (TOA reflectance) for detection
-    - Uses L2A SCL band for cloud masking
+    - Uses Sentinel-2 L2A surface reflectance
+    - Uses SCL band for cloud masking
     - Primary: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0 indicates thermal source
-    - Fallback: Extremely Hot Pixel (EP) test for saturated sources
-    - Temporal persistence filter: only reports flares seen in >= min_detections images
     - Tracks Occurrence Frequency (OF) for persistence classification
+
+    Outputs raw detections - clustering and temporal filtering done in SQL export.
 
     Args:
         lat: Latitude (WGS84)
@@ -581,14 +440,13 @@ def detect(
         start_date: Start of search period
         end_date: End of search period
         max_cloud: Maximum scene cloud cover percentage (default 30)
-        buffer_m: Buffer around point in meters (default 3000)
+        buffer_m: Buffer around point in meters (default 6000)
         workers: Parallel workers for image processing (default 8)
         max_local_cloud: Maximum local cloud fraction (default 0.3)
-        min_detections: Minimum detections across images for persistence (default 3)
         progress_callback: Optional callback(current, total) for progress updates
 
     Returns:
-        DetectionResult with all detections and occurrence frequency stats
+        DetectionResult with raw detections and occurrence frequency stats
     """
     # Search L2A images (L1C not accessible via public HTTPS COGs)
     items = search_stac(lat, lon, start_date, end_date, max_cloud, collection="sentinel-2-l2a")
@@ -621,12 +479,7 @@ def detect(
                 images_with_detection += 1
                 detections.extend(results)
 
-    # Cluster nearby flare locations across all images
-    detections = cluster_detections(detections, CLUSTER_DISTANCE_M)
-
-    # Apply temporal persistence filter
-    detections = apply_temporal_filter(detections, min_detections, CLUSTER_DISTANCE_M)
-
+    # Sort by date - clustering and temporal filtering now done in SQL export
     detections.sort(key=lambda d: d.date)
 
     return DetectionResult(
