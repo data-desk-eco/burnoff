@@ -53,7 +53,7 @@ def main():
 @click.option("--workers", default=8, help="Parallel workers (default: 8)")
 @click.option("--b11", default=0.2, help="B11 (SWIR1) threshold (default: 0.2)")
 @click.option("--b12", default=0.3, help="B12 (SWIR2) threshold (default: 0.3)")
-@click.option("--min-peak", default=0.35, help="Minimum peak B12 intensity (default: 0.35)")
+@click.option("--min-peak", default=0.6, help="Minimum peak B12 intensity (default: 0.6)")
 @click.option("-o", "--output", type=click.Path(), help="Output JSON file (default: stdout)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
 def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, min_peak, output, quiet):
@@ -124,7 +124,7 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, min
 @click.option("--image-workers", default=8, help="Parallel images per terminal (default: 8)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
 @click.option("--buffer", default=3000, help="Buffer around point in meters (default: 3000)")
-@click.option("--min-peak", default=0.35, help="Minimum peak B12 intensity (default: 0.35)")
+@click.option("--min-peak", default=0.6, help="Minimum peak B12 intensity (default: 0.6)")
 @click.option("--resume/--no-resume", default=True, help="Skip already-processed locations (default: resume)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
 def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, min_peak, resume, quiet):
