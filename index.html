@@ -626,33 +626,9 @@
             });
             map.on('mouseleave', 'detection-circles', () => map.getCanvas().style.cursor = '');
 
-            // Calculate click tolerance based on circle radius at current zoom
-            function getClickTolerance() {
-                const zoom = map.getZoom();
-                // Match the circle-radius interpolation from the layer style
-                // Base radius + max_b12 contribution (use max expected ~1.5)
-                let baseRadius, b12Factor;
-                if (zoom <= 0) {
-                    baseRadius = 4; b12Factor = 4;
-                } else if (zoom <= 6) {
-                    const t = zoom / 6;
-                    baseRadius = 4 + t * 2;
-                    b12Factor = 4 + t * 2;
-                } else if (zoom <= 10) {
-                    const t = (zoom - 6) / 4;
-                    baseRadius = 6 + t * 4;
-                    b12Factor = 6 + t * 2;
-                } else {
-                    const t = Math.min(1, (zoom - 10) / 4);
-                    baseRadius = 10 + t * 2;
-                    b12Factor = 8 + t * 2;
-                }
-                // Approximate max circle size (with high b12 value)
-                return Math.ceil(baseRadius + 1.5 * b12Factor);
-            }
-
             map.on('click', (e) => {
-                const tolerance = getClickTolerance();
+                // Use bbox query for reliable hit testing (globe projection can be finicky)
+                const tolerance = 15;
                 const bbox = [
                     [e.point.x - tolerance, e.point.y - tolerance],
                     [e.point.x + tolerance, e.point.y + tolerance]
