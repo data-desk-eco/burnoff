@@ -422,6 +422,9 @@
     <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
     <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
     <script>
+        // Configuration
+        const DATA_URL = 'https://storage.googleapis.com/burnoff-data';
+
         // Register PMTiles protocol
         const protocol = new pmtiles.Protocol();
         maplibregl.addProtocol('pmtiles', protocol.tile);
@@ -505,7 +508,7 @@
             // Add PMTiles source
             map.addSource('detections', {
                 type: 'vector',
-                url: 'pmtiles://data/detections.pmtiles'
+                url: `pmtiles://${DATA_URL}/detections.pmtiles`
             });
 
             // Detection circles layer

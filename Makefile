@@ -1,4 +1,4 @@
-.PHONY: all detect db map serve clean refresh help
+.PHONY: all detect db map serve clean refresh deploy help
 
 # Sentinel-2 Flare Detection Pipeline
 
@@ -92,6 +92,12 @@ $(DATA_DIR):
 
 clean:
 	rm -rf $(DATA_DIR)
+
+# Deploy PMTiles to GCS
+GCS_BUCKET := gs://burnoff-data
+deploy: $(PMTILES)
+	gcloud storage cp $(PMTILES) $(GCS_BUCKET)/
+	@echo "Deployed to: https://storage.googleapis.com/burnoff-data/detections.pmtiles"
 
 help:
 	@echo "Sentinel-2 Flare Detection"

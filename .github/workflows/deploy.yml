@@ -20,10 +20,8 @@ jobs:
 
       - name: Prepare dist
         run: |
-          mkdir -p dist/data
+          mkdir -p dist
           cp index.html dist/
-          cp data/detections.pmtiles dist/data/
-          cp data/detections.json dist/data/
 
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
