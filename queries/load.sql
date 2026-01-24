@@ -21,6 +21,7 @@ SELECT
     CAST(end_date AS DATE),
     CAST(images AS INTEGER),
     CAST(detections AS INTEGER),
+    -- occurrence_frequency is already a percentage (0-100) from detect.py
     CAST(occurrence_frequency AS DOUBLE),
     persistence_level,
     CAST(max_b12 AS DOUBLE)
@@ -35,7 +36,8 @@ SELECT DISTINCT ON (lat, lon, date, flare_lat, flare_lon)
     original_flare_lon, original_flare_lat,
     cog_b11, cog_b12, cog_visual,
     bounds_minx, bounds_miny, bounds_maxx, bounds_maxy,
-    utm_minx, utm_miny, utm_maxx, utm_maxy, epsg
+    utm_minx, utm_miny, utm_maxx, utm_maxy, epsg,
+    detection_count
 FROM (
     SELECT
         CAST(d.lat AS DOUBLE) as lat,
@@ -59,7 +61,8 @@ FROM (
         json_extract(e, '$.utm_bounds[1]')::DOUBLE as utm_miny,
         json_extract(e, '$.utm_bounds[2]')::DOUBLE as utm_maxx,
         json_extract(e, '$.utm_bounds[3]')::DOUBLE as utm_maxy,
-        json_extract(e, '$.epsg')::INTEGER as epsg
+        json_extract(e, '$.epsg')::INTEGER as epsg,
+        json_extract(e, '$.detection_count')::INTEGER as detection_count
     FROM read_json('data/detections.json', union_by_name=true) d,
          unnest(d.detection_dates) as t(e)
     WHERE d.detection_dates IS NOT NULL
