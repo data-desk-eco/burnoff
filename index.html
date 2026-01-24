@@ -448,6 +448,22 @@
         let currentFeature = null;
         let selectedDetection = null;
 
+        // Deep-linking: update URL hash when selecting a detection
+        function updateHash(name, date) {
+            if (name && date) {
+                history.replaceState(null, '', `#${encodeURIComponent(name)}/${date}`);
+            } else {
+                history.replaceState(null, '', location.pathname);
+            }
+        }
+
+        function parseHash() {
+            const hash = location.hash.slice(1);
+            if (!hash) return null;
+            const [name, date] = hash.split('/').map(decodeURIComponent);
+            return name && date ? { name, date } : null;
+        }
+
         // Format date as "6 Sep 2025" for historical tracking across years
         function formatDate(dateStr) {
             if (!dateStr) return '-';
@@ -625,7 +641,44 @@
                 const features = map.queryRenderedFeatures(e.point, { layers: ['detection-circles'] });
                 if (features.length === 0) closeInfo();
             });
+
+            // Restore from URL hash after tiles load
+            map.once('sourcedata', () => {
+                setTimeout(() => restoreFromHash(), 500);
+            });
         });
+
+        function restoreFromHash() {
+            const params = parseHash();
+            if (!params) return;
+
+            // Query all features at high zoom to find matching name
+            const features = map.querySourceFeatures('detections', { sourceLayer: 'detections' });
+            const match = features.find(f => f.properties.name === params.name);
+
+            if (match) {
+                // Navigate to feature
+                map.flyTo({ center: match.geometry.coordinates, zoom: 12 });
+
+                // Wait for flyTo and show info with specific date selected
+                setTimeout(() => {
+                    showInfo(match);
+                    // Find and select the matching date
+                    const item = document.querySelector(`.event-item[data-date="${params.date}"]`);
+                    if (item) {
+                        let detections = match.properties.detections || [];
+                        if (typeof detections === 'string') {
+                            try { detections = JSON.parse(detections); } catch (e) { detections = []; }
+                        }
+                        const det = detections.find(d => d.date === params.date);
+                        if (det) selectDetection(det, item, true);
+                    }
+                }, 1000);
+            }
+        }
+
+        // Handle back/forward navigation
+        window.addEventListener('hashchange', restoreFromHash);
 
         function showInfo(feature) {
             currentFeature = feature;
@@ -686,11 +739,16 @@
             }
         }
 
-        function selectDetection(det, element) {
+        function selectDetection(det, element, skipHash = false) {
             // Update selection UI
             document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
             element.classList.add('active');
             selectedDetection = det;
+
+            // Update URL hash for deep-linking
+            if (!skipHash && currentFeature) {
+                updateHash(currentFeature.properties.name, det.date);
+            }
 
             // Auto-load imagery
             loadImageryForDetection(det);
@@ -700,6 +758,7 @@
             document.getElementById('info').classList.remove('visible');
             closeImagery();
             currentFeature = null;
+            updateHash(null, null);
         }
 
         async function loadImageryForDetection(det) {
