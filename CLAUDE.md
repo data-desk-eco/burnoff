@@ -25,12 +25,14 @@ make stats        # Detection statistics
 - `index.html` - Single-file web map
 
 ## Detection Logic
+Based on DAFI methodology (Faruolo et al. 2024) with empirical tuning for ground flares:
 1. Search Sentinel-2 L2A via Element84 STAC
 2. Filter by scene cloud cover (<30%)
 3. Check local cloud cover via SCL band (<30% in 3km buffer)
-4. Require B12 > 0.5 AND B11 > 0.3 (reflectance)
-5. Require peak B12 > 0.8 (absolute intensity filter - excludes warehouses/clouds)
-6. Require flare 3x brighter than background median
+4. Require B12 > 0.3 AND B11 > 0.2 (reflectance thresholds)
+5. Require peak B12 > 0.35 (lowered from 0.8 to catch cooler ground flares)
+6. Require flare 2x brighter than background median
+7. Cluster detections within 200m, max 50 pixels per cluster
 
 ## Notes
 - Sentinel-2 COGs are UTM-projected; converted to WGS84 via proj4
