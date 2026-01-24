@@ -162,12 +162,29 @@
             box-shadow: 0 0 8px currentColor;
         }
 
+        .intensity-chart {
+            padding: 12px 16px 8px 16px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .intensity-chart svg {
+            width: 100%;
+            height: 50px;
+            display: block;
+        }
+        .intensity-chart .chart-dot {
+            cursor: pointer;
+            transition: r 0.15s;
+        }
+        .intensity-chart .chart-dot:hover {
+            r: 5;
+        }
+
         .events-header {
             padding: 12px 16px;
             border-bottom: 1px solid var(--border-subtle);
         }
 
-        .events-list { max-height: 260px; overflow-y: auto; }
+        .events-list { max-height: 200px; overflow-y: auto; }
 
         .event-item {
             padding: 12px 16px;
@@ -360,8 +377,7 @@
             <div class="modal-citations">
                 <h4 class="label-sm">INSPIRATION</h4>
                 <p>Hu et al. (2023) <a href="https://doi.org/10.1016/j.jag.2023.103534" target="_blank">An approach to detect gas flaring sites using Sentinel-2 MSI and NOAA-20 VIIRS images</a>. Int. J. Appl. Earth Obs. Geoinf.<br><br>
-                Wu et al. (2022) <a href="https://doi.org/10.1016/j.jag.2022.103075" target="_blank">Monitoring gas flaring in Texas using time-series Sentinel-2 MSI and Landsat-8 OLI images</a>. Int. J. Appl. Earth Obs. Geoinf.<br><br>
-                TransitionZero <a href="https://www.transitionzero.org/insights/steel-data-explainer" target="_blank">Steel Methodology and Global Steel Asset Polygons Dataset</a>. Sentinel-2 SWIR hotspot detection for heavy industry.</p>
+                Wu et al. (2022) <a href="https://doi.org/10.1016/j.jag.2022.103075" target="_blank">Monitoring gas flaring in Texas using time-series Sentinel-2 MSI and Landsat-8 OLI images</a>. Int. J. Appl. Earth Obs. Geoinf.</p>
             </div>
             <div class="modal-dismiss">Click anywhere to dismiss</div>
         </div>
@@ -372,6 +388,7 @@
             <h3 id="info-name">-</h3>
             <span class="close-btn" onclick="closeInfo()">&times;</span>
         </div>
+        <div class="intensity-chart" id="intensity-chart"></div>
         <div class="events-header label-sm" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
             <span>Date</span>
             <span style="text-align: right;">B12</span>
@@ -453,6 +470,84 @@
                 Math.round(c1[1] + f * (c2[1] - c1[1])),
                 Math.round(c1[2] + f * (c2[2] - c1[2]))
             ];
+        }
+
+        // B12 intensity to color string (for chart)
+        function b12Color(b12) {
+            // Map 0.8-1.5 to 0-1 for color scale
+            const t = Math.max(0, Math.min(1, (b12 - 0.8) / 0.7));
+            const [r, g, b] = magmaColor(t);
+            return `rgb(${r},${g},${b})`;
+        }
+
+        // Render intensity timeline chart
+        function renderIntensityChart(detections, onSelectDate) {
+            const container = document.getElementById('intensity-chart');
+            if (!detections || detections.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+
+            // Sort by date ascending for chart
+            const sorted = [...detections].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            const margin = { top: 8, right: 8, bottom: 16, left: 8 };
+            const width = 268;  // Match panel width minus padding
+            const height = 50;
+            const innerW = width - margin.left - margin.right;
+            const innerH = height - margin.top - margin.bottom;
+
+            // Time scale
+            const dates = sorted.map(d => new Date(d.date));
+            const minDate = Math.min(...dates);
+            const maxDate = Math.max(...dates);
+            const dateRange = maxDate - minDate || 1;  // Avoid division by zero
+
+            // B12 scale (fixed range for consistency)
+            const minB12 = 0.8;
+            const maxB12 = 1.5;
+
+            // Build SVG
+            let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
+
+            // Baseline
+            svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
+
+            // Y-axis reference lines
+            [0.8, 1.0, 1.2].forEach(b12 => {
+                const y = margin.top + innerH - ((b12 - minB12) / (maxB12 - minB12)) * innerH;
+                svg += `<line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>`;
+            });
+
+            // Dots for each detection
+            sorted.forEach((det, i) => {
+                const date = new Date(det.date);
+                const x = margin.left + ((date - minDate) / dateRange) * innerW;
+                const b12 = det.max_b12 || 0.8;
+                const y = margin.top + innerH - ((Math.min(b12, maxB12) - minB12) / (maxB12 - minB12)) * innerH;
+                const color = b12Color(b12);
+
+                svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${color}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
+            });
+
+            // Month labels at start and end
+            const startMonth = new Date(minDate).toLocaleString('en', { month: 'short' });
+            const endMonth = new Date(maxDate).toLocaleString('en', { month: 'short' });
+            if (dateRange > 30 * 24 * 60 * 60 * 1000) {  // Only show if > 30 days
+                svg += `<text x="${margin.left}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8" font-family="inherit">${startMonth}</text>`;
+                svg += `<text x="${width - margin.right}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8" font-family="inherit" text-anchor="end">${endMonth}</text>`;
+            }
+
+            svg += '</svg>';
+            container.innerHTML = svg;
+
+            // Add click handlers to dots
+            container.querySelectorAll('.chart-dot').forEach(dot => {
+                dot.addEventListener('click', (e) => {
+                    const idx = parseInt(e.target.dataset.idx);
+                    onSelectDate(sorted[idx]);
+                });
+            });
         }
 
         // Convert UTM bounds to WGS84 using proj4
@@ -550,13 +645,17 @@
             const list = document.getElementById('events-list');
             list.innerHTML = '';
 
-            // Sort by date descending
+            // Sort by date descending for list
             const sorted = [...detections].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            // Create map from date string to list item for chart click sync
+            const dateToItem = new Map();
 
             let firstItem = null;
             sorted.forEach((det, idx) => {
                 const item = document.createElement('div');
                 item.className = 'event-item';
+                item.dataset.date = det.date;
                 item.innerHTML = `
                     <span class="event-date">${formatDate(det.date)}</span>
                     <span class="event-meta">${det.max_b12?.toFixed(3) || '-'}</span>
@@ -564,13 +663,25 @@
                 item.onclick = () => selectDetection(det, item);
                 list.appendChild(item);
 
+                dateToItem.set(det.date, { det, item });
                 if (idx === 0) firstItem = { det, item };
+            });
+
+            // Render intensity chart
+            renderIntensityChart(detections, (det) => {
+                const entry = dateToItem.get(det.date);
+                if (entry) {
+                    selectDetection(entry.det, entry.item);
+                    // Scroll list item into view
+                    entry.item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
             });
 
             // Auto-select first detection
             if (firstItem) selectDetection(firstItem.det, firstItem.item);
 
             if (detections.length === 0) {
+                document.getElementById('intensity-chart').innerHTML = '';
                 list.innerHTML = '<div style="padding: 16px; color: rgba(255,255,255,0.4); text-align: center;">No detections at this location</div>';
             }
         }
