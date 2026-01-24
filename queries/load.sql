@@ -21,7 +21,8 @@ SELECT
     CAST(end_date AS DATE),
     CAST(images AS INTEGER),
     CAST(detections AS INTEGER),
-    CAST(detection_rate AS DOUBLE),
+    CAST(occurrence_frequency AS DOUBLE),
+    persistence_level,
     CAST(max_b12 AS DOUBLE)
 FROM read_json('data/detections.json');
 
@@ -31,6 +32,7 @@ FROM read_json('data/detections.json');
 INSERT OR REPLACE INTO detection_events
 SELECT DISTINCT ON (lat, lon, date, flare_lat, flare_lon)
     lat, lon, date, max_b12, pixels, flare_lon, flare_lat,
+    original_flare_lon, original_flare_lat,
     cog_b11, cog_b12, cog_visual,
     bounds_minx, bounds_miny, bounds_maxx, bounds_maxy,
     utm_minx, utm_miny, utm_maxx, utm_maxy, epsg
@@ -43,6 +45,9 @@ FROM (
         CAST(e.pixels AS INTEGER) as pixels,
         json_extract(e, '$.flare_lon')::DOUBLE as flare_lon,
         json_extract(e, '$.flare_lat')::DOUBLE as flare_lat,
+        -- Original coords before clustering (falls back to flare coords if not present)
+        COALESCE(json_extract(e, '$.original_flare_lon')::DOUBLE, json_extract(e, '$.flare_lon')::DOUBLE) as original_flare_lon,
+        COALESCE(json_extract(e, '$.original_flare_lat')::DOUBLE, json_extract(e, '$.flare_lat')::DOUBLE) as original_flare_lat,
         e.cog.b11 as cog_b11,
         e.cog.b12 as cog_b12,
         e.cog.visual as cog_visual,

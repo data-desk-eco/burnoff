@@ -19,21 +19,23 @@ make stats        # Detection statistics
 ```
 
 ## Key Files
-- `src/burnoff/detect.py` - Core detection with cloud filtering and contrast checks
+- `src/burnoff/detect.py` - DAFI v2 detection algorithm
 - `src/burnoff/cli.py` - CLI with `detect` (single) and `bulk` (batch) commands
 - `queries/` - DuckDB SQL for loading, export, and analysis
 - `index.html` - Single-file web map
 
 ## Detection Logic
-Based on DAFI methodology (Faruolo et al. 2024) with empirical tuning for ground flares:
+Implements DAFI v2 algorithm (Faruolo et al. 2024):
 1. Search Sentinel-2 L2A via Element84 STAC
 2. Filter by scene cloud cover (<30%)
 3. Check local cloud cover via SCL band (<30% in 3km buffer)
-4. Require B12 > 0.3 AND B11 > 0.2 (reflectance thresholds)
-5. Require peak B12 > 0.6 (lowered from 0.8 to catch cooler ground flares)
-6. Require flare 3x brighter than background median
-7. Cluster detections within 200m, max 200 pixels per cluster
-8. Filter to locations detected on 2+ separate dates (removes one-off false positives)
+4. Primary test: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0
+   - Positive values indicate thermal source (SWIR brighter than NIR)
+5. Fallback: Extremely Hot Pixel (EP) test for saturated sources
+   - B11 > 0.5 AND B8A < 0.3
+6. Cluster detections within 50m, max 200 pixels per cluster
+7. Track Occurrence Frequency (OF) = detections / images searched
+8. Classify persistence: high (≥30%), mid-high (≥20%), mid-low (≥15%), low (≥10%), intermittent (<10%)
 
 ## Changing Detection Parameters
 When modifying detection logic in `src/burnoff/detect.py`:

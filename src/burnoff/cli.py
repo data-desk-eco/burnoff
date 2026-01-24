@@ -51,20 +51,17 @@ def main():
 @click.option("--buffer", default=3000, help="Buffer around point in meters (default: 3000)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
 @click.option("--workers", default=8, help="Parallel workers (default: 8)")
-@click.option("--b11", default=0.2, help="B11 (SWIR1) threshold (default: 0.2)")
-@click.option("--b12", default=0.3, help="B12 (SWIR2) threshold (default: 0.3)")
-@click.option("--min-peak", default=0.6, help="Minimum peak B12 intensity (default: 0.6)")
 @click.option("-o", "--output", type=click.Path(), help="Output JSON file (default: stdout)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, min_peak, output, quiet):
-    """Detect thermal anomalies at a single location.
+def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, output, quiet):
+    """Detect gas flares using DAFI v2 algorithm.
 
     \b
-    Uses Sentinel-2 SWIR bands to identify high-temperature sources:
-    - B12 (SWIR2, 2190nm): Primary thermal indicator
-    - B11 (SWIR1, 1610nm): Confirmation band
+    Uses NHISWNIR index (Faruolo et al. 2024) to detect thermal sources:
+    - Primary: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0
+    - Fallback: Extremely Hot Pixel test for saturated sources
 
-    Detection occurs where both bands exceed their thresholds.
+    Reports Occurrence Frequency (OF) for persistence classification.
     """
     # Resolve date range
     if year:
@@ -89,18 +86,17 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, min
         max_cloud=cloud,
         buffer_m=buffer,
         workers=workers,
-        b11_threshold=b11,
-        b12_threshold=b12,
-        min_peak_b12=min_peak,
         progress_callback=progress,
     )
 
     if not quiet:
         click.echo("", err=True)  # newline after progress
-        rate = f"{result.detection_rate:.1%}" if result.detection_rate else "N/A"
+        of = result.occurrence_frequency
+        of_str = f"{of:.1f}%" if of is not None else "N/A"
+        level = result.persistence_level or "none"
         click.echo(
             f"Found {result.images_with_detection} detections in "
-            f"{result.images_searched} images ({rate})",
+            f"{result.images_searched} images (OF: {of_str}, {level})",
             err=True,
         )
 
@@ -124,11 +120,10 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, b11, b12, min
 @click.option("--image-workers", default=8, help="Parallel images per terminal (default: 8)")
 @click.option("--cloud", default=30, help="Max cloud cover percentage (default: 30)")
 @click.option("--buffer", default=3000, help="Buffer around point in meters (default: 3000)")
-@click.option("--min-peak", default=0.6, help="Minimum peak B12 intensity (default: 0.6)")
 @click.option("--resume/--no-resume", default=True, help="Skip already-processed locations (default: resume)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
-def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, min_peak, resume, quiet):
-    """Process multiple locations from a JSON file.
+def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, resume, quiet):
+    """Process multiple locations using DAFI v2 algorithm.
 
     \b
     INPUT_FILE should be a JSON array of objects with at minimum:
@@ -201,7 +196,6 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
             max_cloud=cloud,
             buffer_m=buffer,
             workers=image_workers,
-            min_peak_b12=min_peak,
         )
 
         out = result.to_dict()
@@ -233,8 +227,9 @@ def bulk(input_file, output, year, start, end, workers, image_workers, cloud, bu
                     name = loc.get("name", f"{loc['lat']:.2f},{loc['lon']:.2f}")
                     det = result["detections"]
                     imgs = result["images"]
-                    rate = f"{result['detection_rate']:.0%}" if result["detection_rate"] else "N/A"
-                    click.echo(f"[{completed}/{len(to_process)}] {name}: {det}/{imgs} ({rate})", err=True)
+                    of = result.get("occurrence_frequency")
+                    of_str = f"{of:.0f}%" if of else "N/A"
+                    click.echo(f"[{completed}/{len(to_process)}] {name}: {det}/{imgs} (OF: {of_str})", err=True)
             except Exception as e:
                 if not quiet:
                     name = loc.get("name", f"{loc['lat']:.2f},{loc['lon']:.2f}")
