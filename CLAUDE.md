@@ -37,6 +37,7 @@ Simple overlap-based clustering:
 ```
 Each flare has 20m radius
 Merge if centers ≤ 40m apart (radii overlap)
+Anchor cluster to brightest detection (avoids phantom centroids)
 ```
 
 Cross-date detections at the same location cluster together automatically.
