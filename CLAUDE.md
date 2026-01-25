@@ -17,52 +17,33 @@ make serve        # Web server on :8000
 
 ## Detection Algorithm
 
-Uses Sentinel-2 L1C TOA reflectance (B8A, B11, B12) via Element84 STAC. 6km search radius.
+Uses Sentinel-2 L1C TOA reflectance at native 20m resolution via Element84 STAC.
 L1C preserves full thermal signal without atmospheric correction clipping.
 Cloud masking via L2A SCL band fetched separately.
 
-**Per-pixel** (must pass all):
-1. B12 > 0.3 AND B11 > 0.2 (bright in SWIR)
-2. B12 > 3× local median (contrast)
-3. (B11 - B8A) / (B11 + B8A) > 0 (thermal signature, SWIR > NIR)
+**Connected component detection:**
+1. Find all pixels with B12 ≥ 0.75 (bright SWIR)
+2. Group into connected components (4-connectivity)
+3. For each component, output the **centroid** (center of bright region)
+4. Record max B12, pixel count, and avg B12 for filtering
 
-**Per-cluster** (at detection):
-4. Peak B12 ≥ 0.5
-5. ≤ 50 pixels (point source, 20m² each)
-6. If > 30 pixels, require peak B12 ≥ 0.70
-7. Warm region ≤ 100 pixels (B12 > 0.2 connected component containing detection)
-8. < 30% cloud cover (scene and local)
-
-**At export** (stricter):
-7. Peak B12 ≥ 0.75
-8. ≥ 2 detection dates
+**At export** (SQL filtering):
+- Peak B12 > 0.9
+- ≥ 2 detection dates
 
 ## Spatial Clustering
 
-Cross-date clustering uses size-aware merging with co-occurrence penalty:
+Simple overlap-based clustering:
 ```
-radius = sqrt(pixels / π) × 20m
-
-# Size-aware threshold
-if max_pixels < 10:
-    # Small detections have uncertain centroids (can drift 200-300m)
-    threshold = max(100m, min(350m, max_radius × 15))
-else:
-    # Large detections are spatially accurate
-    threshold = max(100m, r_a + r_b)
-
-# Co-occurrence penalty (separates distinct flares)
-if locations co-occur on same dates:
-    threshold *= (1 - 0.2 × cooccur_count)  # up to 50% reduction
+Each flare has 20m radius
+Merge if centers ≤ 40m apart (radii overlap)
 ```
 
-- Small detections (< 10 pixels): use aggressive 15× radius scaling, capped at 350m
-- Large detections: use sum of radii for more conservative merging
-- Co-occurring locations: stricter threshold keeps distinct flares separate
+Cross-date detections at the same location cluster together automatically.
 
 ## Key Files
-- `src/burnoff/detect.py` - Detection algorithm
-- `queries/init.sql` - Schema + clustering macros
+- `src/burnoff/detect.py` - Detection algorithm (centroid-based)
+- `queries/init.sql` - Schema
 - `queries/export_map.sql` - GeoJSON export with clustering
 
 ## Remote Setup (Claude Code)

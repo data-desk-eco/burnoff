@@ -6,29 +6,20 @@ DATA_DIR := data
 QUERIES_DIR := queries
 DB := $(DATA_DIR)/flares.duckdb
 GEOJSON := $(DATA_DIR)/detections.geojson
-GEOJSON_LIGHT := $(DATA_DIR)/detections_light.geojson
 PMTILES := $(DATA_DIR)/detections.pmtiles
 
 # Default: build PMTiles
 all: $(PMTILES)
 
-# Create PMTiles: light tiles (z0-9) + full tiles (z10-14), then merge
-$(PMTILES): $(GEOJSON) $(GEOJSON_LIGHT)
-	tippecanoe -o $(DATA_DIR)/low.pmtiles --force --layer=detections \
-		-Z0 -z9 -r1 -pk -pf $(GEOJSON_LIGHT)
-	tippecanoe -o $(DATA_DIR)/high.pmtiles --force --layer=detections \
-		-Z10 -z14 -r1 -pk -pf $(GEOJSON)
-	tile-join -o $@ --force $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
-	rm -f $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
+# Create PMTiles from GeoJSON
+$(PMTILES): $(GEOJSON)
+	tippecanoe -o $@ --force --layer=detections \
+		-Z0 -z14 -r1 -pk -pf $(GEOJSON)
 	@echo "Created: $@ ($$(du -h $@ | cut -f1))"
 
-# Export full GeoJSON (with detection details)
+# Export GeoJSON
 $(GEOJSON): $(DB)
 	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map.sql > $@
-
-# Export light GeoJSON (no detection details, smaller)
-$(GEOJSON_LIGHT): $(DB)
-	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map_light.sql > $@
 
 # Build database from detections
 $(DB): $(DATA_DIR)/detections.json $(DATA_DIR)/terminals.json | $(DATA_DIR)
@@ -67,14 +58,9 @@ refresh:
 	duckdb $(DB) < $(QUERIES_DIR)/init.sql
 	duckdb $(DB) < $(QUERIES_DIR)/load.sql
 	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map.sql > $(GEOJSON)
-	duckdb -noheader -list $(DB) < $(QUERIES_DIR)/export_map_light.sql > $(GEOJSON_LIGHT)
-	tippecanoe -o $(DATA_DIR)/low.pmtiles --force --layer=detections \
-		-Z0 -z9 -r1 -pk -pf $(GEOJSON_LIGHT)
-	tippecanoe -o $(DATA_DIR)/high.pmtiles --force --layer=detections \
-		-Z10 -z14 -r1 -pk -pf $(GEOJSON)
-	tile-join -o $(PMTILES) --force $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
-	rm -f $(DATA_DIR)/low.pmtiles $(DATA_DIR)/high.pmtiles
-	@echo "Refreshed: $$(duckdb -noheader -list $(DB) 'SELECT COUNT(*) FROM detections') detections"
+	tippecanoe -o $(PMTILES) --force --layer=detections \
+		-Z0 -z14 -r1 -pk -pf $(GEOJSON)
+	@echo "Refreshed: $$(duckdb -noheader -list $(DB) 'SELECT COUNT(*) FROM detections') terminals"
 
 # Sync terminals from research repo
 $(DATA_DIR)/terminals.json: | $(DATA_DIR)
@@ -108,7 +94,7 @@ deploy: $(PMTILES)
 help:
 	@echo "Sentinel-2 Flare Detection"
 	@echo ""
-	@echo "  make all       Build map.geojson from detection results"
+	@echo "  make all       Build PMTiles from detection results"
 	@echo "  make detect    Single location (LAT=x LON=y YEAR=n)"
 	@echo "  make refresh   Rebuild geodata from current detections.json"
 	@echo "  make db        Open DuckDB shell"
