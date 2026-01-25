@@ -61,3 +61,14 @@ INSTALL spatial; LOAD spatial;
 CREATE OR REPLACE MACRO detection_radius_m(pixels) AS (
     sqrt(pixels / pi()) * 20
 );
+
+-- Size-ratio aware merge threshold
+-- For similar sizes: r1 + r2 (allows centroid drift for same flare)
+-- For mismatched sizes (>4x): smaller radius * 2 + 20m (protects small flares)
+CREATE OR REPLACE MACRO merge_threshold_m(pixels_a, pixels_b) AS (
+    CASE
+        WHEN GREATEST(pixels_a, pixels_b)::DOUBLE / GREATEST(LEAST(pixels_a, pixels_b), 1) > 4
+        THEN GREATEST(50, LEAST(detection_radius_m(pixels_a), detection_radius_m(pixels_b)) * 2 + 20)
+        ELSE GREATEST(50, detection_radius_m(pixels_a) + detection_radius_m(pixels_b))
+    END
+);

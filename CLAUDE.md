@@ -35,13 +35,26 @@ Uses Sentinel-2 L2A (B8A, B11, B12) via Element84 STAC. 6km search radius.
 
 ## Spatial Clustering
 
-Cross-date clustering uses overlap-based merging:
+Cross-date clustering uses size-aware merging with co-occurrence penalty:
 ```
 radius = sqrt(pixels / π) × 20m
-merge if distance ≤ max(50m, radius_a + radius_b)
+
+# Size-aware threshold (protects small flares from absorption)
+if size_ratio > 4x:
+    threshold = min(r_a, r_b) × 2 + 20m
+else:
+    threshold = r_a + r_b
+
+# Co-occurrence penalty (separates distinct flares)
+if locations co-occur on same dates:
+    threshold *= (1 - 0.2 × cooccur_count)  # up to 50% reduction
+
+merge if distance ≤ max(50m, threshold)
 ```
 
-Large flares tolerate centroid drift; small distinct flares stay separate.
+- Large similar-size flares: merge at full radius sum (tolerates drift)
+- Small + large flare: only merge if small is within large's footprint
+- Co-occurring locations: stricter threshold keeps distinct flares separate
 
 ## Key Files
 - `src/burnoff/detect.py` - Detection algorithm
