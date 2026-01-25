@@ -3,19 +3,19 @@
 __pycache__/
 *.pyc
 
-# Data - intermediate files only
+# Generated data
 data/*.duckdb
+data/*.db
 data/*.geojson
-data/test_terminals.json
+data/*.pmtiles
+data/terminals-run.json
+web/data
+
+# Debug/test files
+debug.html
+data/test_*.json
 data/ras_laffan.json
 data/das_island.json
 
-# Debug tools
-debug.html
-
 # OS
 .DS_Store
-
-# Downloaded tools
-google-cloud-sdk/
-google-cloud-cli-linux-x86_64.tar.gz
