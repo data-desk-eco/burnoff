@@ -1,4 +1,4 @@
-.PHONY: all detect db map serve clean refresh deploy help
+.PHONY: all detect db map serve clean refresh deploy help deps
 
 # Sentinel-2 Flare Detection Pipeline
 
@@ -92,6 +92,12 @@ $(DATA_DIR):
 
 clean:
 	rm -rf $(DATA_DIR)
+
+# Install CLI dependencies (for remote/CI environments)
+deps:
+	@which duckdb > /dev/null || (echo "Installing DuckDB..." && curl -fsSL https://install.duckdb.org | sh)
+	@which tippecanoe > /dev/null || (echo "Installing tippecanoe..." && apt-get update && apt-get install -y tippecanoe)
+	@echo "Dependencies installed. Add DuckDB to PATH: export PATH=\"\$$HOME/.duckdb/cli/latest:\$$PATH\""
 
 # Deploy PMTiles to GCS
 GCS_BUCKET := gs://burnoff-data
