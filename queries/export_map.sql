@@ -5,7 +5,7 @@
 
 LOAD spatial;
 
-SET VARIABLE min_detections = 2;
+SET VARIABLE min_detections_per_year = 6;
 SET VARIABLE min_max_b12 = 0.9;
 SET VARIABLE merge_distance = 40;  -- 20m radius * 2 = 40m merge threshold
 
@@ -60,9 +60,22 @@ clustered_flares AS (
     GROUP BY c.cluster_id, c.facility_id, c.name
 ),
 
+-- Check if cluster has 6+ detections in any single year
+yearly_counts AS (
+    SELECT cluster_id, facility_id, YEAR(date) as yr, COUNT(DISTINCT date) as year_count
+    FROM cluster_assignments
+    GROUP BY cluster_id, facility_id, YEAR(date)
+),
+
+qualified_clusters AS (
+    SELECT DISTINCT cluster_id, facility_id
+    FROM yearly_counts
+    WHERE year_count >= getvariable('min_detections_per_year')
+),
+
 filtered_flares AS (
-    SELECT * FROM clustered_flares
-    WHERE detection_count >= getvariable('min_detections')
+    SELECT c.* FROM clustered_flares c
+    JOIN qualified_clusters q ON c.cluster_id = q.cluster_id AND c.facility_id = q.facility_id
 )
 
 SELECT json_object(

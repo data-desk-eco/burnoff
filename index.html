@@ -428,7 +428,7 @@
         <div class="imagery-controls" id="imagery-controls">
             <label class="label-sm">
                 Transparency
-                <input type="range" id="opacity-slider" min="0" max="100" value="25" oninput="setOpacity(100 - this.value)">
+                <input type="range" id="opacity-slider" min="0" max="100" value="10" oninput="setOpacity(100 - this.value)">
             </label>
         </div>
     </div>
@@ -914,7 +914,7 @@
             const [flareLon, flareLat] = currentFeature.geometry.coordinates;
 
             // Recenter bounds on flare location (not terminal)
-            const buffer = 1000;  // 1km buffer for display
+            const buffer = 50;  // 50m buffer = 5x5px at 20m resolution
             const zone = epsg % 100;
             const isNorth = epsg < 32700;
             const utmProj = `+proj=utm +zone=${zone} ${isNorth ? '' : '+south '}+datum=WGS84 +units=m +no_defs`;
@@ -1003,18 +1003,22 @@
                 // Then apply absolute scale for visualization
                 const scale = 0.0001;
                 const offset = -0.1;
-                const threshold = 0.4;  // Below this = dark purple
+                const threshold = 0.6;  // Below this = transparent
                 const ceiling = 1.5;    // Flares often reach 1.0-1.5+
 
                 for (let i = 0; i < data.length; i++) {
                     const v = data[i] * scale + offset;  // Convert DN to reflectance
-                    // Below threshold = dark purple, above = scale to fixed ceiling
-                    const t = v <= threshold ? 0 : Math.min(1, (v - threshold) / (ceiling - threshold));
-                    const [r, g, b] = magmaColor(t);
-                    imgData.data[i * 4] = r;
-                    imgData.data[i * 4 + 1] = g;
-                    imgData.data[i * 4 + 2] = b;
-                    imgData.data[i * 4 + 3] = 255;  // Always opaque - show full square
+                    // Below threshold = transparent, above = scale to fixed ceiling
+                    if (v <= threshold) {
+                        imgData.data[i * 4 + 3] = 0;  // Transparent
+                    } else {
+                        const t = Math.min(1, (v - threshold) / (ceiling - threshold));
+                        const [r, g, b] = magmaColor(t);
+                        imgData.data[i * 4] = r;
+                        imgData.data[i * 4 + 1] = g;
+                        imgData.data[i * 4 + 2] = b;
+                        imgData.data[i * 4 + 3] = 255;  // Opaque
+                    }
                 }
                 ctx.putImageData(imgData, 0, 0);
 
@@ -1036,7 +1040,7 @@
                     id: 'cog-layer',
                     type: 'raster',
                     source: 'cog-source',
-                    paint: { 'raster-opacity': 0.85, 'raster-resampling': 'nearest' }
+                    paint: { 'raster-opacity': 0.9, 'raster-resampling': 'nearest' }
                 }, 'detection-circles');
 
                 // Keep circles greyed while imagery visible
@@ -1048,6 +1052,9 @@
 
                 document.querySelector('.event-item.active')?.classList.remove('loading');
                 document.getElementById('imagery-controls').classList.add('visible');
+
+                // Dim basemap to highlight SWIR overlay
+                map.setPaintProperty('basemap', 'raster-brightness-max', 0.25);
 
             } catch (err) {
                 console.error('Failed to load COG:', err);
@@ -1064,6 +1071,8 @@
         function closeImagery() {
             if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
             if (map.getSource('cog-source')) map.removeSource('cog-source');
+            // Restore basemap brightness
+            map.setPaintProperty('basemap', 'raster-brightness-max', 1);
             // Restore detection circle style (greyed if selection active)
             if (currentFeature) {
                 setCirclesGreyed();

@@ -1,1 +1,1 @@
-(empty - detection improvements shipped in this PR)
+- zany idea: when the user pans over any area without existing coverage, ask them if they want to check sentinel-2, then process new imagery on their machine and send detections back to a central DB. could be a nice talking point about crowd-sourced computation.
