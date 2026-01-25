@@ -187,7 +187,7 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     border-bottom: 1px solid var(--border-subtle);
 }
 
-.events-list { height: 297px; overflow-y: auto; }
+.events-list { height: 298px; overflow-y: auto; }
 
 .event-item {
     position: relative;
