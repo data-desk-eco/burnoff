@@ -1,6 +1,6 @@
 -- Export flare locations WITHOUT detection details (for low zoom tiles)
 -- Much smaller - just points with summary stats
--- Uses same clustering logic as export_map.sql
+-- Uses same overlap-based clustering logic as export_map.sql
 
 -- Haversine distance macro (returns meters)
 CREATE OR REPLACE MACRO haversine_m(lon1, lat1, lon2, lat2) AS (
@@ -11,10 +11,9 @@ CREATE OR REPLACE MACRO haversine_m(lon1, lat1, lon2, lat2) AS (
 );
 
 -- Configuration (same as export_map.sql)
--- Reduced cluster_distance from 300m to 100m to prevent merging distinct flares
-SET VARIABLE cluster_distance_m = 100;
 SET VARIABLE min_detections = 2;  -- Lowered from 3 to catch intermittent flares
 SET VARIABLE min_max_b12 = 0.75;
+SET VARIABLE min_merge_distance = 50;  -- Floor: 20m pixel + 10m geolocation + 20m viewing angle
 
 WITH
 raw_detections AS (
@@ -25,13 +24,15 @@ raw_detections AS (
         e.flare_lat,
         e.date,
         e.max_b12,
+        e.pixels,
         row_number() OVER () as det_id
     FROM detections d
     JOIN detection_events e ON d.lat = e.lat AND d.lon = e.lon
     WHERE e.flare_lon IS NOT NULL AND e.flare_lat IS NOT NULL
 ),
 
--- Direct leader assignment (no transitive closure to prevent clustering creep)
+-- Overlap-based clustering: merge if circular footprints touch
+-- Radius = sqrt(pixels / pi) * 20m, with 30m floor for geolocation tolerance
 cluster_assignments AS (
     SELECT
         a.det_id,
@@ -44,7 +45,10 @@ cluster_assignments AS (
         (SELECT MIN(b.det_id)
          FROM raw_detections b
          WHERE b.facility_id = a.facility_id
-           AND haversine_m(a.flare_lon, a.flare_lat, b.flare_lon, b.flare_lat) <= getvariable('cluster_distance_m')
+           AND haversine_m(a.flare_lon, a.flare_lat, b.flare_lon, b.flare_lat) <= GREATEST(
+               getvariable('min_merge_distance'),
+               sqrt(a.pixels / 3.14159) * 20 + sqrt(b.pixels / 3.14159) * 20
+           )
         ) as cluster_id
     FROM raw_detections a
 ),
