@@ -50,7 +50,8 @@ L1C_S3_REGION = "eu-central-1"
 # Reflectance thresholds for candidate pixels
 B12_THRESHOLD = 0.3           # Min B12 reflectance for candidate pixel
 B11_THRESHOLD = 0.2           # Min B11 reflectance for candidate pixel
-MIN_PEAK_B12 = 0.50           # Min peak B12 reflectance within cluster (permissive)
+MIN_PEAK_B12 = 0.50           # Min peak B12 reflectance within cluster
+CONNECTIVITY_B12 = 0.75       # Higher threshold for connectivity (grabs bright core only)
 
 # Saturation indicates extreme thermal emission (flares can saturate SWIR)
 SATURATION_THRESHOLD = 1.0    # Reflectance > 1.0 indicates saturation
@@ -73,15 +74,18 @@ DEFAULT_BUFFER_M = 6000       # Search radius around terminal (6km)
 class Detection:
     """A single flare detection result.
 
-    Represents a raw detection at the actual max B12 pixel location.
-    Clustering is done in SQL export, not here.
+    flare_lon/lat = centroid of bright region (primary location)
+    max_pixel_lon/lat = brightest pixel location (for comparison)
     """
     date: date
-    max_b12: float  # Peak B12 radiance in W/(m²·sr·μm)
-    pixel_count: int
-    # Actual location of max B12 pixel (raw, unclustered)
+    max_b12: float  # Peak B12 reflectance
+    pixel_count: int  # Number of pixels in bright region
+    # Centroid of bright region (primary location)
     flare_lon: float | None = None
     flare_lat: float | None = None
+    # Max pixel location (for comparison/debugging)
+    max_pixel_lon: float | None = None
+    max_pixel_lat: float | None = None
     # Image URLs for on-demand rendering
     cog_urls: dict | None = None  # {b11, b12, visual} URLs
     bounds: tuple | None = None   # (minx, miny, maxx, maxy) in EPSG:4326
@@ -89,7 +93,7 @@ class Detection:
     epsg: int | None = None  # UTM zone EPSG code
     # DAFI v2: NHISWNIR value at detection (for diagnostics)
     nhiswnir: float | None = None
-    # Peakedness: avg B12 radiance in cluster
+    # Avg B12 in bright region
     avg_b12: float | None = None
 
 
@@ -177,8 +181,10 @@ class DetectionResult:
                     "max_b12": d.max_b12,
                     "avg_b12": d.avg_b12,
                     "pixels": d.pixel_count,
-                    "flare_lon": d.flare_lon,
+                    "flare_lon": d.flare_lon,  # Centroid
                     "flare_lat": d.flare_lat,
+                    "max_pixel_lon": d.max_pixel_lon,  # Brightest pixel
+                    "max_pixel_lat": d.max_pixel_lat,
                     "cog": d.cog_urls,
                     "bounds": d.bounds,
                     "utm_bounds": d.utm_bounds,
@@ -282,7 +288,6 @@ def process_image(
     lon: float,
     buffer_m: int = DEFAULT_BUFFER_M,
     max_local_cloud: float = MAX_LOCAL_CLOUD_FRACTION,
-    max_pixels: int = 128,
     l2a_item: dict | None = None,
 ) -> list[Detection]:
     """Process a single Sentinel-2 L1C image using DAFI v2 algorithm.
@@ -350,8 +355,7 @@ def process_image(
                     min(utm_bounds[3], img_bounds.top),
                 )
                 window = from_bounds(*clipped, src.transform)
-                out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
-                scl = src.read(1, window=window, out_shape=out_shape)
+                scl = src.read(1, window=window)  # Native resolution
                 cloud_mask = np.isin(scl, [3, 8, 9, 10])
                 cloud_fraction = cloud_mask.sum() / cloud_mask.size
                 if cloud_fraction > max_local_cloud:
@@ -367,8 +371,7 @@ def process_image(
                 min(utm_bounds[3], img_bounds.top),
             )
             window = from_bounds(*clipped, src.transform)
-            out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
-            b11_dn = src.read(1, window=window, out_shape=out_shape)
+            b11_dn = src.read(1, window=window)  # Native 20m resolution
             b11 = dn_to_reflectance(b11_dn)
 
         with rasterio.open(b12_url) as src:
@@ -380,10 +383,10 @@ def process_image(
                 min(utm_bounds[3], img_bounds.top),
             )
             window = from_bounds(*clipped_bounds, src.transform)
-            out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
-            b12_dn = src.read(1, window=window, out_shape=out_shape)
+            b12_dn = src.read(1, window=window)  # Native 20m resolution
             b12 = dn_to_reflectance(b12_dn)
             actual_bounds = clipped_bounds
+            pixel_size = src.res[0]  # Should be 20m for SWIR bands
 
         # Read NIR band (B8A) for NHISWNIR calculation
         b8a = None
@@ -398,135 +401,94 @@ def process_image(
                         min(utm_bounds[3], img_bounds.top),
                     )
                     window = from_bounds(*clipped, src.transform)
-                    out_shape = (min(max_pixels, int(window.height)), min(max_pixels, int(window.width)))
-                    b8a_dn = src.read(1, window=window, out_shape=out_shape)
+                    b8a_dn = src.read(1, window=window)  # Native 20m resolution
                     b8a = dn_to_reflectance(b8a_dn)
             except Exception:
                 b8a = None
 
-        # === DAFI v2 DETECTION ALGORITHM ===
-        # Primary: NHISWNIR > 0 (thermal signature - B11 > B8A)
-        # Flares emit thermally in SWIR, overpowering solar reflection
+        # === CONNECTED COMPONENT CENTROID DETECTION ===
+        # Find bright regions and compute their centroids
+        # Output both centroid (primary) and max pixel location (for comparison)
 
-        # 1. Reflectance thresholds - pixel must be bright in SWIR
-        bright_mask = (b12 > B12_THRESHOLD) & (b11 > B11_THRESHOLD)
+        # Mask of bright pixels for connected components
+        bright_mask = b12 >= CONNECTIVITY_B12
 
-        # 2. Contrast ratio - must stand out from local background
-        background_pixels = b12[b12 < B12_THRESHOLD]
-        if background_pixels.size < 10:
-            return []  # Not enough background to compare
-        background_median = float(np.median(background_pixels))
-        background_baseline = max(background_median, BACKGROUND_FLOOR)
-        contrast_mask = b12 > (background_baseline * MIN_CONTRAST_RATIO)
+        if not bright_mask.any():
+            return []
 
-        # 3. Thermal signature - NHISWNIR > 0 (B11 > B8A)
-        # NHISWNIR = (B11 - B8A) / (B11 + B8A), positive = SWIR brighter than NIR
-        # Normal surfaces: NIR > SWIR (negative). Thermal sources: SWIR > NIR (positive)
+        # Find connected components
+        labeled, num_features = ndimage.label(bright_mask)
+
+        # Compute NHISWNIR for thermal signature validation
         nhiswnir = np.zeros_like(b11)
         if b8a is not None:
             denominator = b11 + b8a
             valid = denominator > 0.01
             np.divide(b11 - b8a, denominator, out=nhiswnir, where=valid)
-            thermal_mask = nhiswnir > 0
-            # Also include saturated pixels (very hot - reflectance > 1.0)
-            saturated_mask = (b11 > SATURATION_THRESHOLD) | (b12 > SATURATION_THRESHOLD)
-            thermal_mask = thermal_mask | saturated_mask
-        else:
-            # Fallback if B8A unavailable: require saturated SWIR
-            thermal_mask = b11 > SATURATION_THRESHOLD
 
-        # Combined: must pass ALL tests
-        mask = bright_mask & contrast_mask & thermal_mask
-
-        if not mask.any():
-            return []
-
-        # Find connected components (separate flare clusters)
-        labeled, num_features = ndimage.label(mask)
+        # Use L2A COGs for visualization (browser-friendly), fall back to L1C JP2
+        cog_b11 = viz_b11_url or b11_url
+        cog_b12 = viz_b12_url or b12_url
+        cog_visual = viz_visual_url or visual_url
 
         detections = []
         for label_id in range(1, num_features + 1):
-            cluster_mask = labeled == label_id
-            pixel_count = int(cluster_mask.sum())
+            component_mask = labeled == label_id
+            pixel_count = int(component_mask.sum())
 
-            # Skip clusters that are too large (not point sources)
-            if pixel_count > MAX_FLARE_PIXELS:
+            if pixel_count < 1:
                 continue
 
-            # 4. Cluster reflectance check - peak B12 must be high
-            cluster_b12 = np.where(cluster_mask, b12, 0)
-            cluster_max_b12 = float(cluster_b12.max())
+            # Get component pixel coordinates and values
+            rows, cols = np.where(component_mask)
+            b12_vals = b12[component_mask]
 
-            # Skip clusters below peak reflectance threshold
-            if cluster_max_b12 < MIN_PEAK_B12:
+            # Component stats
+            max_b12 = float(b12_vals.max())
+            avg_b12 = float(b12_vals.mean())
+
+            # Skip if below threshold
+            if max_b12 < MIN_PEAK_B12:
                 continue
 
-            # Size-dependent intensity: large detections need higher reflectance
-            # Filters factory roofs, solar farms that are warm but not flares
-            if pixel_count > LARGE_DETECTION_PIXELS and cluster_max_b12 < LARGE_DETECTION_MIN_B12:
-                continue
+            # CENTROID: unweighted center of bright region
+            centroid_row = float(rows.mean())
+            centroid_col = float(cols.mean())
 
-            # 5. Peakedness filter - flares have a bright core, false positives are uniform
-            cluster_vals = b12[cluster_mask]
-            cluster_avg_b12 = float(np.mean(cluster_vals))
+            # MAX PIXEL: location of brightest pixel
+            max_idx = b12_vals.argmax()
+            max_row, max_col = rows[max_idx], cols[max_idx]
 
-            if pixel_count == 1:
-                # Single pixel: can't use peakedness, use same threshold as multi-pixel
-                if cluster_max_b12 < MIN_PEAK_B12:
-                    continue
-            else:
-                # Multi-pixel: apply peakedness filter
-                if cluster_max_b12 < MIN_PEAKEDNESS * cluster_avg_b12:
-                    continue  # Too uniform, likely not a flare
-
-            # Get cluster pixel coordinates for centroid calculation
-            rows, cols = np.where(cluster_mask)
-            weights = b12[cluster_mask]  # B12-weighted centroid
-            total_weight = weights.sum()
-
-            # Weighted centroid of cluster pixels
-            centroid_row = float(np.sum(rows * weights) / total_weight)
-            centroid_col = float(np.sum(cols * weights) / total_weight)
-
-            # Max B12 location for NHISWNIR and warm region check
-            max_idx = np.unravel_index(cluster_b12.argmax(), cluster_b12.shape)
-            max_row, max_col = max_idx
-            cluster_nhiswnir = float(nhiswnir[max_row, max_col]) if b8a is not None else None
-
-            # 6. Point source filter - check full extent of warm region
-            warm_threshold = cluster_max_b12 * WARM_REGION_FRACTION
-            warm_mask = b12 > warm_threshold
-            warm_labeled, _ = ndimage.label(warm_mask)
-            warm_region_size = int((warm_labeled == warm_labeled[max_row, max_col]).sum())
-            if warm_region_size > MAX_WARM_REGION_PIXELS:
-                continue
-
-            # Convert centroid coords to UTM using actual window bounds
+            # Convert centroid to lat/lon (primary location)
             col_frac = (centroid_col + 0.5) / b12.shape[1]
             row_frac = (centroid_row + 0.5) / b12.shape[0]
-            flare_utm_x = actual_bounds[0] + col_frac * (actual_bounds[2] - actual_bounds[0])
-            flare_utm_y = actual_bounds[3] - row_frac * (actual_bounds[3] - actual_bounds[1])
+            centroid_utm_x = actual_bounds[0] + col_frac * (actual_bounds[2] - actual_bounds[0])
+            centroid_utm_y = actual_bounds[3] - row_frac * (actual_bounds[3] - actual_bounds[1])
+            centroid_lon, centroid_lat = transformer_to_wgs.transform(centroid_utm_x, centroid_utm_y)
 
-            # Convert to WGS84
-            flare_lon, flare_lat = transformer_to_wgs.transform(flare_utm_x, flare_utm_y)
+            # Convert max pixel to lat/lon (for comparison)
+            col_frac = (max_col + 0.5) / b12.shape[1]
+            row_frac = (max_row + 0.5) / b12.shape[0]
+            max_utm_x = actual_bounds[0] + col_frac * (actual_bounds[2] - actual_bounds[0])
+            max_utm_y = actual_bounds[3] - row_frac * (actual_bounds[3] - actual_bounds[1])
+            max_lon, max_lat = transformer_to_wgs.transform(max_utm_x, max_utm_y)
 
-            # Use L2A COGs for visualization (browser-friendly), fall back to L1C JP2
-            cog_b11 = viz_b11_url or b11_url
-            cog_b12 = viz_b12_url or b12_url
-            cog_visual = viz_visual_url or visual_url
+            peak_nhiswnir = float(nhiswnir[max_row, max_col]) if b8a is not None else None
 
             detections.append(Detection(
                 date=img_date,
-                max_b12=cluster_max_b12,
+                max_b12=max_b12,
                 pixel_count=pixel_count,
-                flare_lon=flare_lon,
-                flare_lat=flare_lat,
+                flare_lon=centroid_lon,  # Primary: centroid
+                flare_lat=centroid_lat,
                 cog_urls={"b11": cog_b11, "b12": cog_b12, "visual": cog_visual},
                 bounds=wgs_bounds,
                 utm_bounds=utm_bounds,
                 epsg=int(epsg),
-                nhiswnir=cluster_nhiswnir,
-                avg_b12=cluster_avg_b12,
+                nhiswnir=peak_nhiswnir,
+                avg_b12=avg_b12,
+                max_pixel_lon=max_lon,  # Secondary: max pixel location
+                max_pixel_lat=max_lat,
             ))
 
         return detections
@@ -588,7 +550,7 @@ def detect(
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(
-                process_image, l1c_item, lat, lon, buffer_m, max_local_cloud, 128, l2a_item
+                process_image, l1c_item, lat, lon, buffer_m, max_local_cloud, l2a_item
             ): l1c_item
             for l1c_item, l2a_item in item_pairs
         }
