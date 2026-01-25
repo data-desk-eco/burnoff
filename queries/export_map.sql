@@ -2,9 +2,14 @@
 -- Performs spatial clustering on raw detections before export
 --
 -- Configuration (adjust these values to tune clustering):
---   CLUSTER_DISTANCE_M: Max distance (meters) to merge detections (default: 150)
---   MIN_DETECTIONS: Minimum detection dates for temporal persistence (default: 3)
+--   CLUSTER_DISTANCE_M: Max distance (meters) to merge detections (default: 100)
+--   MIN_DETECTIONS: Minimum detection dates for temporal persistence (default: 2)
 --   MIN_MAX_B12: Minimum peak B12 for high confidence (default: 0.75)
+--
+-- Design principles:
+--   - No false negatives: detect every flare, even small/intermittent ones
+--   - No false clustering: keep distinct flares separate (100m prevents merging)
+--   - Same-flare variance ~50-70m (20m pixels + 10m geolocation + viewing angle)
 
 -- Haversine distance macro (returns meters)
 CREATE OR REPLACE MACRO haversine_m(lon1, lat1, lon2, lat2) AS (
@@ -15,10 +20,10 @@ CREATE OR REPLACE MACRO haversine_m(lon1, lat1, lon2, lat2) AS (
 );
 
 -- Configuration
--- Increased cluster_distance from 150m to 300m to better merge large flares
--- that span multiple detection points (e.g., Bethioua, Arzew GL4Z)
-SET VARIABLE cluster_distance_m = 300;
-SET VARIABLE min_detections = 3;
+-- Reduced cluster_distance from 300m to 100m to prevent merging distinct flares
+-- while still grouping same-flare detections across time
+SET VARIABLE cluster_distance_m = 100;
+SET VARIABLE min_detections = 2;  -- Lowered from 3 to catch intermittent flares
 SET VARIABLE min_max_b12 = 0.75;
 
 WITH
@@ -44,7 +49,9 @@ raw_detections AS (
 
 -- Step 2: For each detection, find the minimum det_id within clustering distance
 -- This assigns each point to the "leader" (lowest ID) of its cluster
-cluster_leaders AS (
+-- Note: No transitive closure - each detection joins its direct leader only
+-- This prevents "clustering creep" where distant flares get chained together
+cluster_assignments AS (
     SELECT
         a.det_id,
         a.facility_id,
@@ -57,41 +64,16 @@ cluster_leaders AS (
         a.cog_b12,
         a.epsg,
         a.utm_minx, a.utm_miny, a.utm_maxx, a.utm_maxy,
-        -- Find minimum det_id within distance (including self)
+        -- Find minimum det_id within distance (including self) - this IS the cluster_id
         (SELECT MIN(b.det_id)
          FROM raw_detections b
          WHERE b.facility_id = a.facility_id
            AND haversine_m(a.flare_lon, a.flare_lat, b.flare_lon, b.flare_lat) <= getvariable('cluster_distance_m')
-        ) as leader_id
+        ) as cluster_id
     FROM raw_detections a
 ),
 
--- Step 3: Propagate leaders - each point should belong to the leader's leader
--- This handles chains: if A->B and B->C, then A should go to C
--- We do this by finding the minimum leader among all connected points
-final_clusters AS (
-    SELECT
-        a.det_id,
-        a.facility_id,
-        a.name,
-        a.flare_lon,
-        a.flare_lat,
-        a.date,
-        a.max_b12,
-        a.pixels,
-        a.cog_b12,
-        a.epsg,
-        a.utm_minx, a.utm_miny, a.utm_maxx, a.utm_maxy,
-        -- Get the leader's leader (for transitive closure)
-        (SELECT MIN(b.leader_id)
-         FROM cluster_leaders b
-         WHERE b.facility_id = a.facility_id
-           AND haversine_m(a.flare_lon, a.flare_lat, b.flare_lon, b.flare_lat) <= getvariable('cluster_distance_m')
-        ) as cluster_id
-    FROM cluster_leaders a
-),
-
--- Step 4: Aggregate detections by cluster
+-- Step 3: Aggregate detections by cluster
 clustered_flares AS (
     SELECT
         cluster_id,
@@ -114,11 +96,11 @@ clustered_flares AS (
                 'raw_lat', flare_lat
             )
         ) as detections
-    FROM final_clusters
+    FROM cluster_assignments
     GROUP BY cluster_id, facility_id, name
 ),
 
--- Step 5: Apply quality filters
+-- Step 4: Apply quality filters
 filtered_flares AS (
     SELECT *
     FROM clustered_flares
