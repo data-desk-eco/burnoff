@@ -22,7 +22,7 @@ jobs:
       - name: Prepare dist
         run: |
           mkdir -p dist
-          cp index.html dist/
+          cp web/index.html web/app.js web/style.css dist/
 
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
