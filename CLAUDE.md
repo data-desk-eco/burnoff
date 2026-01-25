@@ -41,12 +41,23 @@ Search radius: 6km around each terminal.
 
 **Export filtering** (in SQL, stricter):
 7. Peak B12 ≥ 0.75 (high confidence flares only)
-8. Detection count ≥ 3 (temporal persistence)
-9. Cluster detections within 300m across dates (merges large flare systems)
+8. Detection count ≥ 2 (temporal persistence)
+9. Overlap-based clustering across dates (see below)
 
 **Output metrics**:
 - Occurrence Frequency (OF) = detection days / images searched
 - Persistence: high (≥30%), mid-high (≥20%), mid-low (≥15%), low (≥10%), intermittent (<10%)
+
+## Spatial Clustering (Cross-Date)
+
+Detections from different dates are clustered using **overlap-based clustering**:
+- Each detection is approximated as a circle: `radius = sqrt(pixels / π) × 20m`
+- Two detections merge if their circles overlap: `distance ≤ radius_a + radius_b`
+- Minimum merge distance of 50m (floor: 20m pixel + 10m geolocation + 20m viewing angle)
+
+This adaptive approach:
+- Keeps large flares together even when centroids drift between dates
+- Keeps distinct small flares separate unless they truly overlap spatially
 
 ## Changing Detection Parameters
 When modifying detection logic in `src/burnoff/detect.py`:
