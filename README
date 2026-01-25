@@ -34,7 +34,7 @@ Bulk processing:
 Algorithm
 ---------
 
-Per-pixel detection using Sentinel-2 L2A bands:
+Per-pixel detection using Sentinel-2 L1C bands:
 - Intensity: B12 > 0.3, B11 > 0.2
 - Contrast: B12 > 3× local median
 - Thermal: (B11 - B8A) / (B11 + B8A) > 0
@@ -47,6 +47,6 @@ Cross-date clustering merges detections whose circular footprints overlap:
 Data Sources
 ------------
 
-- Sentinel-2 L2A via Element84 STAC API
+- Sentinel-2 L1C via Element84 STAC API
 - SWIR bands: B11 (1610nm), B12 (2190nm)
-- Scene classification (SCL) for cloud masking
+- Cloud masking via L2A SCL band
