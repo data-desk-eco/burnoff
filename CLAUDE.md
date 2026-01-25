@@ -26,8 +26,10 @@ Uses Sentinel-2 L2A (B8A, B11, B12) via Element84 STAC. 6km search radius.
 
 **Per-cluster** (at detection):
 4. Peak B12 ≥ 0.5
-5. ≤ 200 pixels (point source)
-6. < 30% cloud cover (scene and local)
+5. ≤ 50 pixels (point source, 20m² each)
+6. If > 30 pixels, require peak B12 ≥ 0.70
+7. Warm region ≤ 100 pixels (B12 > 0.2 connected component containing detection)
+8. < 30% cloud cover (scene and local)
 
 **At export** (stricter):
 7. Peak B12 ≥ 0.75
@@ -39,21 +41,21 @@ Cross-date clustering uses size-aware merging with co-occurrence penalty:
 ```
 radius = sqrt(pixels / π) × 20m
 
-# Size-aware threshold (protects small flares from absorption)
-if size_ratio > 4x:
-    threshold = min(r_a, r_b) × 2 + 20m
+# Size-aware threshold
+if max_pixels < 10:
+    # Small detections have uncertain centroids (can drift 200-300m)
+    threshold = max(100m, min(350m, max_radius × 15))
 else:
-    threshold = r_a + r_b
+    # Large detections are spatially accurate
+    threshold = max(100m, r_a + r_b)
 
 # Co-occurrence penalty (separates distinct flares)
 if locations co-occur on same dates:
     threshold *= (1 - 0.2 × cooccur_count)  # up to 50% reduction
-
-merge if distance ≤ max(50m, threshold)
 ```
 
-- Large similar-size flares: merge at full radius sum (tolerates drift)
-- Small + large flare: only merge if small is within large's footprint
+- Small detections (< 10 pixels): use aggressive 15× radius scaling, capped at 350m
+- Large detections: use sum of radii for more conservative merging
 - Co-occurring locations: stricter threshold keeps distinct flares separate
 
 ## Key Files

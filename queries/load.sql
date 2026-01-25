@@ -10,22 +10,22 @@ SELECT
     json_extract_string(t, '$.type') as type
 FROM read_json('data/terminals.json') t;
 
--- Load detection summaries
+-- Load detection summaries (join with terminals to get id)
 INSERT OR REPLACE INTO detections
 SELECT
-    CAST(id AS INTEGER),
-    name,
-    CAST(lat AS DOUBLE),
-    CAST(lon AS DOUBLE),
-    CAST(start_date AS DATE),
-    CAST(end_date AS DATE),
-    CAST(images AS INTEGER),
-    CAST(detections AS INTEGER),
-    -- occurrence_frequency is already a percentage (0-100) from detect.py
-    CAST(occurrence_frequency AS DOUBLE),
-    persistence_level,
-    CAST(max_b12 AS DOUBLE)
-FROM read_json('data/detections.json');
+    t.id,
+    d.name,
+    CAST(d.lat AS DOUBLE),
+    CAST(d.lon AS DOUBLE),
+    CAST(d.start_date AS DATE),
+    CAST(d.end_date AS DATE),
+    CAST(d.images AS INTEGER),
+    CAST(d.detections AS INTEGER),
+    CAST(d.occurrence_frequency AS DOUBLE),
+    d.persistence_level,
+    CAST(d.max_b12 AS DOUBLE)
+FROM read_json('data/detections.json') d
+LEFT JOIN terminals t ON ABS(d.lat - t.lat) < 0.001 AND ABS(d.lon - t.lon) < 0.001;
 
 -- Load individual detection events with COG metadata
 -- Raw detections from detect.py - clustering done in export_map.sql
