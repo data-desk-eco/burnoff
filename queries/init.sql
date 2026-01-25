@@ -53,3 +53,15 @@ CREATE TABLE IF NOT EXISTS detection_events (
     -- Primary key includes flare location since multiple flares can be detected per facility per date
     PRIMARY KEY (lat, lon, date, flare_lat, flare_lon)
 );
+
+-- Macros for spatial clustering (used by export queries)
+CREATE OR REPLACE MACRO haversine_m(lon1, lat1, lon2, lat2) AS (
+    6371000 * 2 * asin(sqrt(
+        power(sin(radians(lat2 - lat1) / 2), 2) +
+        cos(radians(lat1)) * cos(radians(lat2)) * power(sin(radians(lon2 - lon1) / 2), 2)
+    ))
+);
+
+CREATE OR REPLACE MACRO detection_radius_m(pixels) AS (
+    sqrt(pixels / pi()) * 20  -- Circular footprint from 20m Sentinel-2 pixels
+);
