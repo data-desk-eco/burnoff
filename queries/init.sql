@@ -53,3 +53,11 @@ CREATE TABLE IF NOT EXISTS detection_events (
     -- Primary key includes flare location since multiple flares can be detected per facility per date
     PRIMARY KEY (lat, lon, date, flare_lat, flare_lon)
 );
+
+-- Spatial extension for distance calculations
+INSTALL spatial; LOAD spatial;
+
+-- Detection footprint radius from pixel count (20m Sentinel-2 resolution)
+CREATE OR REPLACE MACRO detection_radius_m(pixels) AS (
+    sqrt(pixels / pi()) * 20
+);
