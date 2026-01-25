@@ -11,7 +11,8 @@ CREATE OR REPLACE MACRO haversine_m(lon1, lat1, lon2, lat2) AS (
 );
 
 -- Configuration (same as export_map.sql)
-SET VARIABLE cluster_distance_m = 150;
+-- Increased cluster_distance from 150m to 300m to better merge large flares
+SET VARIABLE cluster_distance_m = 300;
 SET VARIABLE min_detections = 3;
 SET VARIABLE min_max_b12 = 0.75;
 

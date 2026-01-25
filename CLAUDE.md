@@ -42,7 +42,7 @@ Search radius: 6km around each terminal.
 **Export filtering** (in SQL, stricter):
 7. Peak B12 ≥ 0.75 (high confidence flares only)
 8. Detection count ≥ 3 (temporal persistence)
-9. Cluster detections within 75m across dates
+9. Cluster detections within 300m across dates (merges large flare systems)
 
 **Output metrics**:
 - Occurrence Frequency (OF) = detection days / images searched
