@@ -11,6 +11,7 @@ dependencies = [
     "pyproj>=3.6",
     "scipy>=1.15.3",
     "duckdb>=1.4.3",
+    "pmtiles>=3.5.0",
 ]
 
 [project.scripts]
