@@ -351,8 +351,10 @@
                 render();
             };
 
-            // Bind slider events
-            document.querySelectorAll('#controls input').forEach(el => el.oninput = render);
+            // Bind slider events - use addEventListener for reliable dynamic updates
+            document.querySelectorAll('#controls input[type="range"]').forEach(el => {
+                el.addEventListener('input', render);
+            });
 
             // Select first terminal
             if (rawData.length) {
@@ -364,8 +366,6 @@
             // Click to load imagery
             map.on('click', 'raw-points', async (e) => {
                 const props = e.features[0].properties;
-                if (!props.cog_b12) return;
-
                 const [lon, lat] = e.features[0].geometry.coordinates;
                 await loadCOG(props.cog_b12, lon, lat, props.epsg);
             });
@@ -389,13 +389,16 @@
         }
 
         async function loadCOG(url, lon, lat, epsg) {
-            if (!url || url.includes('.jp2') || !url.includes('.tif')) {
+            // Clear any existing COG layer
+            if (map.getLayer('cog')) map.removeLayer('cog');
+            if (map.getSource('cog')) map.removeSource('cog');
+
+            // L1C data uses JP2 which GeoTIFF.js can't read
+            if (!url || typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif')) {
                 showMessage('Visual imagery not yet available (L1C only)');
-                if (map.getLayer('cog')) map.removeLayer('cog');
-                if (map.getSource('cog')) map.removeSource('cog');
                 return;
             }
-            showMessage('');
+            showMessage('Loading imagery...');
             try {
                 const zone = epsg % 100;
                 const isNorth = epsg < 32700;
@@ -446,6 +449,7 @@
                 map.addLayer({ id: 'cog', type: 'raster', source: 'cog', paint: { 'raster-opacity': 0.9 } }, 'radii');
             } catch (e) {
                 console.error('COG load failed:', e);
+                showMessage('Failed to load imagery');
             }
         }
     </script>
