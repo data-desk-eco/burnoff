@@ -10,3 +10,7 @@ data/test_terminals.json
 
 # OS
 .DS_Store
+
+# Downloaded tools
+google-cloud-sdk/
+google-cloud-cli-linux-x86_64.tar.gz
