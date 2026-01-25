@@ -50,7 +50,14 @@ BACKGROUND_FLOOR = 0.15   # Minimum baseline for contrast calculation
 MIN_PEAKEDNESS = 1.15     # max_b12 >= 1.15 * avg_b12 (15% peak above average)
 
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
-MAX_FLARE_PIXELS = 200    # Max pixels per cluster (larger = not point source)
+MAX_FLARE_PIXELS = 50     # Absolute max pixels (20m resolution = 1000m² per pixel)
+# Size-dependent intensity: large low-intensity detections are often factory roofs/solar farms
+LARGE_DETECTION_PIXELS = 30   # Above this threshold...
+LARGE_DETECTION_MIN_B12 = 0.70  # ...require higher intensity
+# Point source filter: check size of warm region around detection
+# Solar farms have huge warm footprints; flares are compact point sources
+WARM_REGION_FRACTION = 0.5    # Threshold = peak * this fraction
+MAX_WARM_REGION_PIXELS = 75   # Max size of connected warm region
 DEFAULT_BUFFER_M = 6000   # Search radius around terminal (6km)
 
 
@@ -385,6 +392,11 @@ def process_image(
             if cluster_max_b12 < MIN_PEAK_B12:
                 continue
 
+            # Size-dependent intensity: large detections need higher intensity
+            # Filters factory roofs, solar farms that are warm but not flares
+            if pixel_count > LARGE_DETECTION_PIXELS and cluster_max_b12 < LARGE_DETECTION_MIN_B12:
+                continue
+
             # 5. Peakedness filter - flares have a bright core, false positives are uniform
             # Real flares: max >> avg (bright core, dimmer edges)
             # False positives (roofs, solar): max ≈ avg (uniform brightness)
@@ -404,6 +416,15 @@ def process_image(
             max_idx = np.unravel_index(cluster_b12.argmax(), cluster_b12.shape)
             row, col = max_idx
             cluster_nhiswnir = float(nhiswnir[row, col]) if b8a is not None else None
+
+            # 6. Point source filter - check full extent of warm region
+            # Flares are compact; solar farms have huge warm footprints
+            warm_threshold = cluster_max_b12 * WARM_REGION_FRACTION
+            warm_mask = b12 > warm_threshold
+            warm_labeled, _ = ndimage.label(warm_mask)
+            warm_region_size = int((warm_labeled == warm_labeled[row, col]).sum())
+            if warm_region_size > MAX_WARM_REGION_PIXELS:
+                continue
 
             # Convert pixel coords back to UTM using actual window bounds
             col_frac = (col + 0.5) / b12.shape[1]

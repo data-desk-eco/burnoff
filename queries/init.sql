@@ -62,13 +62,16 @@ CREATE OR REPLACE MACRO detection_radius_m(pixels) AS (
     sqrt(pixels / pi()) * 20
 );
 
--- Size-ratio aware merge threshold
--- For similar sizes: r1 + r2 (allows centroid drift for same flare)
--- For mismatched sizes (>4x): smaller radius * 2 + 20m (protects small flares)
+-- Merge threshold based on detection size
+-- Small detections (< 10 pixels) have uncertain centroids that can drift
+-- Large detections are spatially accurate, use tighter thresholds
+-- Cap at 250m - co-occurrence penalty handles cases needing more
 CREATE OR REPLACE MACRO merge_threshold_m(pixels_a, pixels_b) AS (
     CASE
-        WHEN GREATEST(pixels_a, pixels_b)::DOUBLE / GREATEST(LEAST(pixels_a, pixels_b), 1) > 4
-        THEN GREATEST(50, LEAST(detection_radius_m(pixels_a), detection_radius_m(pixels_b)) * 2 + 20)
-        ELSE GREATEST(50, detection_radius_m(pixels_a) + detection_radius_m(pixels_b))
+        -- Small detections: scale with max radius (12x), capped at 250m
+        WHEN GREATEST(pixels_a, pixels_b) < 10
+        THEN GREATEST(100, LEAST(250, GREATEST(detection_radius_m(pixels_a), detection_radius_m(pixels_b)) * 12))
+        -- Large detections: use sum of radii
+        ELSE GREATEST(100, detection_radius_m(pixels_a) + detection_radius_m(pixels_b))
     END
 );

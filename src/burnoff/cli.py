@@ -54,12 +54,10 @@ def main():
 @click.option("-o", "--output", type=click.Path(), help="Output JSON file (default: stdout)")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
 def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, output, quiet):
-    """Detect gas flares using DAFI v2 algorithm.
+    """Detect gas flares at a location.
 
     \b
-    Uses Sentinel-2 L2A surface reflectance with SCL for cloud masking.
-    Uses NHISWNIR index (Faruolo et al. 2024) to detect thermal sources.
-
+    Uses Sentinel-2 L2A SWIR bands with thermal signature confirmation.
     Outputs raw detections - clustering and filtering done in SQL export.
     """
     # Resolve date range
@@ -123,7 +121,7 @@ def detect_cmd(lat, lon, year, start, end, buffer, cloud, workers, output, quiet
 @click.option("--resume", is_flag=True, help="Skip already-processed locations")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output")
 def bulk(input_file, output, year, start, end, workers, image_workers, cloud, buffer, resume, quiet):
-    """Process multiple locations using DAFI v2 algorithm.
+    """Process multiple locations for flare detection.
 
     \b
     INPUT_FILE should be a JSON array of objects with at minimum:

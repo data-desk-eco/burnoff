@@ -10,6 +10,9 @@ LOAD spatial;
 
 SET VARIABLE min_detections = 2;
 SET VARIABLE min_max_b12 = 0.75;
+SET VARIABLE max_flare_pixels = 50;  -- Absolute max (20m resolution = 1000m² per pixel)
+SET VARIABLE large_detection_pixels = 30;  -- Above this, require higher intensity
+SET VARIABLE large_detection_min_b12 = 0.70;  -- Min B12 for large detections
 SET VARIABLE min_merge_distance = 50;
 SET VARIABLE cooccur_penalty = 0.2;  -- 20% reduction per co-occurring date, up to 50%
 
@@ -26,6 +29,10 @@ raw_detections AS (
     FROM detections d
     JOIN detection_events e ON d.lat = e.lat AND d.lon = e.lon
     WHERE e.flare_lon IS NOT NULL
+      AND e.pixels <= getvariable('max_flare_pixels')  -- Absolute max
+      -- Size-dependent intensity filter: large + low intensity = factory roofs/solar farms
+      AND NOT (e.pixels > getvariable('large_detection_pixels')
+               AND e.max_b12 < getvariable('large_detection_min_b12'))
 ),
 
 -- Count co-occurring dates between location pairs (for penalty calculation)
