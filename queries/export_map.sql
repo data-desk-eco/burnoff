@@ -69,7 +69,9 @@ cluster_assignments AS (
 clustered_flares AS (
     SELECT
         cluster_id, facility_id, name,
-        AVG(flare_lon) as flare_lon, AVG(flare_lat) as flare_lat,
+        -- B12-weighted centroid: strong detections anchor the location
+        SUM(flare_lon * max_b12) / SUM(max_b12) as flare_lon,
+        SUM(flare_lat * max_b12) / SUM(max_b12) as flare_lat,
         MAX(max_b12) as max_b12,
         COUNT(DISTINCT date) as detection_count,
         json_group_array(json_object(
