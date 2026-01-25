@@ -6,7 +6,7 @@ local contrast, and thermal signature confirmation:
 1. Intensity: B12 > 0.3 and B11 > 0.2 (pixel must be bright in SWIR)
 2. Contrast: B12 > 3× local background median (must stand out)
 3. Thermal: NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0 (SWIR > NIR confirms heat)
-4. Cluster peak: max B12 ≥ 0.75 within connected component
+4. Cluster peak: max B12 ≥ 0.50 within connected component (permissive; SQL export filters at 0.75)
 
 Inspired by DAFI v2 (Faruolo et al. 2024) but adapted for L2A surface reflectance.
 """
@@ -41,7 +41,7 @@ STAC_API = "https://earth-search.aws.element84.com/v1"
 # These are intentionally permissive - stricter filtering happens in SQL export
 B12_THRESHOLD = 0.3       # Min B12 (SWIR2) for candidate pixel
 B11_THRESHOLD = 0.2       # Min B11 (SWIR1) for candidate pixel
-MIN_PEAK_B12 = 0.55       # Min peak B12 within cluster (raised from 0.5)
+MIN_PEAK_B12 = 0.50       # Min peak B12 within cluster (permissive; SQL export filters at 0.75)
 MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than local background
 BACKGROUND_FLOOR = 0.15   # Minimum baseline for contrast calculation
 
