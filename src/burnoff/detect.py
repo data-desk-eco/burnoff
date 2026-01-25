@@ -471,30 +471,39 @@ def process_image(
             cluster_avg_b12 = float(np.mean(cluster_vals))
 
             if pixel_count == 1:
-                # Single pixel: can't use peakedness, require higher reflectance
-                if cluster_max_b12 < 0.65:
-                    continue  # Single pixel needs higher confidence
+                # Single pixel: can't use peakedness, use same threshold as multi-pixel
+                if cluster_max_b12 < MIN_PEAK_B12:
+                    continue
             else:
                 # Multi-pixel: apply peakedness filter
                 if cluster_max_b12 < MIN_PEAKEDNESS * cluster_avg_b12:
                     continue  # Too uniform, likely not a flare
 
-            # Get NHISWNIR at max B12 location
+            # Get cluster pixel coordinates for centroid calculation
+            rows, cols = np.where(cluster_mask)
+            weights = b12[cluster_mask]  # B12-weighted centroid
+            total_weight = weights.sum()
+
+            # Weighted centroid of cluster pixels
+            centroid_row = float(np.sum(rows * weights) / total_weight)
+            centroid_col = float(np.sum(cols * weights) / total_weight)
+
+            # Max B12 location for NHISWNIR and warm region check
             max_idx = np.unravel_index(cluster_b12.argmax(), cluster_b12.shape)
-            row, col = max_idx
-            cluster_nhiswnir = float(nhiswnir[row, col]) if b8a is not None else None
+            max_row, max_col = max_idx
+            cluster_nhiswnir = float(nhiswnir[max_row, max_col]) if b8a is not None else None
 
             # 6. Point source filter - check full extent of warm region
             warm_threshold = cluster_max_b12 * WARM_REGION_FRACTION
             warm_mask = b12 > warm_threshold
             warm_labeled, _ = ndimage.label(warm_mask)
-            warm_region_size = int((warm_labeled == warm_labeled[row, col]).sum())
+            warm_region_size = int((warm_labeled == warm_labeled[max_row, max_col]).sum())
             if warm_region_size > MAX_WARM_REGION_PIXELS:
                 continue
 
-            # Convert pixel coords back to UTM using actual window bounds
-            col_frac = (col + 0.5) / b12.shape[1]
-            row_frac = (row + 0.5) / b12.shape[0]
+            # Convert centroid coords to UTM using actual window bounds
+            col_frac = (centroid_col + 0.5) / b12.shape[1]
+            row_frac = (centroid_row + 0.5) / b12.shape[0]
             flare_utm_x = actual_bounds[0] + col_frac * (actual_bounds[2] - actual_bounds[0])
             flare_utm_y = actual_bounds[3] - row_frac * (actual_bounds[3] - actual_bounds[1])
 
