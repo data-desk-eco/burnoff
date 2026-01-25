@@ -24,17 +24,20 @@ CREATE TABLE IF NOT EXISTS detections (
 );
 
 -- Individual detection events with COG references for on-demand imagery
--- Raw detections at actual max B12 pixel location - clustering done in export
+-- Centroid-based detections (center of bright region)
 CREATE TABLE IF NOT EXISTS detection_events (
     lat DOUBLE NOT NULL,          -- Terminal latitude
     lon DOUBLE NOT NULL,          -- Terminal longitude
     date DATE NOT NULL,
     max_b12 DOUBLE,
-    avg_b12 DOUBLE,               -- Cluster average B12 (for peakedness)
+    avg_b12 DOUBLE,
     pixels INTEGER,
-    -- Raw flare location (actual max B12 pixel)
+    -- Centroid location (center of bright region)
     flare_lon DOUBLE,
     flare_lat DOUBLE,
+    -- Max pixel location (brightest pixel, for reference)
+    max_pixel_lon DOUBLE,
+    max_pixel_lat DOUBLE,
     -- COG URLs for on-demand rendering
     cog_b11 VARCHAR,
     cog_b12 VARCHAR,
@@ -50,28 +53,12 @@ CREATE TABLE IF NOT EXISTS detection_events (
     utm_maxx DOUBLE,
     utm_maxy DOUBLE,
     epsg INTEGER,
-    -- Primary key includes flare location since multiple flares can be detected per facility per date
     PRIMARY KEY (lat, lon, date, flare_lat, flare_lon)
 );
 
 -- Spatial extension for distance calculations
 INSTALL spatial; LOAD spatial;
 
--- Detection footprint radius from pixel count (20m Sentinel-2 resolution)
-CREATE OR REPLACE MACRO detection_radius_m(pixels) AS (
-    sqrt(pixels / pi()) * 20
-);
-
--- Merge threshold based on detection size
--- Small detections (< 10 pixels) have uncertain centroids that can drift
--- Large detections are spatially accurate, use tighter thresholds
--- Cap at 250m - co-occurrence penalty handles cases needing more
-CREATE OR REPLACE MACRO merge_threshold_m(pixels_a, pixels_b) AS (
-    CASE
-        -- Small detections: scale with max radius (12x), capped at 250m
-        WHEN GREATEST(pixels_a, pixels_b) < 10
-        THEN GREATEST(100, LEAST(250, GREATEST(detection_radius_m(pixels_a), detection_radius_m(pixels_b)) * 12))
-        -- Large detections: use sum of radii
-        ELSE GREATEST(100, detection_radius_m(pixels_a) + detection_radius_m(pixels_b))
-    END
-);
+-- Simple 20m radius overlap clustering
+-- Two flares merge if their 20m radii overlap (centers ≤ 40m apart)
+CREATE OR REPLACE MACRO merge_radius_m() AS 40;

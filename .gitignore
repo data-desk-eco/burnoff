@@ -7,6 +7,11 @@ __pycache__/
 data/*.duckdb
 data/*.geojson
 data/test_terminals.json
+data/ras_laffan.json
+data/das_island.json
+
+# Debug tools
+debug.html
 
 # OS
 .DS_Store
