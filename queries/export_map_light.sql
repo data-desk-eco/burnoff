@@ -20,7 +20,7 @@ cluster_assignments AS (
     SELECT a.*,
         (SELECT MIN(b.det_id) FROM raw_detections b
          WHERE b.facility_id = a.facility_id
-           AND haversine_m(a.flare_lon, a.flare_lat, b.flare_lon, b.flare_lat)
+           AND ST_Distance_Sphere(ST_Point(a.flare_lon, a.flare_lat), ST_Point(b.flare_lon, b.flare_lat))
                <= GREATEST(getvariable('min_merge_distance'),
                            detection_radius_m(a.pixels) + detection_radius_m(b.pixels))
         ) as cluster_id
