@@ -17,12 +17,14 @@ make serve        # Web server on :8000
 
 ## Detection Algorithm
 
-Uses Sentinel-2 L2A (B8A, B11, B12) via Element84 STAC. 6km search radius.
+Uses Sentinel-2 L1C TOA reflectance (B8A, B11, B12) via Element84 STAC. 6km search radius.
+L1C preserves full thermal signal without atmospheric correction clipping.
+Cloud masking via L2A SCL band fetched separately.
 
 **Per-pixel** (must pass all):
 1. B12 > 0.3 AND B11 > 0.2 (bright in SWIR)
 2. B12 > 3× local median (contrast)
-3. (B11 - B8A) / (B11 + B8A) > 0 (thermal signature)
+3. (B11 - B8A) / (B11 + B8A) > 0 (thermal signature, SWIR > NIR)
 
 **Per-cluster** (at detection):
 4. Peak B12 ≥ 0.5

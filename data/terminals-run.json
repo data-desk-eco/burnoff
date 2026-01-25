@@ -1,6 +1,4 @@
 [
-  {"id": 3586, "name": "Ichthys Plant (Darwin)", "lat": -12.514821, "lon": 130.918253, "type": "Export"},
   {"id": 3552, "name": "Das Island I, II, III", "lat": 25.159056, "lon": 52.875867, "type": "Export"},
-  {"id": 3548, "name": "Qatargas / Rasgas Plants", "lat": 25.909678, "lon": 51.57398, "type": "Export"},
-  {"id": 3605, "name": "Sabine Pass LNG", "lat": 29.753249, "lon": -93.872727, "type": "Export"}
+  {"id": 3548, "name": "Qatargas / Rasgas Plants", "lat": 25.909678, "lon": 51.57398, "type": "Export"}
 ]
