@@ -1,0 +1,22 @@
+# Burnoff Detection Cache API
+# Deploy: wrangler deploy
+# Create D1: wrangler d1 create burnoff-cache
+# Apply schema: wrangler d1 execute burnoff-cache --file=schema.sql
+
+name = "burnoff-cache"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Bind D1 database
+[[d1_databases]]
+binding = "DB"
+database_name = "burnoff-cache"
+database_id = "YOUR_DATABASE_ID_HERE"  # Replace after running: wrangler d1 create burnoff-cache
+
+# CORS headers for browser access
+[vars]
+ALLOWED_ORIGINS = "https://your-domain.com,http://localhost:8000"
+
+# Rate limiting
+RATE_LIMIT_WINDOW_SECONDS = "60"
+RATE_LIMIT_MAX_REQUESTS = "30"

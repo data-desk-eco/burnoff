@@ -305,8 +305,136 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     overflow: visible;
 }
 
+/* Scan Panel */
+.scan-panel {
+    bottom: var(--edge-spacing);
+    left: 130px;
+    padding: 10px 14px;
+    min-width: 180px;
+}
+
+.scan-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.scan-status {
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+}
+
+.scan-status.active {
+    color: var(--accent);
+}
+
+.scan-btn {
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid var(--border-light);
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.scan-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.scan-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.scan-btn.scanning {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.scan-progress {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.scan-progress.hidden {
+    display: none;
+}
+
+.scan-bar {
+    height: 3px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 1.5px;
+    overflow: hidden;
+}
+
+.scan-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.3s ease-out;
+}
+
+.scan-stats {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 10px;
+    color: var(--text-faint);
+}
+
+/* Client-detected detection indicator */
+.event-item.client-detected::before {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 4px;
+    height: 4px;
+    background: var(--accent);
+    border-radius: 50%;
+}
+
 @media (max-width: 768px) {
-    .title, .legend { min-height: 72px; }
+    .title, .legend, .scan-panel { min-height: auto; }
+
+    .scan-panel {
+        left: auto;
+        right: 8px;
+        bottom: 90px;
+        padding: 8px 10px;
+        min-width: 140px;
+    }
+
+    .scan-header {
+        gap: 8px;
+    }
+
+    .scan-status {
+        font-size: 10px;
+    }
+
+    .scan-btn {
+        padding: 3px 8px;
+        font-size: 9px;
+    }
+
+    .scan-progress {
+        margin-top: 8px;
+        padding-top: 8px;
+    }
+
+    .scan-stats {
+        font-size: 9px;
+    }
 
     .title {
         top: 8px;

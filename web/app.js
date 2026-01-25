@@ -2,6 +2,9 @@
 const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const DATA_URL = isLocal ? 'data' : 'https://storage.googleapis.com/burnoff-data';
 
+// Cache API URL - set to your Cloudflare Worker URL when deployed
+const CACHE_API_URL = null; // e.g., 'https://burnoff-cache.your-subdomain.workers.dev'
+
 // Parse hash for deep-link before map init
 function parseHashEarly() {
     const hash = location.hash.slice(1);
@@ -586,3 +589,275 @@ document.getElementById('open-image-btn').addEventListener('click', () => {
     window.open(copernicusUrl(lat, lon, selectedDetection.date), '_blank');
 });
 document.querySelector('.close-btn').addEventListener('click', closeInfo);
+
+// ============================================
+// CLIENT-SIDE DETECTION SCANNER
+// ============================================
+
+let scanner = null;
+let clientDetections = []; // Detections found by this client
+let lastScanCenter = null;
+
+function initScanner() {
+    if (typeof Scanner === 'undefined') {
+        console.warn('Scanner not available');
+        return;
+    }
+
+    scanner = new Scanner({
+        cacheApiUrl: CACHE_API_URL,
+        maxWorkers: 4,
+    });
+}
+
+function updateScanUI() {
+    const zoom = map.getZoom();
+    const scanBtn = document.getElementById('scan-btn');
+    const scanStatus = document.getElementById('scan-status');
+
+    if (zoom >= SCAN_TRIGGER_ZOOM) {
+        scanBtn.disabled = false;
+        scanStatus.textContent = 'Ready to scan';
+        scanStatus.classList.remove('active');
+    } else {
+        scanBtn.disabled = true;
+        scanStatus.textContent = `Zoom to ${SCAN_TRIGGER_ZOOM} to scan`;
+        scanStatus.classList.remove('active');
+    }
+}
+
+function startScan() {
+    if (!scanner || scanner.isScanning) return;
+
+    const center = map.getCenter();
+    const lat = center.lat;
+    const lon = center.lng;
+
+    // Calculate date range (last year)
+    const endDate = new Date().toISOString().slice(0, 10);
+    const startDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    // UI updates
+    const scanBtn = document.getElementById('scan-btn');
+    const scanStatus = document.getElementById('scan-status');
+    const scanProgress = document.getElementById('scan-progress');
+    const scanBarFill = document.getElementById('scan-bar-fill');
+    const scanCount = document.getElementById('scan-count');
+    const scanDetections = document.getElementById('scan-detections');
+
+    scanBtn.textContent = 'Stop';
+    scanBtn.classList.add('scanning');
+    scanStatus.textContent = 'Searching...';
+    scanStatus.classList.add('active');
+    scanProgress.classList.remove('hidden');
+    scanBarFill.style.width = '0%';
+    scanCount.textContent = 'Searching...';
+    scanDetections.textContent = '0 found';
+
+    lastScanCenter = { lat, lon };
+
+    scanner.scan(lat, lon, {
+        startDate,
+        endDate,
+
+        onProgress: (progress) => {
+            const pct = progress.total > 0 ? (progress.completed / progress.total) * 100 : 0;
+            scanBarFill.style.width = `${pct}%`;
+            scanCount.textContent = `${progress.completed}/${progress.total} images`;
+            scanDetections.textContent = `${progress.detections} found`;
+        },
+
+        onDetection: (detection) => {
+            clientDetections.push(detection);
+            addClientDetectionToMap(detection);
+        },
+
+        onComplete: (progress) => {
+            scanBtn.textContent = 'Scan';
+            scanBtn.classList.remove('scanning');
+            scanStatus.textContent = progress.cached ? 'Already scanned' : 'Scan complete';
+            scanStatus.classList.remove('active');
+
+            if (progress.detections > 0) {
+                scanDetections.textContent = `${progress.detections} found`;
+            }
+        },
+
+        onError: (err) => {
+            console.error('Scan error:', err);
+            scanBtn.textContent = 'Scan';
+            scanBtn.classList.remove('scanning');
+            scanStatus.textContent = 'Scan failed';
+            scanStatus.classList.remove('active');
+        },
+    });
+}
+
+function stopScan() {
+    if (scanner && scanner.isScanning) {
+        scanner.abort();
+
+        const scanBtn = document.getElementById('scan-btn');
+        const scanStatus = document.getElementById('scan-status');
+
+        scanBtn.textContent = 'Scan';
+        scanBtn.classList.remove('scanning');
+        scanStatus.textContent = 'Scan stopped';
+        scanStatus.classList.remove('active');
+    }
+}
+
+function addClientDetectionToMap(detection) {
+    // Add to client detections source
+    const source = map.getSource('client-detections');
+    if (!source) return;
+
+    const currentData = source._data || { type: 'FeatureCollection', features: [] };
+    currentData.features.push({
+        type: 'Feature',
+        geometry: {
+            type: 'Point',
+            coordinates: [detection.lon, detection.lat],
+        },
+        properties: {
+            date: detection.date,
+            max_b12: detection.max_b12,
+            pixels: detection.pixels,
+            source: 'client',
+            cogUrl: detection.cogUrl,
+            epsg: detection.epsg,
+        },
+    });
+
+    source.setData(currentData);
+}
+
+function initClientDetectionsLayer() {
+    // Source for client-detected flares
+    map.addSource('client-detections', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+    });
+
+    // Layer for client detections (pulsing circles)
+    map.addLayer({
+        id: 'client-detections',
+        type: 'circle',
+        source: 'client-detections',
+        paint: {
+            'circle-radius': [
+                'interpolate', ['exponential', 1.5], ['zoom'],
+                10, 6,
+                14, 10,
+                18, 14,
+            ],
+            'circle-color': 'transparent',
+            'circle-stroke-color': '#ff9060',
+            'circle-stroke-width': 2,
+            'circle-stroke-opacity': 0.9,
+        },
+    });
+
+    // Click handler for client detections
+    map.on('click', 'client-detections', (e) => {
+        if (e.features.length === 0) return;
+        const feature = e.features[0];
+        showClientDetectionInfo(feature);
+    });
+
+    map.on('mouseenter', 'client-detections', () => {
+        map.getCanvas().style.cursor = 'pointer';
+    });
+
+    map.on('mouseleave', 'client-detections', () => {
+        map.getCanvas().style.cursor = '';
+    });
+}
+
+function showClientDetectionInfo(feature) {
+    // Find the nearest terminal
+    const [fLon, fLat] = feature.geometry.coordinates;
+    let nearestTerminal = null;
+    let minDist = Infinity;
+
+    for (const t of terminals) {
+        const dist = Math.hypot(t.coords[0] - fLon, t.coords[1] - fLat);
+        if (dist < minDist) {
+            minDist = dist;
+            nearestTerminal = t;
+        }
+    }
+
+    // Create a synthetic feature for the info panel
+    const props = feature.properties;
+
+    // Group all client detections near this location
+    const nearby = clientDetections.filter(d => {
+        return Math.hypot(d.lon - fLon, d.lat - fLat) < 0.01;
+    });
+
+    const syntheticFeature = {
+        type: 'Feature',
+        geometry: feature.geometry,
+        properties: {
+            name: nearestTerminal?.name || 'Client Detection',
+            detections: JSON.stringify(nearby.map(d => ({
+                date: d.date,
+                max_b12: d.max_b12,
+                pixels: d.pixels,
+                cog_b12: d.cogUrl,
+                epsg: d.epsg,
+                source: 'client',
+            }))),
+        },
+    };
+
+    showInfo(syntheticFeature);
+}
+
+// Initialize scanner when map loads
+map.on('load', () => {
+    initClientDetectionsLayer();
+    initScanner();
+    updateScanUI();
+});
+
+// Update scan UI on zoom
+map.on('zoomend', updateScanUI);
+
+// Scan button handler
+document.getElementById('scan-btn').addEventListener('click', () => {
+    if (scanner?.isScanning) {
+        stopScan();
+    } else {
+        startScan();
+    }
+});
+
+// Load cached client detections on startup
+async function loadCachedClientDetections() {
+    if (!scanner?.db) return;
+
+    try {
+        const tx = scanner.db.transaction('detections', 'readonly');
+        const store = tx.objectStore('detections');
+        const request = store.getAll();
+
+        request.onsuccess = () => {
+            const cached = request.result || [];
+            clientDetections = cached;
+
+            // Add to map
+            for (const det of cached) {
+                addClientDetectionToMap(det);
+            }
+
+            console.log(`Loaded ${cached.length} cached client detections`);
+        };
+    } catch (err) {
+        console.warn('Failed to load cached detections:', err);
+    }
+}
+
+// Load cached detections after scanner initializes
+setTimeout(loadCachedClientDetections, 1000);
