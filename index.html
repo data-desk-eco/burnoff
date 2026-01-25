@@ -71,6 +71,26 @@
             margin: 5px 0 0 0;
             letter-spacing: 0.05em;
         }
+        .terminal-select {
+            margin-top: 12px;
+            padding: 6px 8px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-light);
+            color: var(--text-muted);
+            font-family: inherit;
+            font-size: 11px;
+            width: 100%;
+            cursor: pointer;
+            outline: none;
+        }
+        .terminal-select:hover, .terminal-select:focus {
+            border-color: var(--text-muted);
+            color: var(--text-primary);
+        }
+        .terminal-select option {
+            background: #1a1a1a;
+            color: var(--text-primary);
+        }
 
         .legend {
             bottom: var(--edge-spacing);
@@ -184,7 +204,7 @@
             border-bottom: 1px solid var(--border-subtle);
         }
 
-        .events-list { max-height: 200px; overflow-y: auto; }
+        .events-list { max-height: 308px; overflow-y: auto; }  /* 7 rows */
 
         .event-item {
             position: relative;
@@ -215,30 +235,6 @@
             pointer-events: none;
         }
 
-        .imagery-controls {
-            padding: 14px 16px;
-            border-top: 1px solid var(--border-subtle);
-            display: none;
-        }
-        .imagery-controls.visible { display: block; }
-        .imagery-controls label {
-            display: block;
-            margin-bottom: 8px;
-        }
-        .imagery-controls input[type="range"] {
-            width: 100%;
-            height: 3px;
-            -webkit-appearance: none;
-            background: rgba(255,255,255,0.2);
-            outline: none;
-        }
-        .imagery-controls input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 12px; height: 12px;
-            background: #fff;
-            border-radius: 50%;
-            cursor: pointer;
-        }
         .btn {
             cursor: pointer;
             font-family: inherit;
@@ -246,6 +242,24 @@
             text-transform: uppercase;
             letter-spacing: 0.08em;
             transition: all 0.15s;
+        }
+        .download-btn {
+            margin: 12px 16px 14px;
+            padding: 8px 12px;
+            background: transparent;
+            border: 1px solid var(--border-light);
+            color: var(--text-muted);
+            font-family: inherit;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            cursor: pointer;
+            transition: all 0.15s;
+            width: calc(100% - 32px);
+        }
+        .download-btn:hover {
+            border-color: var(--text-muted);
+            color: var(--text-primary);
         }
         .modal-overlay {
             position: fixed;
@@ -356,6 +370,7 @@
             .event-item { padding: 10px 16px; }
             .info-panel { overflow: hidden; }  /* Prevent panel scroll, only events-list scrolls */
             .logo { display: none; }
+            .download-btn { display: none; }
 
             .modal-content {
                 margin: 16px;
@@ -363,21 +378,6 @@
                 max-width: calc(100vw - 32px);
             }
 
-            .imagery-controls {
-                display: none;
-                flex-direction: row;
-                align-items: center;
-                gap: 12px;
-                padding: 10px 16px;
-            }
-            .imagery-controls.visible { display: flex; }
-            .imagery-controls label {
-                flex: 1;
-                margin-bottom: 0;
-            }
-            .imagery-controls input[type="range"] {
-                margin-top: 4px;
-            }
         }
     </style>
 </head>
@@ -387,6 +387,9 @@
     <div class="panel title">
         <h1>BURNOFF: SENTINEL-2 FLARE DETECTIONS</h1>
         <p>SWIR thermal anomaly detection at LNG facilities</p>
+        <select id="terminal-select" class="terminal-select">
+            <option value="">Qatargas / Rasgas Plants</option>
+        </select>
     </div>
 
     <div class="panel legend">
@@ -425,12 +428,7 @@
             <span style="text-align: right;">B12</span>
         </div>
         <div class="events-list custom-scroll" id="events-list"></div>
-        <div class="imagery-controls" id="imagery-controls">
-            <label class="label-sm">
-                Transparency
-                <input type="range" id="opacity-slider" min="0" max="100" value="10" oninput="setOpacity(100 - this.value)">
-            </label>
-        </div>
+        <button class="download-btn" id="download-btn" onclick="downloadFlareCSV()">Download CSV</button>
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js"></script>
@@ -471,8 +469,8 @@
                     paint: { 'raster-saturation': -1 }
                 }]
             },
-            center: [100, 10],
-            zoom: 2,
+            center: [51.52, 25.92],  // Ras Laffan
+            zoom: 12,
             minZoom: 1.5,
             maxZoom: 18
         });
@@ -755,7 +753,53 @@
                 setTimeout(() => restoreFromHash(), 500);
             });
 
+            // Populate terminal selector
+            populateTerminalSelect();
         });
+
+        let terminals = [];
+
+        async function populateTerminalSelect() {
+            try {
+                const res = await fetch(`${DATA_URL}/detections.geojson`);
+                const data = await res.json();
+
+                // Extract unique terminals with coordinates
+                const seen = new Set();
+                terminals = data.features
+                    .filter(f => {
+                        if (seen.has(f.properties.name)) return false;
+                        seen.add(f.properties.name);
+                        return true;
+                    })
+                    .map(f => ({
+                        name: f.properties.name,
+                        coords: f.geometry.coordinates
+                    }))
+                    .sort((a, b) => {
+                        const aQ = a.name.toLowerCase().includes('qatargas');
+                        const bQ = b.name.toLowerCase().includes('qatargas');
+                        if (aQ && !bQ) return -1;
+                        if (bQ && !aQ) return 1;
+                        return a.name.localeCompare(b.name);
+                    });
+
+                const select = document.getElementById('terminal-select');
+                select.innerHTML = terminals.map(t =>
+                    `<option value="${t.name}"${t.name.toLowerCase().includes('qatargas') ? ' selected' : ''}>${t.name}</option>`
+                ).join('');
+
+                select.addEventListener('change', (e) => {
+                    const t = terminals.find(t => t.name === e.target.value);
+                    if (t) {
+                        closeInfo();
+                        map.flyTo({ center: t.coords, zoom: 13 });
+                    }
+                });
+            } catch (err) {
+                console.error('Failed to load terminals:', err);
+            }
+        }
 
         function restoreFromHash() {
             const params = parseHash();
@@ -898,7 +942,6 @@
             // Clear any existing imagery first
             if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
             if (map.getSource('cog-source')) map.removeSource('cog-source');
-            document.getElementById('imagery-controls').classList.remove('visible');
 
             if (!det || !det.cog_b12) return;
 
@@ -1040,18 +1083,13 @@
                     id: 'cog-layer',
                     type: 'raster',
                     source: 'cog-source',
-                    paint: { 'raster-opacity': 0.9, 'raster-resampling': 'nearest' }
+                    paint: { 'raster-opacity': 1, 'raster-resampling': 'nearest' }
                 }, 'detection-circles');
 
                 // Keep circles greyed while imagery visible
                 setCirclesGreyed();
 
-                // Apply current slider opacity to new layer
-                const sliderValue = document.getElementById('opacity-slider').value;
-                map.setPaintProperty('cog-layer', 'raster-opacity', (100 - sliderValue) / 100);
-
                 document.querySelector('.event-item.active')?.classList.remove('loading');
-                document.getElementById('imagery-controls').classList.add('visible');
 
                 // Dim basemap to highlight SWIR overlay
                 map.setPaintProperty('basemap', 'raster-brightness-max', 0.25);
@@ -1059,12 +1097,6 @@
             } catch (err) {
                 console.error('Failed to load COG:', err);
                 document.querySelector('.event-item.active')?.classList.remove('loading');
-            }
-        }
-
-        function setOpacity(value) {
-            if (map.getLayer('cog-layer')) {
-                map.setPaintProperty('cog-layer', 'raster-opacity', value / 100);
             }
         }
 
@@ -1079,7 +1111,6 @@
             } else {
                 setCirclesDefault();
             }
-            document.getElementById('imagery-controls').classList.remove('visible');
         }
 
         // About modal - dismiss on overlay click, but not on content/links
@@ -1090,6 +1121,40 @@
                 this.classList.add('hidden');
             }
         });
+
+        // CSV export for current flare
+        function downloadFlareCSV() {
+            if (!currentFeature) return;
+            const props = currentFeature.properties;
+            const [lon, lat] = currentFeature.geometry.coordinates;
+
+            let detections = props.detections || [];
+            if (typeof detections === 'string') {
+                try { detections = JSON.parse(detections); } catch (e) { detections = []; }
+            }
+
+            const rows = [['facility', 'lat', 'lon', 'date', 'max_b12', 'pixels']];
+            for (const det of detections) {
+                rows.push([
+                    `"${(props.name || '').replace(/"/g, '""')}"`,
+                    det.raw_lat?.toFixed(6) || lat.toFixed(6),
+                    det.raw_lon?.toFixed(6) || lon.toFixed(6),
+                    det.date,
+                    det.max_b12?.toFixed(4) || '',
+                    det.pixels || ''
+                ]);
+            }
+
+            const csv = rows.map(r => r.join(',')).join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const safeName = (props.name || 'flare').replace(/[^a-z0-9]/gi, '-').toLowerCase();
+            a.download = `${safeName}-detections.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
     </script>
 </body>
 </html>
