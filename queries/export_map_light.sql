@@ -11,9 +11,9 @@ CREATE OR REPLACE MACRO haversine_m(lon1, lat1, lon2, lat2) AS (
 );
 
 -- Configuration (same as export_map.sql)
--- Increased cluster_distance from 150m to 300m to better merge large flares
-SET VARIABLE cluster_distance_m = 300;
-SET VARIABLE min_detections = 3;
+-- Reduced cluster_distance from 300m to 100m to prevent merging distinct flares
+SET VARIABLE cluster_distance_m = 100;
+SET VARIABLE min_detections = 2;  -- Lowered from 3 to catch intermittent flares
 SET VARIABLE min_max_b12 = 0.75;
 
 WITH
@@ -31,7 +31,8 @@ raw_detections AS (
     WHERE e.flare_lon IS NOT NULL AND e.flare_lat IS NOT NULL
 ),
 
-cluster_leaders AS (
+-- Direct leader assignment (no transitive closure to prevent clustering creep)
+cluster_assignments AS (
     SELECT
         a.det_id,
         a.facility_id,
@@ -44,25 +45,8 @@ cluster_leaders AS (
          FROM raw_detections b
          WHERE b.facility_id = a.facility_id
            AND haversine_m(a.flare_lon, a.flare_lat, b.flare_lon, b.flare_lat) <= getvariable('cluster_distance_m')
-        ) as leader_id
-    FROM raw_detections a
-),
-
-final_clusters AS (
-    SELECT
-        a.det_id,
-        a.facility_id,
-        a.name,
-        a.flare_lon,
-        a.flare_lat,
-        a.date,
-        a.max_b12,
-        (SELECT MIN(b.leader_id)
-         FROM cluster_leaders b
-         WHERE b.facility_id = a.facility_id
-           AND haversine_m(a.flare_lon, a.flare_lat, b.flare_lon, b.flare_lat) <= getvariable('cluster_distance_m')
         ) as cluster_id
-    FROM cluster_leaders a
+    FROM raw_detections a
 ),
 
 clustered_flares AS (
@@ -74,7 +58,7 @@ clustered_flares AS (
         AVG(flare_lat) as flare_lat,
         MAX(max_b12) as max_b12,
         COUNT(DISTINCT date) as detection_count
-    FROM final_clusters
+    FROM cluster_assignments
     GROUP BY cluster_id, facility_id, name
 ),
 
