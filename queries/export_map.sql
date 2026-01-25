@@ -1,11 +1,15 @@
 -- Export clustered flares as GeoJSON (full details for high zoom tiles)
 --
--- Clustering: Overlap-based - two detections merge if circular footprints touch
---   merge_distance = radius_a + radius_b, with 50m floor for geolocation variance
+-- Clustering: Size-aware overlap with co-occurrence penalty
+--   - Similar sizes (ratio < 4): merge_dist = r1 + r2 (allows centroid drift)
+--   - Mismatched sizes (ratio > 4): merge_dist = min(r1,r2)*2 + 20m (protects small flares)
+--   - Co-occurrence penalty: if locations co-occur on same dates, reduce threshold
+--   - 50m floor for geolocation variance
 
 SET VARIABLE min_detections = 2;
 SET VARIABLE min_max_b12 = 0.75;
 SET VARIABLE min_merge_distance = 50;
+SET VARIABLE cooccur_penalty = 0.2;  -- 20% reduction per co-occurring date, up to 50%
 
 WITH
 raw_detections AS (
@@ -13,19 +17,40 @@ raw_detections AS (
         d.id as facility_id, d.name,
         e.flare_lon, e.flare_lat, e.date, e.max_b12, e.pixels,
         e.cog_b12, e.epsg, e.utm_minx, e.utm_miny, e.utm_maxx, e.utm_maxy,
-        row_number() OVER () as det_id
+        row_number() OVER () as det_id,
+        -- Location key for co-occurrence checking (~30m grid)
+        ROUND(e.flare_lat, 4) as loc_lat,
+        ROUND(e.flare_lon, 4) as loc_lon
     FROM detections d
     JOIN detection_events e ON d.lat = e.lat AND d.lon = e.lon
     WHERE e.flare_lon IS NOT NULL
 ),
 
+-- Count co-occurring dates between location pairs
+location_cooccurrence AS (
+    SELECT
+        a.facility_id,
+        a.loc_lat as loc_lat_a, a.loc_lon as loc_lon_a,
+        b.loc_lat as loc_lat_b, b.loc_lon as loc_lon_b,
+        COUNT(DISTINCT a.date) as cooccur_count
+    FROM raw_detections a
+    JOIN raw_detections b ON a.facility_id = b.facility_id
+                         AND a.date = b.date
+                         AND (a.loc_lat != b.loc_lat OR a.loc_lon != b.loc_lon)
+    GROUP BY a.facility_id, a.loc_lat, a.loc_lon, b.loc_lat, b.loc_lon
+),
+
 cluster_assignments AS (
     SELECT a.*,
         (SELECT MIN(b.det_id) FROM raw_detections b
+         LEFT JOIN location_cooccurrence lc ON lc.facility_id = a.facility_id
+                                           AND lc.loc_lat_a = a.loc_lat AND lc.loc_lon_a = a.loc_lon
+                                           AND lc.loc_lat_b = b.loc_lat AND lc.loc_lon_b = b.loc_lon
          WHERE b.facility_id = a.facility_id
            AND ST_Distance_Sphere(ST_Point(a.flare_lon, a.flare_lat), ST_Point(b.flare_lon, b.flare_lat))
                <= GREATEST(getvariable('min_merge_distance'),
-                           detection_radius_m(a.pixels) + detection_radius_m(b.pixels))
+                           merge_threshold_m(a.pixels, b.pixels) *
+                           (1 - LEAST(0.5, COALESCE(lc.cooccur_count, 0) * getvariable('cooccur_penalty'))))
         ) as cluster_id
     FROM raw_detections a
 ),
