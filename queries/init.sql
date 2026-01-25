@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS detection_events (
     lon DOUBLE NOT NULL,          -- Terminal longitude
     date DATE NOT NULL,
     max_b12 DOUBLE,
+    avg_b12 DOUBLE,               -- Cluster average B12 (for peakedness)
     pixels INTEGER,
     -- Raw flare location (actual max B12 pixel)
     flare_lon DOUBLE,
