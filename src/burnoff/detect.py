@@ -41,9 +41,13 @@ STAC_API = "https://earth-search.aws.element84.com/v1"
 # These are intentionally permissive - stricter filtering happens in SQL export
 B12_THRESHOLD = 0.3       # Min B12 (SWIR2) for candidate pixel
 B11_THRESHOLD = 0.2       # Min B11 (SWIR1) for candidate pixel
-MIN_PEAK_B12 = 0.5        # Min peak B12 within cluster (permissive, filter later)
+MIN_PEAK_B12 = 0.55       # Min peak B12 within cluster (raised from 0.5)
 MIN_CONTRAST_RATIO = 3.0  # Flare must be Nx brighter than local background
 BACKGROUND_FLOOR = 0.15   # Minimum baseline for contrast calculation
+
+# Peakedness: flares have a bright core, false positives (roofs, solar) are uniform
+# Require max to be at least this factor above the cluster average
+MIN_PEAKEDNESS = 1.15     # max_b12 >= 1.15 * avg_b12 (15% peak above average)
 
 MAX_LOCAL_CLOUD_FRACTION = 0.3  # Max 30% cloud cover in local area
 MAX_FLARE_PIXELS = 200    # Max pixels per cluster (larger = not point source)
@@ -70,6 +74,8 @@ class Detection:
     epsg: int | None = None  # UTM zone EPSG code
     # DAFI v2: NHISWNIR value at detection (for diagnostics)
     nhiswnir: float | None = None
+    # Peakedness: avg B12 in cluster (flares: max >> avg, false positives: max ≈ avg)
+    avg_b12: float | None = None
 
 
 @dataclass
@@ -128,6 +134,7 @@ class DetectionResult:
                 {
                     "date": d.date.isoformat(),
                     "max_b12": d.max_b12,
+                    "avg_b12": d.avg_b12,
                     "pixels": d.pixel_count,
                     "flare_lon": d.flare_lon,
                     "flare_lat": d.flare_lat,
@@ -378,6 +385,21 @@ def process_image(
             if cluster_max_b12 < MIN_PEAK_B12:
                 continue
 
+            # 5. Peakedness filter - flares have a bright core, false positives are uniform
+            # Real flares: max >> avg (bright core, dimmer edges)
+            # False positives (roofs, solar): max ≈ avg (uniform brightness)
+            cluster_vals = b12[cluster_mask]
+            cluster_avg_b12 = float(np.mean(cluster_vals))
+
+            if pixel_count == 1:
+                # Single pixel: can't use peakedness (max = avg), require higher B12
+                if cluster_max_b12 < 0.65:
+                    continue  # Single pixel needs higher confidence
+            else:
+                # Multi-pixel: apply peakedness filter
+                if cluster_max_b12 < MIN_PEAKEDNESS * cluster_avg_b12:
+                    continue  # Too uniform, likely not a flare
+
             # Get NHISWNIR at max B12 location
             max_idx = np.unravel_index(cluster_b12.argmax(), cluster_b12.shape)
             row, col = max_idx
@@ -403,6 +425,7 @@ def process_image(
                 utm_bounds=utm_bounds,
                 epsg=int(epsg),
                 nhiswnir=cluster_nhiswnir,
+                avg_b12=cluster_avg_b12,
             ))
 
         return detections

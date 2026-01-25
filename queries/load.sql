@@ -31,7 +31,7 @@ FROM read_json('data/detections.json');
 -- Raw detections from detect.py - clustering done in export_map.sql
 INSERT OR REPLACE INTO detection_events
 SELECT DISTINCT ON (lat, lon, date, flare_lat, flare_lon)
-    lat, lon, date, max_b12, pixels, flare_lon, flare_lat,
+    lat, lon, date, max_b12, avg_b12, pixels, flare_lon, flare_lat,
     cog_b11, cog_b12, cog_visual,
     bounds_minx, bounds_miny, bounds_maxx, bounds_maxy,
     utm_minx, utm_miny, utm_maxx, utm_maxy, epsg
@@ -41,6 +41,7 @@ FROM (
         CAST(d.lon AS DOUBLE) as lon,
         CAST(e.date AS DATE) as date,
         CAST(e.max_b12 AS DOUBLE) as max_b12,
+        CAST(json_extract(e, '$.avg_b12') AS DOUBLE) as avg_b12,
         CAST(e.pixels AS INTEGER) as pixels,
         json_extract(e, '$.flare_lon')::DOUBLE as flare_lon,
         json_extract(e, '$.flare_lat')::DOUBLE as flare_lat,
