@@ -6,6 +6,8 @@
 --   - Co-occurrence penalty: if locations co-occur on same dates, reduce threshold
 --   - 50m floor for geolocation variance
 
+LOAD spatial;
+
 SET VARIABLE min_detections = 2;
 SET VARIABLE min_max_b12 = 0.75;
 SET VARIABLE min_merge_distance = 50;
@@ -26,7 +28,7 @@ raw_detections AS (
     WHERE e.flare_lon IS NOT NULL
 ),
 
--- Count co-occurring dates between location pairs
+-- Count co-occurring dates between location pairs (for penalty calculation)
 location_cooccurrence AS (
     SELECT
         a.facility_id,
@@ -43,14 +45,16 @@ location_cooccurrence AS (
 cluster_assignments AS (
     SELECT a.*,
         (SELECT MIN(b.det_id) FROM raw_detections b
-         LEFT JOIN location_cooccurrence lc ON lc.facility_id = a.facility_id
-                                           AND lc.loc_lat_a = a.loc_lat AND lc.loc_lon_a = a.loc_lon
-                                           AND lc.loc_lat_b = b.loc_lat AND lc.loc_lon_b = b.loc_lon
          WHERE b.facility_id = a.facility_id
            AND ST_Distance_Sphere(ST_Point(a.flare_lon, a.flare_lat), ST_Point(b.flare_lon, b.flare_lat))
                <= GREATEST(getvariable('min_merge_distance'),
                            merge_threshold_m(a.pixels, b.pixels) *
-                           (1 - LEAST(0.5, COALESCE(lc.cooccur_count, 0) * getvariable('cooccur_penalty'))))
+                           (1 - LEAST(0.5, COALESCE(
+                               (SELECT lc.cooccur_count FROM location_cooccurrence lc
+                                WHERE lc.facility_id = a.facility_id
+                                  AND lc.loc_lat_a = a.loc_lat AND lc.loc_lon_a = a.loc_lon
+                                  AND lc.loc_lat_b = b.loc_lat AND lc.loc_lon_b = b.loc_lon),
+                               0) * getvariable('cooccur_penalty'))))
         ) as cluster_id
     FROM raw_detections a
 ),

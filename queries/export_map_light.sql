@@ -1,6 +1,8 @@
 -- Export clustered flares as GeoJSON (summary only for low zoom tiles)
 -- Same clustering as export_map.sql, without per-detection details
 
+LOAD spatial;
+
 SET VARIABLE min_detections = 2;
 SET VARIABLE min_max_b12 = 0.75;
 SET VARIABLE min_merge_distance = 50;
@@ -35,14 +37,16 @@ location_cooccurrence AS (
 cluster_assignments AS (
     SELECT a.*,
         (SELECT MIN(b.det_id) FROM raw_detections b
-         LEFT JOIN location_cooccurrence lc ON lc.facility_id = a.facility_id
-                                           AND lc.loc_lat_a = a.loc_lat AND lc.loc_lon_a = a.loc_lon
-                                           AND lc.loc_lat_b = b.loc_lat AND lc.loc_lon_b = b.loc_lon
          WHERE b.facility_id = a.facility_id
            AND ST_Distance_Sphere(ST_Point(a.flare_lon, a.flare_lat), ST_Point(b.flare_lon, b.flare_lat))
                <= GREATEST(getvariable('min_merge_distance'),
                            merge_threshold_m(a.pixels, b.pixels) *
-                           (1 - LEAST(0.5, COALESCE(lc.cooccur_count, 0) * getvariable('cooccur_penalty'))))
+                           (1 - LEAST(0.5, COALESCE(
+                               (SELECT lc.cooccur_count FROM location_cooccurrence lc
+                                WHERE lc.facility_id = a.facility_id
+                                  AND lc.loc_lat_a = a.loc_lat AND lc.loc_lon_a = a.loc_lon
+                                  AND lc.loc_lat_b = b.loc_lat AND lc.loc_lon_b = b.loc_lon),
+                               0) * getvariable('cooccur_penalty'))))
         ) as cluster_id
     FROM raw_detections a
 ),
