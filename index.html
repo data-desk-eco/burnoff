@@ -391,9 +391,9 @@
 
     <div class="panel legend">
         <h4 class="label-sm">B12 Intensity</h4>
-        <div class="legend-item"><div class="legend-circle" style="background: #ffff00; color: #ffff00;"></div>High</div>
-        <div class="legend-item"><div class="legend-circle" style="background: #f8765c; color: #f8765c;"></div>Medium</div>
-        <div class="legend-item"><div class="legend-circle" style="background: #b63679; color: #b63679;"></div>Low</div>
+        <div class="legend-item"><div class="legend-circle" style="background: #ffff00; color: #ffff00;"></div>1.3+</div>
+        <div class="legend-item"><div class="legend-circle" style="background: #f8765c; color: #f8765c;"></div>1.1</div>
+        <div class="legend-item"><div class="legend-circle" style="background: #b63679; color: #b63679;"></div>0.9</div>
     </div>
 
     <svg class="logo" viewBox="0 0 734.66 733.34">
@@ -516,8 +516,8 @@
         }
 
         // Circle style helpers - default is outline-only with color based on max_b12
-        const defaultStrokeColor = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
-            0.3, '#b63679', 0.6, '#f8765c', 1.0, '#ffff00'];
+        const defaultStrokeColor = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.9],
+            0.9, '#b63679', 1.1, '#f8765c', 1.3, '#ffff00'];
 
         function setCirclesGreyed() {
             if (!map.getLayer('detection-circles')) return;
@@ -552,9 +552,9 @@
 
         // B12 intensity to color string (for chart)
         function b12Color(b12) {
-            // Map 0.5-1.2 to 0-1 for color scale
+            // Map 0.9-1.3 to 0-1 for color scale (1.3+ = yellow)
             // Clamp low end to ensure visibility (min ~purple, not black)
-            const t = Math.max(0.15, Math.min(1, (b12 - 0.5) / 0.7));
+            const t = Math.max(0.15, Math.min(1, (b12 - 0.9) / 0.4));
             const [r, g, b] = magmaColor(t);
             return `rgb(${r},${g},${b})`;
         }
@@ -668,10 +668,10 @@
                     ],
                     'circle-color': 'transparent',
                     'circle-opacity': 0,
-                    'circle-stroke-color': ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.5],
-                        0.3, '#b63679',
-                        0.6, '#f8765c',
-                        1.0, '#ffff00'
+                    'circle-stroke-color': ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.9],
+                        0.9, '#b63679',
+                        1.1, '#f8765c',
+                        1.3, '#ffff00'
                     ],
                     'circle-stroke-width': 2,
                     'circle-stroke-opacity': 1

@@ -35,22 +35,29 @@ cluster_assignments AS (
     FROM raw_detections a
 ),
 
+-- Find the brightest detection in each cluster to anchor the location
+cluster_anchors AS (
+    SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY cluster_id, facility_id ORDER BY max_b12 DESC) as rn
+    FROM cluster_assignments
+),
+
 clustered_flares AS (
     SELECT
-        cluster_id, facility_id, name,
-        -- Simple centroid (unweighted mean of all detections in cluster)
-        AVG(flare_lon) as flare_lon,
-        AVG(flare_lat) as flare_lat,
-        MAX(max_b12) as max_b12,
-        COUNT(DISTINCT date) as detection_count,
+        c.cluster_id, c.facility_id, c.name,
+        -- Anchor to brightest detection (avoids phantom centroids between nearby flares)
+        MAX(CASE WHEN c.rn = 1 THEN c.flare_lon END) as flare_lon,
+        MAX(CASE WHEN c.rn = 1 THEN c.flare_lat END) as flare_lat,
+        MAX(c.max_b12) as max_b12,
+        COUNT(DISTINCT c.date) as detection_count,
         json_group_array(json_object(
-            'date', date, 'max_b12', ROUND(max_b12, 4), 'pixels', pixels,
-            'cog_b12', cog_b12, 'epsg', epsg,
-            'utm_bounds', json_array(utm_minx, utm_miny, utm_maxx, utm_maxy),
-            'raw_lon', flare_lon, 'raw_lat', flare_lat
+            'date', c.date, 'max_b12', ROUND(c.max_b12, 4), 'pixels', c.pixels,
+            'cog_b12', c.cog_b12, 'epsg', c.epsg,
+            'utm_bounds', json_array(c.utm_minx, c.utm_miny, c.utm_maxx, c.utm_maxy),
+            'raw_lon', c.flare_lon, 'raw_lat', c.flare_lat
         )) as detections
-    FROM cluster_assignments
-    GROUP BY cluster_id, facility_id, name
+    FROM cluster_anchors c
+    GROUP BY c.cluster_id, c.facility_id, c.name
 ),
 
 filtered_flares AS (
