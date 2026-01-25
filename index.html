@@ -388,7 +388,7 @@
         <h1>BURNOFF: SENTINEL-2 FLARE DETECTIONS</h1>
         <p>SWIR thermal anomaly detection at LNG facilities</p>
         <select id="terminal-select" class="terminal-select">
-            <option value="">Qatargas / Rasgas Plants</option>
+            <option value="">Select a terminal</option>
         </select>
     </div>
 
@@ -777,16 +777,16 @@
                         coords: f.geometry.coordinates
                     }))
                     .sort((a, b) => {
-                        const aQ = a.name.toLowerCase().includes('qatargas');
-                        const bQ = b.name.toLowerCase().includes('qatargas');
-                        if (aQ && !bQ) return -1;
-                        if (bQ && !aQ) return 1;
+                        const aR = a.name.toLowerCase().includes('ras laffan');
+                        const bR = b.name.toLowerCase().includes('ras laffan');
+                        if (aR && !bR) return -1;
+                        if (bR && !aR) return 1;
                         return a.name.localeCompare(b.name);
                     });
 
                 const select = document.getElementById('terminal-select');
                 select.innerHTML = terminals.map(t =>
-                    `<option value="${t.name}"${t.name.toLowerCase().includes('qatargas') ? ' selected' : ''}>${t.name}</option>`
+                    `<option value="${t.name}"${t.name.toLowerCase().includes('ras laffan') ? ' selected' : ''}>${t.name}</option>`
                 ).join('');
 
                 select.addEventListener('change', (e) => {
