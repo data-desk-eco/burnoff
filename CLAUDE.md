@@ -64,3 +64,12 @@ if locations co-occur on same dates:
 - `src/burnoff/detect.py` - Detection algorithm
 - `queries/init.sql` - Schema + clustering macros
 - `queries/export_map.sql` - GeoJSON export with clustering
+
+## Remote Setup (Claude Code)
+
+When running as remote Claude Code, install dependencies before `make refresh`:
+```bash
+make deps  # Installs DuckDB CLI and tippecanoe
+```
+
+DuckDB spatial extension requires network access to download on first use.
