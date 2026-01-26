@@ -224,8 +224,10 @@ function restoreFromHash(skipFly = false) {
         map.flyTo({ center: [params.lon, params.lat], zoom: 14, duration: 800 });
     }
 
-    const onIdle = () => {
-        map.off('idle', onIdle);
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    const tryFindFeature = () => {
         const features = map.querySourceFeatures('detections', { sourceLayer: 'detections' });
         const match = features.find(f => {
             const [fLon, fLat] = f.geometry.coordinates;
@@ -243,7 +245,15 @@ function restoreFromHash(skipFly = false) {
                 const det = detections.find(d => d.date === params.date);
                 if (det) selectDetection(det, item, true);
             }
+        } else if (++attempts < maxAttempts) {
+            // PMTiles may not have loaded yet, retry on next idle or after delay
+            setTimeout(tryFindFeature, 300);
         }
+    };
+
+    const onIdle = () => {
+        map.off('idle', onIdle);
+        tryFindFeature();
     };
     map.on('idle', onIdle);
 }
@@ -569,10 +579,16 @@ map.on('load', () => {
         map.flyTo({ center: closest.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
     });
 
-    map.once('sourcedata', async () => {
-        await loadTerminals();
-        setTimeout(() => restoreFromHash(!!initialHash), 500);
-    });
+    loadTerminals();
+
+    // Wait for the detections source to load before restoring from hash
+    const onSourceData = (e) => {
+        if (e.sourceId === 'detections' && e.isSourceLoaded) {
+            map.off('sourcedata', onSourceData);
+            restoreFromHash(!!initialHash);
+        }
+    };
+    map.on('sourcedata', onSourceData);
 });
 
 window.addEventListener('hashchange', restoreFromHash);
