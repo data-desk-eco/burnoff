@@ -137,7 +137,9 @@ function renderIntensityChart(detections, onSelectDate) {
     const innerH = height - margin.top - margin.bottom;
 
     const dates = sorted.map(d => new Date(d.date));
-    const minDate = Math.min(...dates), maxDate = Math.max(...dates);
+    const firstDate = new Date(Math.min(...dates));
+    const minDate = new Date(firstDate.getFullYear(), 0, 1).getTime();
+    const maxDate = Math.max(...dates);
     const dateRange = maxDate - minDate || 1;
 
     const b12Values = sorted.map(d => d.max_b12 || 0.5).filter(v => v > 0);
@@ -158,9 +160,8 @@ function renderIntensityChart(detections, onSelectDate) {
     });
 
     if (dateRange > 30 * 24 * 60 * 60 * 1000) {
-        const startMonth = new Date(minDate).toLocaleString('en', { month: 'short' });
         const endMonth = new Date(maxDate).toLocaleString('en', { month: 'short' });
-        svg += `<text x="${margin.left}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8">${startMonth}</text>`;
+        svg += `<text x="${margin.left}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8">Jan</text>`;
         svg += `<text x="${width - margin.right}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="end">${endMonth}</text>`;
     }
 
@@ -307,7 +308,8 @@ function showInfo(feature) {
         item.dataset.date = det.date;
         item.innerHTML = `
             <span class="event-date">${formatDate(det.date)}</span>
-            <span class="event-meta">${det.max_b12?.toFixed(3) || '-'}</span>
+            <span class="event-meta" style="text-align: right; width: 40px;">${det.max_b12?.toFixed(2) || '-'}</span>
+            <span class="event-meta" style="text-align: right; width: 32px;">${det.pixels || '-'}</span>
         `;
         item.onclick = () => selectDetection(det, item);
         list.appendChild(item);
