@@ -270,16 +270,25 @@ def search_l1c_with_l2a(
         key = f"{dt}_{tile}"
         l2a_by_key[key] = item
 
-    # Match L1C with L2A
-    result = []
+    # Match L1C with L2A, deduplicating by date
+    # When multiple tiles cover the same location on the same date (tile overlap),
+    # pick the one with lowest cloud cover to avoid duplicate detections
+    by_date = {}
     for l1c in l1c_items:
         dt = l1c["properties"]["datetime"][:10]
         tile = l1c["properties"].get("s2:mgrs_tile", "")
+        cloud = l1c["properties"].get("eo:cloud_cover", 100)
         key = f"{dt}_{tile}"
         l2a = l2a_by_key.get(key)
-        result.append((l1c, l2a))
 
-    return result
+        if dt not in by_date:
+            by_date[dt] = (l1c, l2a, cloud)
+        else:
+            # Keep tile with lower cloud cover
+            if cloud < by_date[dt][2]:
+                by_date[dt] = (l1c, l2a, cloud)
+
+    return [(l1c, l2a) for l1c, l2a, _ in by_date.values()]
 
 
 def process_image(

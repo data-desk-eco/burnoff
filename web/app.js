@@ -2,8 +2,21 @@
 const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const DATA_URL = isLocal ? 'data' : 'https://storage.googleapis.com/burnoff-data';
 
+// Parse hash for deep-link before map init
+function parseHashEarly() {
+    const hash = location.hash.slice(1);
+    if (!hash) return null;
+    const [coordsPart, date] = hash.split('/');
+    if (!coordsPart || !date) return null;
+    const [lat, lon] = coordsPart.split(',').map(parseFloat);
+    if (isNaN(lat) || isNaN(lon)) return null;
+    return { lat, lon, date };
+}
+
+const initialHash = parseHashEarly();
+
 // Hide about modal if deep-linked
-if (window.location.hash && window.location.hash.length > 1) {
+if (initialHash) {
     document.getElementById('about-modal').classList.add('hidden');
 }
 
@@ -11,7 +24,7 @@ if (window.location.hash && window.location.hash.length > 1) {
 const protocol = new pmtiles.Protocol();
 maplibregl.addProtocol('pmtiles', protocol.tile);
 
-// Initialize map
+// Initialize map - start at deep-link location if present
 const map = new maplibregl.Map({
     container: 'map',
     style: {
@@ -30,8 +43,8 @@ const map = new maplibregl.Map({
             paint: { 'raster-saturation': -1 }
         }]
     },
-    center: [51.52, 25.92],
-    zoom: 12,
+    center: initialHash ? [initialHash.lon, initialHash.lat] : [51.52, 25.92],
+    zoom: initialHash ? 14 : 12,
     minZoom: 1.5,
     maxZoom: 18
 });
@@ -203,11 +216,13 @@ async function loadTerminals() {
     }
 }
 
-function restoreFromHash() {
+function restoreFromHash(skipFly = false) {
     const params = parseHash();
     if (!params) return;
 
-    map.flyTo({ center: [params.lon, params.lat], zoom: 14, duration: 800 });
+    if (!skipFly) {
+        map.flyTo({ center: [params.lon, params.lat], zoom: 14, duration: 800 });
+    }
 
     const onIdle = () => {
         map.off('idle', onIdle);
@@ -233,12 +248,25 @@ function restoreFromHash() {
     map.on('idle', onIdle);
 }
 
+function updateTerminalSelector(feature) {
+    const [fLon, fLat] = feature.geometry.coordinates;
+    let closest = null, minDist = Infinity;
+    for (const t of terminals) {
+        const dist = Math.hypot(t.coords[0] - fLon, t.coords[1] - fLat);
+        if (dist < minDist) { minDist = dist; closest = t; }
+    }
+    if (closest) {
+        document.getElementById('terminal-select').value = closest.name;
+    }
+}
+
 function showInfo(feature) {
     currentFeature = feature;
     selectedDetection = null;
     const props = feature.properties;
 
     setCirclesGreyed();
+    updateTerminalSelector(feature);
 
     const selectionSource = map.getSource('selection-highlight');
     if (selectionSource) selectionSource.setData(feature);
@@ -541,7 +569,7 @@ map.on('load', () => {
         map.flyTo({ center: closest.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
     });
 
-    map.once('sourcedata', () => setTimeout(restoreFromHash, 500));
+    map.once('sourcedata', () => setTimeout(() => restoreFromHash(!!initialHash), 500));
     loadTerminals();
 });
 
