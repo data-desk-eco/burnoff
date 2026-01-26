@@ -569,8 +569,10 @@ map.on('load', () => {
         map.flyTo({ center: closest.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
     });
 
-    map.once('sourcedata', () => setTimeout(() => restoreFromHash(!!initialHash), 500));
-    loadTerminals();
+    map.once('sourcedata', async () => {
+        await loadTerminals();
+        setTimeout(() => restoreFromHash(!!initialHash), 500);
+    });
 });
 
 window.addEventListener('hashchange', restoreFromHash);
