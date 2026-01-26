@@ -35,11 +35,19 @@ cluster_assignments AS (
     FROM raw_detections a
 ),
 
+-- Deduplicate by date within each cluster, keeping brightest detection per date
+deduped_by_date AS (
+    SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY cluster_id, facility_id, date ORDER BY max_b12 DESC) as date_rn
+    FROM cluster_assignments
+),
+
 -- Find the brightest detection in each cluster to anchor the location
 cluster_anchors AS (
     SELECT *,
         ROW_NUMBER() OVER (PARTITION BY cluster_id, facility_id ORDER BY max_b12 DESC) as rn
-    FROM cluster_assignments
+    FROM deduped_by_date
+    WHERE date_rn = 1  -- Only keep brightest per date
 ),
 
 clustered_flares AS (
