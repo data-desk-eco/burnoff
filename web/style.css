@@ -60,26 +60,54 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     margin: 5px 0 0 0;
     letter-spacing: 0.05em;
 }
-.terminal-select {
-    margin-top: 12px;
-    padding: 6px 8px;
-    background: rgba(255,255,255,0.05);
+
+.detect-separator {
+    border-top: 1px solid var(--border-light);
+    margin: 12px 0;
+}
+.detect-btn {
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
     border: 1px solid var(--border-light);
     color: var(--text-muted);
     font-family: inherit;
-    font-size: 11px;
-    width: 100%;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
     cursor: pointer;
-    outline: none;
+    transition: all 0.15s;
 }
-.terminal-select:hover, .terminal-select:focus {
+.detect-btn:hover {
     border-color: var(--text-muted);
     color: var(--text-primary);
 }
-.terminal-select option {
-    background: #1a1a1a;
-    color: var(--text-primary);
+.detect-progress {
+    position: relative;
+    height: 24px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border-light);
+    overflow: hidden;
 }
+.detect-progress-bar {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 0%;
+    background: rgba(255, 150, 100, 0.3);
+    transition: width 0.3s ease;
+}
+.detect-progress-text {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+.hidden { display: none !important; }
 
 .legend {
     bottom: var(--edge-spacing);
