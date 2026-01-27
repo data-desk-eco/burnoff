@@ -59,6 +59,7 @@ const b12ColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'
     0.9, '#b63679', 1.1, '#f8765c', 1.3, '#ffff00'];
 
 function magmaColor(t) {
+    t = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
     const colors = [
         [0, 0, 4], [40, 11, 84], [101, 21, 110], [159, 42, 99],
         [212, 72, 66], [245, 125, 21], [250, 193, 39], [255, 255, 0]
