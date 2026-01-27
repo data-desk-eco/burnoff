@@ -131,7 +131,8 @@ function renderIntensityChart(detections, onSelectDate) {
     const maxDate = Math.max(...dates);
     const dateRange = maxDate - minDate || 1;
 
-    const b12Values = sorted.map(d => d.max_b12 || 0.5).filter(v => v > 0);
+    const b12Val = d => d.b12_corrected;
+    const b12Values = sorted.map(b12Val).filter(v => v > 0);
     const dataMin = Math.min(...b12Values), dataMax = Math.max(...b12Values);
     const padding = (dataMax - dataMin) * 0.1 || 0.1;
     const minB12 = Math.max(0, dataMin - padding), maxB12 = dataMax + padding;
@@ -143,7 +144,7 @@ function renderIntensityChart(detections, onSelectDate) {
     sorted.forEach((det, i) => {
         const date = new Date(det.date);
         const x = margin.left + ((date - minDate) / dateRange) * innerW;
-        const b12 = det.max_b12 || 0.5;
+        const b12 = b12Val(det);
         const y = margin.top + innerH - ((b12 - minB12) / b12Range) * innerH;
         svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${b12Color(b12)}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
     });

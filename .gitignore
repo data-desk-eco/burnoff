@@ -8,6 +8,7 @@ data/*.duckdb
 data/*.db
 data/*.geojson
 data/*.pmtiles
+data/detections.json
 data/terminals-run.json
 web/data
 

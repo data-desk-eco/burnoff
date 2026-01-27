@@ -7,14 +7,14 @@ LOAD spatial;
 
 SET VARIABLE min_detections_per_year = 7;
 SET VARIABLE min_max_b12 = 0.9;
-SET VARIABLE merge_distance = 40;  -- 20m radius * 2 = 40m merge threshold
+SET VARIABLE merge_distance = 41;  -- 20m radius * 2 + 1m margin for spherical distance rounding
 
 WITH
 raw_detections AS (
     SELECT
         d.id as facility_id, d.name,
         e.flare_lon, e.flare_lat, e.date, e.max_b12, e.pixels,
-        e.cog_b12, e.epsg, e.utm_minx, e.utm_miny, e.utm_maxx, e.utm_maxy,
+        e.cog_b12, e.epsg, e.utm_minx, e.utm_miny, e.utm_maxx, e.utm_maxy, e.sun_elevation,
         row_number() OVER () as det_id
     FROM detections d
     JOIN detection_events e ON d.lat = e.lat AND d.lon = e.lon
@@ -62,7 +62,10 @@ clustered_flares AS (
             'date', c.date, 'max_b12', ROUND(c.max_b12, 4), 'pixels', c.pixels,
             'cog_b12', c.cog_b12, 'epsg', c.epsg,
             'utm_bounds', json_array(c.utm_minx, c.utm_miny, c.utm_maxx, c.utm_maxy),
-            'raw_lon', c.flare_lon, 'raw_lat', c.flare_lat
+            'raw_lon', c.flare_lon, 'raw_lat', c.flare_lat,
+            'b12_corrected', CASE WHEN c.sun_elevation IS NOT NULL
+                THEN ROUND(c.max_b12 * cos(radians(90.0 - c.sun_elevation)), 4)
+                ELSE NULL END
         )) as detections
     FROM cluster_anchors c
     GROUP BY c.cluster_id, c.facility_id, c.name
