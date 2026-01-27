@@ -2,8 +2,7 @@
 const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const DATA_URL = isLocal ? 'data' : 'https://storage.googleapis.com/burnoff-data';
 
-// Parse hash for deep-link before map init
-function parseHashEarly() {
+function parseHash() {
     const hash = location.hash.slice(1);
     if (!hash) return null;
     const [coordsPart, date] = hash.split('/');
@@ -13,7 +12,7 @@ function parseHashEarly() {
     return { lat, lon, date };
 }
 
-const initialHash = parseHashEarly();
+const initialHash = parseHash();
 
 // Hide about modal if deep-linked
 if (initialHash) {
@@ -95,20 +94,10 @@ function copernicusUrl(lat, lon, date) {
 function updateHash(coords, date) {
     if (coords && date) {
         const [lon, lat] = coords;
-        history.replaceState(null, '', `#${lat.toFixed(3)},${lon.toFixed(3)}/${date}`);
+        history.replaceState(null, '', `#${lat.toFixed(6)},${lon.toFixed(6)}/${date}`);
     } else {
         history.replaceState(null, '', location.pathname);
     }
-}
-
-function parseHash() {
-    const hash = location.hash.slice(1);
-    if (!hash) return null;
-    const [coordsPart, date] = hash.split('/');
-    if (!coordsPart || !date) return null;
-    const [lat, lon] = coordsPart.split(',').map(parseFloat);
-    if (isNaN(lat) || isNaN(lon)) return null;
-    return { lat, lon, date };
 }
 
 function setCirclesGreyed() {
@@ -232,19 +221,19 @@ function restoreFromHash(skipFly = false) {
         const features = map.querySourceFeatures('detections', { sourceLayer: 'detections' });
         const match = features.find(f => {
             const [fLon, fLat] = f.geometry.coordinates;
-            return Math.abs(fLat - params.lat) < 0.002 && Math.abs(fLon - params.lon) < 0.002;
+            return fLat.toFixed(6) === params.lat.toFixed(6) && fLon.toFixed(6) === params.lon.toFixed(6);
         });
 
         if (match) {
-            showInfo(match);
-            const item = document.querySelector(`.event-item[data-date="${params.date}"]`);
-            if (item) {
-                let detections = match.properties.detections || [];
-                if (typeof detections === 'string') {
-                    try { detections = JSON.parse(detections); } catch (e) { detections = []; }
-                }
-                const det = detections.find(d => d.date === params.date);
-                if (det) selectDetection(det, item, true);
+            let detections = match.properties.detections || [];
+            if (typeof detections === 'string') {
+                try { detections = JSON.parse(detections); } catch (e) { detections = []; }
+            }
+            const det = detections.find(d => d.date === params.date);
+            showInfo(match, { skipAutoSelect: !!det });
+            if (det) {
+                const item = document.querySelector(`.event-item[data-date="${params.date}"]`);
+                if (item) selectDetection(det, item);
             }
         } else if (++attempts < maxAttempts) {
             // PMTiles may not have loaded yet, retry on next idle or after delay
@@ -271,7 +260,7 @@ function updateTerminalSelector(feature) {
     }
 }
 
-function showInfo(feature) {
+function showInfo(feature, { skipAutoSelect = false } = {}) {
     currentFeature = feature;
     selectedDetection = null;
     const props = feature.properties;
@@ -326,7 +315,7 @@ function showInfo(feature) {
         }
     });
 
-    if (firstItem) selectDetection(firstItem.det, firstItem.item);
+    if (firstItem && !skipAutoSelect) selectDetection(firstItem.det, firstItem.item);
 
     if (detections.length === 0) {
         document.getElementById('intensity-chart').innerHTML = '';
@@ -334,12 +323,12 @@ function showInfo(feature) {
     }
 }
 
-function selectDetection(det, element, skipHash = false) {
+function selectDetection(det, element) {
     document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
     element.classList.add('active');
     selectedDetection = det;
 
-    if (!skipHash && currentFeature) {
+    if (currentFeature) {
         updateHash(currentFeature.geometry.coordinates, det.date);
     }
 
