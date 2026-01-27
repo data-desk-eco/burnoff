@@ -69,6 +69,7 @@ class Detection:
     utm_bounds: tuple | None = None
     epsg: int | None = None
     avg_b12: float | None = None
+    sun_elevation: float | None = None
 
 
 @dataclass
@@ -114,6 +115,7 @@ class DetectionResult:
                     "bounds": d.bounds,
                     "utm_bounds": d.utm_bounds,
                     "epsg": d.epsg,
+                    "sun_elevation": d.sun_elevation,
                 }
                 for d in self.detections
             ],
@@ -220,6 +222,7 @@ def _process_image(l1c: dict, lat: float, lon: float, buffer_m: int = BUFFER_M,
 
         epsg = l1c["properties"]["proj:epsg"]
         img_date = date.fromisoformat(l1c["properties"]["datetime"][:10])
+        sun_elevation = l1c["properties"].get("view:sun_elevation")
 
         # L2A URLs for cloud mask and visualization
         scl_url = viz_b11 = viz_b12 = viz_visual = None
@@ -350,6 +353,7 @@ def _process_image(l1c: dict, lat: float, lon: float, buffer_m: int = BUFFER_M,
                 utm_bounds=utm_bounds,
                 epsg=int(epsg),
                 avg_b12=avg_b12,
+                sun_elevation=sun_elevation,
             ))
 
         return detections

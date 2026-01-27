@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS detection_events (
     utm_maxx DOUBLE,
     utm_maxy DOUBLE,
     epsg INTEGER,
+    sun_elevation DOUBLE,             -- Solar elevation angle (degrees)
     PRIMARY KEY (lat, lon, date, flare_lat, flare_lon)
 );
 
