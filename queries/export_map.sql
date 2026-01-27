@@ -1,7 +1,7 @@
 -- Export clustered flares as GeoJSON
 --
--- Simple clustering: 20m radius around each flare, overlaps merge
--- (centers ≤ 40m apart = same cluster)
+-- Connected-component clustering: detections within 40m at the same facility
+-- are edges in a graph; recursive label propagation finds full transitive closure
 
 LOAD spatial;
 
@@ -9,30 +9,53 @@ SET VARIABLE min_detections_per_year = 7;
 SET VARIABLE min_max_b12 = 0.9;
 SET VARIABLE merge_distance = 41;  -- 20m radius * 2 + 1m margin for spherical distance rounding
 
-WITH
+WITH RECURSIVE
 raw_detections AS (
     SELECT
         d.id as facility_id, d.name,
         e.flare_lon, e.flare_lat, e.date, e.max_b12, e.pixels,
         e.cog_b12, e.epsg, e.utm_minx, e.utm_miny, e.utm_maxx, e.utm_maxy, e.sun_elevation,
-        row_number() OVER () as det_id
+        row_number() OVER (ORDER BY d.name, e.date, e.flare_lon, e.flare_lat) as det_id
     FROM detections d
     JOIN detection_events e ON d.lat = e.lat AND d.lon = e.lon
     WHERE e.flare_lon IS NOT NULL
       AND e.max_b12 > getvariable('min_max_b12')
 ),
 
--- Simple clustering: assign each detection to the smallest det_id within merge distance
-cluster_assignments AS (
-    SELECT a.*,
-        (SELECT MIN(b.det_id) FROM raw_detections b
-         WHERE b.facility_id = a.facility_id
-           AND ST_Distance_Sphere(
-               ST_Point(a.flare_lon, a.flare_lat),
-               ST_Point(b.flare_lon, b.flare_lat)
-           ) <= getvariable('merge_distance')
-        ) as cluster_id
+-- Edges: pairs of detections at same facility within merge distance
+nearby_pairs AS (
+    SELECT a.det_id as src, b.det_id as dst
     FROM raw_detections a
+    JOIN raw_detections b
+      ON a.facility_id = b.facility_id
+      AND a.det_id != b.det_id
+      AND ST_Distance_Sphere(
+          ST_Point(a.flare_lon, a.flare_lat),
+          ST_Point(b.flare_lon, b.flare_lat)
+      ) <= getvariable('merge_distance')
+),
+
+-- Connected components: propagate smallest label through edges until stable
+cc(det_id, cluster_id) AS (
+    SELECT det_id, det_id FROM raw_detections
+    UNION
+    SELECT p.src, c.cluster_id
+    FROM nearby_pairs p
+    JOIN cc c ON p.dst = c.det_id
+    WHERE c.cluster_id < p.src
+),
+
+-- Resolve each detection to its minimum reachable label
+cluster_labels AS (
+    SELECT det_id, MIN(cluster_id) as cluster_id
+    FROM cc
+    GROUP BY det_id
+),
+
+cluster_assignments AS (
+    SELECT r.*, cl.cluster_id
+    FROM raw_detections r
+    JOIN cluster_labels cl ON r.det_id = cl.det_id
 ),
 
 -- Deduplicate by date within each cluster, keeping brightest detection per date
