@@ -15,7 +15,7 @@ and processes Sentinel-2 L2A imagery directly in your browser using a Web Worker
 
 Flares emit strongly in shortwave infrared. Burnoff reads cloud-optimized GeoTIFF
 bands (B12, B11, B8A) from Element84's STAC catalog via windowed HTTP range requests,
-runs the full DAFI v2 detection algorithm client-side, and clusters detections across
+runs a version of the DAFI v2 detection algorithm client-side, and clusters detections across
 dates using Union-Find.
 
 **Detection pipeline:**
