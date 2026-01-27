@@ -31,7 +31,7 @@ let detectWorker = null;
 
 // Color scale for B12 intensity
 const b12ColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.9],
-    0.9, '#b63679', 1.1, '#f8765c', 1.3, '#ffff00'];
+    0.9, '#e04090', 1.1, '#ff4530', 1.3, '#ffff00'];
 
 function magmaColor(t) {
     t = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
@@ -371,6 +371,7 @@ function downloadFlareCSV() {
 // ---------------------------------------------------------------------------
 
 const MERGE_DISTANCE_M = 41;
+const CLUSTER_AVG_B12_MIN = 0.70;
 
 function haversineM(lat1, lon1, lat2, lon2) {
     const R = 6371000;
@@ -425,6 +426,9 @@ function crossDateCluster(allDetections) {
             if (!byDate[d.date] || d.max_b12 > byDate[d.date].max_b12) byDate[d.date] = d;
         }
         const deduped = Object.values(byDate);
+        if (deduped.length < 4) continue;
+        const avgClusterB12 = deduped.reduce((s, d) => s + d.max_b12, 0) / deduped.length;
+        if (avgClusterB12 < CLUSTER_AVG_B12_MIN) continue;
         let anchor = deduped[0];
         for (const d of deduped) { if (d.max_b12 > anchor.max_b12) anchor = d; }
 
@@ -437,7 +441,7 @@ function crossDateCluster(allDetections) {
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [anchor.flare_lon, anchor.flare_lat] },
             properties: {
-                name: 'Client detection',
+                name: `${deduped.length} detection${deduped.length !== 1 ? 's' : ''}`,
                 max_b12: b12Corrected,
                 detection_count: deduped.length,
                 detections: deduped.map(d => {
