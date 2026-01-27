@@ -22,7 +22,7 @@ SELECT
     CAST(d.images AS INTEGER),
     CAST(d.detections AS INTEGER),
     CAST(d.occurrence_frequency AS DOUBLE),
-    d.persistence_level,
+    json_extract_string(d, '$.persistence_level'),
     CAST(d.max_b12 AS DOUBLE)
 FROM read_json('data/detections.json') d
 LEFT JOIN terminals t ON ABS(d.lat - t.lat) < 0.001 AND ABS(d.lon - t.lon) < 0.001;
@@ -52,7 +52,8 @@ SELECT
     json_extract(e, '$.utm_bounds[1]')::DOUBLE as utm_miny,
     json_extract(e, '$.utm_bounds[2]')::DOUBLE as utm_maxx,
     json_extract(e, '$.utm_bounds[3]')::DOUBLE as utm_maxy,
-    json_extract(e, '$.epsg')::INTEGER as epsg
+    json_extract(e, '$.epsg')::INTEGER as epsg,
+    json_extract(e, '$.sun_elevation')::DOUBLE as sun_elevation
 FROM read_json('data/detections.json', union_by_name=true) d,
      unnest(d.detection_dates) as t(e)
 WHERE d.detection_dates IS NOT NULL;

@@ -21,3 +21,5 @@ make deploy       # Upload to GCS
 Uses Sentinel-2 L1C TOA reflectance at 20m resolution via Element84 STAC.
 Connected component detection: find B12 ≥ 0.75 pixels, group, output centroids.
 Cross-date clustering merges detections ≤40m apart, anchored to brightest.
+Solar zenith correction: `b12_corrected = B12 × cos(θ_z)` removes seasonal bias
+from TOA reflectance (flares are thermal emitters, not reflectors).
