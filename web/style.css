@@ -107,6 +107,15 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     color: var(--text-muted);
     text-transform: uppercase;
 }
+.map-centre {
+    font-size: 10px;
+    color: var(--text-hint);
+    letter-spacing: 0.02em;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-light);
+    font-variant-numeric: tabular-nums;
+}
 .hidden { display: none !important; }
 
 .legend {
