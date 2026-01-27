@@ -406,41 +406,33 @@ function haversineM(lat1, lon1, lat2, lon2) {
 function crossDateCluster(allDetections) {
     if (allDetections.length === 0) return [];
 
-    const n = allDetections.length;
-    const parent = new Int32Array(n);
-    const rank = new Int32Array(n);
-    for (let i = 0; i < n; i++) parent[i] = i;
+    // Sort brightest first so cluster anchors are the strongest detections.
+    const sorted = allDetections.slice().sort((a, b) => b.max_b12 - a.max_b12);
 
-    function find(x) {
-        while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
-        return x;
-    }
-    function union(a, b) {
-        a = find(a); b = find(b);
-        if (a === b) return;
-        if (rank[a] < rank[b]) { const t = a; a = b; b = t; }
-        parent[b] = a;
-        if (rank[a] === rank[b]) rank[a]++;
-    }
-
-    for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-            if (haversineM(
-                allDetections[i].flare_lat, allDetections[i].flare_lon,
-                allDetections[j].flare_lat, allDetections[j].flare_lon
-            ) <= MERGE_DISTANCE_M) union(i, j);
+    // Anchor-based clustering: each detection joins the nearest cluster whose
+    // anchor is within MERGE_DISTANCE_M, or starts a new cluster. No transitive
+    // chaining — prevents nearby but distinct flares from merging.
+    const clusters = [];  // [{anchor, members}]
+    for (const det of sorted) {
+        let bestIdx = -1, bestDist = Infinity;
+        for (let c = 0; c < clusters.length; c++) {
+            const a = clusters[c].anchor;
+            const d = haversineM(det.flare_lat, det.flare_lon, a.flare_lat, a.flare_lon);
+            if (d <= MERGE_DISTANCE_M && d < bestDist) {
+                bestDist = d;
+                bestIdx = c;
+            }
+        }
+        if (bestIdx >= 0) {
+            clusters[bestIdx].members.push(det);
+        } else {
+            clusters.push({ anchor: det, members: [det] });
         }
     }
 
-    const clusters = {};
-    for (let i = 0; i < n; i++) {
-        const root = find(i);
-        if (!clusters[root]) clusters[root] = [];
-        clusters[root].push(allDetections[i]);
-    }
-
     const features = [];
-    for (const members of Object.values(clusters)) {
+    for (const cluster of clusters) {
+        const members = cluster.members;
         const byDate = {};
         for (const d of members) {
             if (!byDate[d.date] || d.max_b12 > byDate[d.date].max_b12) byDate[d.date] = d;
