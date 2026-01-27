@@ -1,12 +1,11 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main]
+  # push:
+  #   branches: [main]
   workflow_dispatch:
 
 jobs:
-  # Deploy web app to GitHub Pages
   deploy-pages:
     runs-on: ubuntu-latest
     permissions:
@@ -22,7 +21,7 @@ jobs:
       - name: Prepare dist
         run: |
           mkdir -p dist
-          cp web/index.html web/app.js web/style.css dist/
+          cp web/index.html web/app.js web/style.css web/detect-worker.js dist/
 
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
@@ -30,31 +29,3 @@ jobs:
           path: dist
       - id: deployment
         uses: actions/deploy-pages@v4
-
-  # Upload PMTiles to GCS when data/detections.pmtiles changes
-  deploy-data:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check for PMTiles
-        id: check
-        run: |
-          if [ -f "data/detections.pmtiles" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Authenticate to Google Cloud
-        if: steps.check.outputs.exists == 'true'
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCS_SERVICE_ACCOUNT_KEY }}
-
-      - name: Upload to GCS
-        if: steps.check.outputs.exists == 'true'
-        run: |
-          gcloud storage cp data/detections.pmtiles gs://burnoff-data/ \
-            --cache-control="public, max-age=3600"
-          echo "Deployed to: https://storage.googleapis.com/burnoff-data/detections.pmtiles"

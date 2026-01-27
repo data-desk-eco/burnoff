@@ -14,9 +14,12 @@
     <div class="panel title">
         <h1>Burnoff</h1>
         <p>Sentinel-2 flare detections at LNG facilities</p>
-        <select id="terminal-select" class="terminal-select">
-            <option value="">Loading...</option>
-        </select>
+        <div class="detect-separator"></div>
+        <button id="detect-btn" class="detect-btn">Detect</button>
+        <div id="detect-progress" class="detect-progress hidden">
+            <div class="detect-progress-bar" id="detect-bar"></div>
+            <span class="detect-progress-text" id="detect-text">Searching...</span>
+        </div>
     </div>
 
     <div class="panel legend">
@@ -33,7 +36,8 @@
     <div class="modal-overlay" id="about-modal">
         <div class="modal-content">
             <h2>About</h2>
-            <p>Detects gas flaring at LNG terminals using Sentinel-2 shortwave infrared imagery. Flares appear bright in SWIR bands due to thermal emission. Click any detection to view the satellite imagery.</p>
+            <p>Detects gas flaring at LNG terminals using Sentinel-2 shortwave infrared imagery. Flares appear bright in SWIR bands due to thermal emission.</p>
+            <p>Click Detect to download and process Sentinel-2 imagery for the current view. Click any detection to view the satellite imagery and flare analysis.</p>
             <div class="modal-citations">
                 <h4 class="label-sm">Inspiration</h4>
                 <p style="font-size: 12px; line-height: 1.5;">
@@ -63,7 +67,6 @@
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js"></script>
-    <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
     <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
     <script src="https://unpkg.com/proj4@2.9.2/dist/proj4.js"></script>
     <script src="app.js"></script>

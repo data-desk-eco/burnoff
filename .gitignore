@@ -1,22 +1,5 @@
-# Python
-.venv/
-__pycache__/
-*.pyc
-
-# Generated data
-data/*.duckdb
-data/*.db
-data/*.geojson
-data/*.pmtiles
-data/detections.json
-data/terminals-run.json
-web/data
+# OS
+.DS_Store
 
 # Debug/test files
 debug.html
-data/test_*.json
-data/ras_laffan.json
-data/das_island.json
-
-# OS
-.DS_Store
