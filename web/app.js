@@ -1,29 +1,4 @@
-// Configuration
-const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-const DATA_URL = isLocal ? 'data' : 'https://storage.googleapis.com/burnoff-data';
-
-function parseHash() {
-    const hash = location.hash.slice(1);
-    if (!hash) return null;
-    const [coordsPart, date] = hash.split('/');
-    if (!coordsPart || !date) return null;
-    const [lat, lon] = coordsPart.split(',').map(parseFloat);
-    if (isNaN(lat) || isNaN(lon)) return null;
-    return { lat, lon, date };
-}
-
-const initialHash = parseHash();
-
-// Hide about modal if deep-linked
-if (initialHash) {
-    document.getElementById('about-modal').classList.add('hidden');
-}
-
-// Register PMTiles protocol
-const protocol = new pmtiles.Protocol();
-maplibregl.addProtocol('pmtiles', protocol.tile);
-
-// Initialize map - start at deep-link location if present
+// Initialize map
 const map = new maplibregl.Map({
     container: 'map',
     style: {
@@ -42,8 +17,8 @@ const map = new maplibregl.Map({
             paint: { 'raster-saturation': -1 }
         }]
     },
-    center: initialHash ? [initialHash.lon, initialHash.lat] : [51.52, 25.92],
-    zoom: initialHash ? 14 : 12,
+    center: [51.52, 25.92],
+    zoom: 12,
     minZoom: 1.5,
     maxZoom: 18
 });
@@ -52,7 +27,7 @@ map.on('style.load', () => map.setProjection({ type: 'globe' }));
 
 let currentFeature = null;
 let selectedDetection = null;
-let terminals = [];
+let detectWorker = null;
 
 // Color scale for B12 intensity
 const b12ColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.9],
@@ -92,25 +67,16 @@ function copernicusUrl(lat, lon, date) {
     return `https://browser.dataspace.copernicus.eu/?zoom=15&lat=${lat}&lng=${lon}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=1_TRUE_COLOR&dateMode=SINGLE`;
 }
 
-function updateHash(coords, date) {
-    if (coords && date) {
-        const [lon, lat] = coords;
-        history.replaceState(null, '', `#${lat.toFixed(6)},${lon.toFixed(6)}/${date}`);
-    } else {
-        history.replaceState(null, '', location.pathname);
-    }
-}
-
 function setCirclesGreyed() {
-    if (!map.getLayer('detection-circles')) return;
-    map.setPaintProperty('detection-circles', 'circle-stroke-color', '#bbb');
-    map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 0.6);
+    if (!map.getLayer('client-detection-circles')) return;
+    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', '#bbb');
+    map.setPaintProperty('client-detection-circles', 'circle-stroke-opacity', 0.6);
 }
 
 function setCirclesDefault() {
-    if (!map.getLayer('detection-circles')) return;
-    map.setPaintProperty('detection-circles', 'circle-stroke-color', b12ColorScale);
-    map.setPaintProperty('detection-circles', 'circle-stroke-opacity', 1);
+    if (!map.getLayer('client-detection-circles')) return;
+    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', b12ColorScale);
+    map.setPaintProperty('client-detection-circles', 'circle-stroke-opacity', 1);
 }
 
 function renderIntensityChart(detections, onSelectDate) {
@@ -178,97 +144,12 @@ function utmToWgs84(utmBounds, epsg) {
     return [sw[0], sw[1], ne[0], ne[1]];
 }
 
-async function loadTerminals() {
-    try {
-        const res = await fetch(`${DATA_URL}/terminals.json`);
-        const data = await res.json();
-        terminals = data.map(t => ({ name: t.name, coords: [t.lon, t.lat] }))
-            .sort((a, b) => {
-                const aR = a.name.toLowerCase().includes('ras laffan');
-                const bR = b.name.toLowerCase().includes('ras laffan');
-                if (aR && !bR) return -1;
-                if (bR && !aR) return 1;
-                return a.name.localeCompare(b.name);
-            });
-
-        const select = document.getElementById('terminal-select');
-        select.innerHTML = terminals.map(t =>
-            `<option value="${t.name}"${t.name.toLowerCase().includes('ras laffan') ? ' selected' : ''}>${t.name}</option>`
-        ).join('');
-
-        select.addEventListener('change', e => {
-            const t = terminals.find(t => t.name === e.target.value);
-            if (t) {
-                closeInfo();
-                map.flyTo({ center: t.coords, zoom: 13 });
-            }
-        });
-    } catch (err) {
-        console.error('Failed to load terminals:', err);
-    }
-}
-
-function restoreFromHash(skipFly = false) {
-    const params = parseHash();
-    if (!params) return;
-
-    if (!skipFly) {
-        map.flyTo({ center: [params.lon, params.lat], zoom: 14, duration: 800 });
-    }
-
-    let attempts = 0;
-    const maxAttempts = 10;
-
-    const tryFindFeature = () => {
-        const features = map.querySourceFeatures('detections', { sourceLayer: 'detections' });
-        const match = features.find(f => {
-            const [fLon, fLat] = f.geometry.coordinates;
-            return fLat.toFixed(6) === params.lat.toFixed(6) && fLon.toFixed(6) === params.lon.toFixed(6);
-        });
-
-        if (match) {
-            let detections = match.properties.detections || [];
-            if (typeof detections === 'string') {
-                try { detections = JSON.parse(detections); } catch (e) { detections = []; }
-            }
-            const det = detections.find(d => d.date === params.date);
-            showInfo(match, { skipAutoSelect: !!det });
-            if (det) {
-                const item = document.querySelector(`.event-item[data-date="${params.date}"]`);
-                if (item) selectDetection(det, item);
-            }
-        } else if (++attempts < maxAttempts) {
-            // PMTiles may not have loaded yet, retry on next idle or after delay
-            setTimeout(tryFindFeature, 300);
-        }
-    };
-
-    const onIdle = () => {
-        map.off('idle', onIdle);
-        tryFindFeature();
-    };
-    map.on('idle', onIdle);
-}
-
-function updateTerminalSelector(feature) {
-    const [fLon, fLat] = feature.geometry.coordinates;
-    let closest = null, minDist = Infinity;
-    for (const t of terminals) {
-        const dist = Math.hypot(t.coords[0] - fLon, t.coords[1] - fLat);
-        if (dist < minDist) { minDist = dist; closest = t; }
-    }
-    if (closest) {
-        document.getElementById('terminal-select').value = closest.name;
-    }
-}
-
 function showInfo(feature, { skipAutoSelect = false } = {}) {
     currentFeature = feature;
     selectedDetection = null;
     const props = feature.properties;
 
     setCirclesGreyed();
-    updateTerminalSelector(feature);
 
     const selectionSource = map.getSource('selection-highlight');
     if (selectionSource) selectionSource.setData(feature);
@@ -329,11 +210,6 @@ function selectDetection(det, element) {
     document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
     element.classList.add('active');
     selectedDetection = det;
-
-    if (currentFeature) {
-        updateHash(currentFeature.geometry.coordinates, det.date);
-    }
-
     loadImageryForDetection(det);
 }
 
@@ -341,7 +217,6 @@ function closeInfo() {
     document.getElementById('info').classList.remove('visible');
     closeImagery();
     currentFeature = null;
-    updateHash(null, null);
     setCirclesDefault();
     if (map.getLayer('selection-highlight')) {
         map.setLayoutProperty('selection-highlight', 'visibility', 'none');
@@ -440,7 +315,7 @@ async function loadImageryForDetection(det) {
             type: 'raster',
             source: 'cog-source',
             paint: { 'raster-opacity': 1, 'raster-resampling': 'nearest' }
-        }, 'detection-circles');
+        }, 'client-detection-circles');
 
         setCirclesGreyed();
         document.querySelector('.event-item.active')?.classList.remove('loading');
@@ -491,11 +366,244 @@ function downloadFlareCSV() {
     URL.revokeObjectURL(url);
 }
 
+// ---------------------------------------------------------------------------
+// Cross-date clustering (Union-Find, runs on main thread for live updates)
+// ---------------------------------------------------------------------------
+
+const MERGE_DISTANCE_M = 41;
+
+function haversineM(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * toRad;
+    const dLon = (lon2 - lon1) * toRad;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function crossDateCluster(allDetections) {
+    if (allDetections.length === 0) return [];
+
+    const n = allDetections.length;
+    const parent = new Int32Array(n);
+    const rank = new Int32Array(n);
+    for (let i = 0; i < n; i++) parent[i] = i;
+
+    function find(x) {
+        while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+        return x;
+    }
+    function union(a, b) {
+        a = find(a); b = find(b);
+        if (a === b) return;
+        if (rank[a] < rank[b]) { const t = a; a = b; b = t; }
+        parent[b] = a;
+        if (rank[a] === rank[b]) rank[a]++;
+    }
+
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            if (haversineM(
+                allDetections[i].flare_lat, allDetections[i].flare_lon,
+                allDetections[j].flare_lat, allDetections[j].flare_lon
+            ) <= MERGE_DISTANCE_M) union(i, j);
+        }
+    }
+
+    const clusters = {};
+    for (let i = 0; i < n; i++) {
+        const root = find(i);
+        if (!clusters[root]) clusters[root] = [];
+        clusters[root].push(allDetections[i]);
+    }
+
+    const features = [];
+    for (const members of Object.values(clusters)) {
+        const byDate = {};
+        for (const d of members) {
+            if (!byDate[d.date] || d.max_b12 > byDate[d.date].max_b12) byDate[d.date] = d;
+        }
+        const deduped = Object.values(byDate);
+        let anchor = deduped[0];
+        for (const d of deduped) { if (d.max_b12 > anchor.max_b12) anchor = d; }
+
+        const sunEl = anchor.sun_elevation;
+        const b12Corrected = sunEl != null
+            ? anchor.max_b12 * Math.cos((90 - sunEl) * Math.PI / 180)
+            : anchor.max_b12;
+
+        features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [anchor.flare_lon, anchor.flare_lat] },
+            properties: {
+                name: 'Client detection',
+                max_b12: b12Corrected,
+                detection_count: deduped.length,
+                detections: deduped.map(d => {
+                    const se = d.sun_elevation;
+                    return {
+                        date: d.date, max_b12: d.max_b12, pixels: d.pixels,
+                        cog_b12: d.cog_b12, epsg: d.epsg, utm_bounds: d.utm_bounds,
+                        raw_lon: d.flare_lon, raw_lat: d.flare_lat,
+                        b12_corrected: se != null
+                            ? d.max_b12 * Math.cos((90 - se) * Math.PI / 180) : d.max_b12
+                    };
+                })
+            }
+        });
+    }
+    return features;
+}
+
+// ---------------------------------------------------------------------------
+// Client-side detection
+// ---------------------------------------------------------------------------
+
+const MIN_DETECT_ZOOM = 11;
+let allRawDetections = [];
+
+function getViewportBbox() {
+    const bounds = map.getBounds();
+    return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+}
+
+function guessEpsg(bbox) {
+    const lon = (bbox[0] + bbox[2]) / 2;
+    const lat = (bbox[1] + bbox[3]) / 2;
+    const zone = Math.floor((lon + 180) / 6) + 1;
+    return lat >= 0 ? 32600 + zone : 32700 + zone;
+}
+
+function ensureDetectionLayer() {
+    if (!map.getSource('client-detections')) {
+        map.addSource('client-detections', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
+    if (!map.getLayer('client-detection-circles')) {
+        const circleRadius = ['interpolate', ['exponential', 1.5], ['zoom'],
+            0, ['+', 4, ['*', ['coalesce', ['get', 'max_b12'], 0], 4]],
+            6, ['+', 6, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
+            10, ['+', 10, ['*', ['coalesce', ['get', 'max_b12'], 0], 8]],
+            14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
+        ];
+        map.addLayer({
+            id: 'client-detection-circles',
+            type: 'circle',
+            source: 'client-detections',
+            paint: {
+                'circle-radius': circleRadius,
+                'circle-color': 'transparent',
+                'circle-opacity': 0,
+                'circle-stroke-color': b12ColorScale,
+                'circle-stroke-width': 2,
+                'circle-stroke-opacity': 1
+            }
+        });
+    }
+}
+
+function updateDetectionSource() {
+    const features = crossDateCluster(allRawDetections);
+    const src = map.getSource('client-detections');
+    if (src) src.setData({ type: 'FeatureCollection', features });
+}
+
+function startDetection() {
+    if (map.getZoom() < MIN_DETECT_ZOOM) {
+        alert('Zoom in to at least level 11 before running detection.');
+        return;
+    }
+
+    if (detectWorker) { detectWorker.terminate(); detectWorker = null; }
+
+    allRawDetections = [];
+
+    // Clear previous results and ensure layer exists
+    if (map.getLayer('client-detection-circles')) map.removeLayer('client-detection-circles');
+    if (map.getSource('client-detections')) map.removeSource('client-detections');
+    ensureDetectionLayer();
+
+    const btn = document.getElementById('detect-btn');
+    const prog = document.getElementById('detect-progress');
+    const bar = document.getElementById('detect-bar');
+    const text = document.getElementById('detect-text');
+
+    btn.classList.add('hidden');
+    prog.classList.remove('hidden');
+    bar.style.width = '0%';
+    text.textContent = 'Searching...';
+
+    const bbox = getViewportBbox();
+    const epsg = guessEpsg(bbox);
+
+    detectWorker = new Worker('detect-worker.js');
+
+    detectWorker.onmessage = function(e) {
+        const msg = e.data;
+        if (msg.type === 'progress') {
+            bar.style.width = msg.pct + '%';
+            text.textContent = msg.stage;
+        } else if (msg.type === 'detections') {
+            allRawDetections = allRawDetections.concat(msg.detections);
+            updateDetectionSource();
+        } else if (msg.type === 'done') {
+            finishDetection(msg.stats);
+        } else if (msg.type === 'error') {
+            bar.style.width = '100%';
+            bar.style.background = 'rgba(255,80,80,0.4)';
+            text.textContent = 'Error: ' + msg.message;
+            setTimeout(resetDetectUI, 3000);
+        }
+    };
+
+    detectWorker.onerror = function(err) {
+        console.error('Worker error:', err);
+        bar.style.width = '100%';
+        bar.style.background = 'rgba(255,80,80,0.4)';
+        text.textContent = 'Worker error';
+        setTimeout(resetDetectUI, 3000);
+    };
+
+    detectWorker.postMessage({ bbox, epsg });
+}
+
+function resetDetectUI() {
+    document.getElementById('detect-btn').classList.remove('hidden');
+    const prog = document.getElementById('detect-progress');
+    prog.classList.add('hidden');
+    const bar = document.getElementById('detect-bar');
+    bar.style.width = '0%';
+    bar.style.background = '';
+}
+
+function finishDetection(stats) {
+    const features = crossDateCluster(allRawDetections);
+
+    if (features.length === 0) {
+        document.getElementById('detect-bar').style.width = '100%';
+        document.getElementById('detect-bar').style.background = 'rgba(255,255,255,0.1)';
+        document.getElementById('detect-text').textContent = stats
+            ? `No flares found (${stats.images} images)`
+            : 'No flares found';
+        setTimeout(resetDetectUI, 3000);
+        return;
+    }
+
+    document.getElementById('detect-bar').style.width = '100%';
+    document.getElementById('detect-bar').style.background = 'rgba(100,255,100,0.2)';
+    document.getElementById('detect-text').textContent =
+        `Found ${features.length} flare${features.length !== 1 ? 's' : ''} in ${stats?.images || '?'} images`;
+    setTimeout(resetDetectUI, 3000);
+}
+
 // Map load handler
 map.on('load', () => {
-    map.addSource('detections', {
-        type: 'vector',
-        url: `pmtiles://${DATA_URL}/detections.pmtiles`
+    map.addSource('selection-highlight', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
     });
 
     const circleRadius = ['interpolate', ['exponential', 1.5], ['zoom'],
@@ -505,25 +613,6 @@ map.on('load', () => {
         14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
     ];
 
-    map.addLayer({
-        id: 'detection-circles',
-        type: 'circle',
-        source: 'detections',
-        'source-layer': 'detections',
-        paint: {
-            'circle-radius': circleRadius,
-            'circle-color': 'transparent',
-            'circle-opacity': 0,
-            'circle-stroke-color': b12ColorScale,
-            'circle-stroke-width': 2,
-            'circle-stroke-opacity': 1
-        }
-    });
-
-    map.addSource('selection-highlight', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] }
-    });
     map.addLayer({
         id: 'selection-highlight',
         type: 'circle',
@@ -541,15 +630,19 @@ map.on('load', () => {
 
     const MIN_INTERACTIVE_ZOOM = 10;
 
-    map.on('mouseenter', 'detection-circles', () => {
+    map.on('mouseenter', 'client-detection-circles', () => {
         if (map.getZoom() >= MIN_INTERACTIVE_ZOOM) map.getCanvas().style.cursor = 'pointer';
     });
-    map.on('mouseleave', 'detection-circles', () => map.getCanvas().style.cursor = '');
+    map.on('mouseleave', 'client-detection-circles', () => map.getCanvas().style.cursor = '');
 
     map.on('click', e => {
         const tolerance = 15;
         const bbox = [[e.point.x - tolerance, e.point.y - tolerance], [e.point.x + tolerance, e.point.y + tolerance]];
-        const features = map.queryRenderedFeatures(bbox, { layers: ['detection-circles'] });
+
+        const queryLayers = [];
+        if (map.getLayer('client-detection-circles')) queryLayers.push('client-detection-circles');
+        if (queryLayers.length === 0) { closeInfo(); return; }
+        const features = map.queryRenderedFeatures(bbox, { layers: queryLayers });
 
         if (features.length === 0) {
             closeInfo();
@@ -572,19 +665,7 @@ map.on('load', () => {
         map.flyTo({ center: closest.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
     });
 
-    loadTerminals();
-
-    // Wait for the detections source to load before restoring from hash
-    const onSourceData = (e) => {
-        if (e.sourceId === 'detections' && e.isSourceLoaded) {
-            map.off('sourcedata', onSourceData);
-            restoreFromHash(!!initialHash);
-        }
-    };
-    map.on('sourcedata', onSourceData);
 });
-
-window.addEventListener('hashchange', restoreFromHash);
 
 document.getElementById('about-modal').addEventListener('click', function(e) {
     if (e.target === this || !e.target.closest('a')) this.classList.add('hidden');
@@ -597,3 +678,4 @@ document.getElementById('open-image-btn').addEventListener('click', () => {
     window.open(copernicusUrl(lat, lon, selectedDetection.date), '_blank');
 });
 document.querySelector('.close-btn').addEventListener('click', closeInfo);
+document.getElementById('detect-btn').addEventListener('click', startDetection);

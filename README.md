@@ -1,41 +1,40 @@
 # Burnoff
 
-Sentinel-2 SWIR flare detection at LNG export terminals.
+Client-side Sentinel-2 SWIR flare detection at LNG facilities.
 
 ## Quick Start
 
 ```
-make refresh    # Build from current detections
-make serve      # Dev server on :8000
-make deploy     # Upload to GCS
+make serve     # Dev server on :8000
 ```
 
-## Detection
+Open the map, navigate to an LNG terminal, and click **Detect**. The app downloads
+and processes Sentinel-2 L2A imagery directly in your browser using a Web Worker.
 
-Uses Sentinel-2 L1C at native 20m resolution. L1C preserves full thermal signal
-without atmospheric correction clipping.
+## How It Works
 
-**Algorithm:**
-1. Find pixels with B12 ≥ 0.75 (bright SWIR)
-2. Group into connected components (4-connectivity)
-3. Output centroid of each component
-4. Cluster across dates where footprints overlap (≤40m apart)
+Flares emit strongly in shortwave infrared. Burnoff reads cloud-optimized GeoTIFF
+bands (B12, B11, B8A) from Element84's STAC catalog via windowed HTTP range requests,
+runs the full DAFI v2 detection algorithm client-side, and clusters detections across
+dates using Union-Find.
 
-**Export filters:** peak B12 > 0.9, ≥6 detections per year
+**Detection pipeline:**
+1. STAC search for L2A images in viewport (last 6 months, <30% cloud)
+2. Per-image: brightness, contrast, thermal signature (NHISWNIR), connected components
+3. Cross-date clustering (≤41m), anchored to brightest detection per cluster
 
 ## Project Structure
 
 ```
 burnoff/
-├── src/burnoff/     # Python detection CLI
-├── web/             # Map viewer (HTML/CSS/JS)
-├── queries/         # DuckDB SQL
-├── data/            # Generated files (gitignored)
+├── web/
+│   ├── index.html           # Entry point
+│   ├── app.js               # Map viewer + clustering
+│   ├── detect-worker.js     # Detection algorithm (Web Worker)
+│   └── style.css            # UI styles
 └── Makefile
 ```
 
-## Requirements
+## References
 
-- Python 3.12+ with uv
-- DuckDB CLI
-- tippecanoe
+Faruolo et al. (2024) [The DAFI v2 algorithm for gas flare detection](https://doi.org/10.1088/1748-9326/ad82fb)
