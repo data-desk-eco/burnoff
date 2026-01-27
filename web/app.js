@@ -224,6 +224,8 @@ function closeInfo() {
 }
 
 async function loadImageryForDetection(det) {
+    if (map.getLayer('cog-border')) map.removeLayer('cog-border');
+    if (map.getSource('cog-border')) map.removeSource('cog-border');
     if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
     if (map.getSource('cog-source')) map.removeSource('cog-source');
 
@@ -237,7 +239,7 @@ async function loadImageryForDetection(det) {
 
     const [flareLon, flareLat] = currentFeature.geometry.coordinates;
     const epsg = det.epsg;
-    const buffer = 50;
+    const buffer = 250;
 
     const zone = epsg % 100;
     const isNorth = epsg < 32700;
@@ -301,13 +303,22 @@ async function loadImageryForDetection(det) {
         }
         ctx.putImageData(imgData, 0, 0);
 
+        if (map.getLayer('cog-border')) map.removeLayer('cog-border');
+        if (map.getSource('cog-border')) map.removeSource('cog-border');
         if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
         if (map.getSource('cog-source')) map.removeSource('cog-source');
+
+        const coords = [[bounds[0], bounds[3]], [bounds[2], bounds[3]], [bounds[2], bounds[1]], [bounds[0], bounds[1]]];
 
         map.addSource('cog-source', {
             type: 'image',
             url: canvas.toDataURL(),
-            coordinates: [[bounds[0], bounds[3]], [bounds[2], bounds[3]], [bounds[2], bounds[1]], [bounds[0], bounds[1]]]
+            coordinates: coords
+        });
+
+        map.addSource('cog-border', {
+            type: 'geojson',
+            data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[...coords, coords[0]]] } }
         });
 
         map.addLayer({
@@ -315,6 +326,13 @@ async function loadImageryForDetection(det) {
             type: 'raster',
             source: 'cog-source',
             paint: { 'raster-opacity': 1, 'raster-resampling': 'nearest' }
+        }, 'client-detection-circles');
+
+        map.addLayer({
+            id: 'cog-border',
+            type: 'line',
+            source: 'cog-border',
+            paint: { 'line-color': '#ffffff', 'line-width': 1 }
         }, 'client-detection-circles');
 
         setCirclesGreyed();
@@ -327,6 +345,8 @@ async function loadImageryForDetection(det) {
 }
 
 function closeImagery() {
+    if (map.getLayer('cog-border')) map.removeLayer('cog-border');
+    if (map.getSource('cog-border')) map.removeSource('cog-border');
     if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
     if (map.getSource('cog-source')) map.removeSource('cog-source');
     map.setPaintProperty('basemap', 'raster-brightness-max', 1);
@@ -597,14 +617,23 @@ function finishDetection(stats) {
     }
 
     document.getElementById('detect-bar').style.width = '100%';
-    document.getElementById('detect-bar').style.background = 'rgba(100,255,100,0.2)';
+    document.getElementById('detect-bar').style.background = 'rgba(255,255,255,0.1)';
     document.getElementById('detect-text').textContent =
-        `Found ${features.length} flare${features.length !== 1 ? 's' : ''} in ${stats?.images || '?'} images`;
+        `${features.length} flare${features.length !== 1 ? 's' : ''} · ${stats?.images || '?'} images`;
     setTimeout(resetDetectUI, 3000);
 }
 
 // Map load handler
+function updateMapCentre() {
+    const c = map.getCenter();
+    document.getElementById('map-centre').textContent =
+        `LOC: ${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`;
+}
+
+map.on('move', updateMapCentre);
+
 map.on('load', () => {
+    updateMapCentre();
     map.addSource('selection-highlight', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] }

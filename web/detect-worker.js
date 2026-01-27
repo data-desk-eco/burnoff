@@ -19,7 +19,7 @@ const CONTRAST_RATIO = 3.0;
 const BACKGROUND_FLOOR = 0.15;
 const PEAKEDNESS_MIN = 1.15;
 const SATURATION = 1.0;
-const MAX_PIXELS = 50;
+const MAX_PIXELS = 80;
 const LARGE_PIXELS = 30;
 const LARGE_B12_MIN = 0.70;
 const WARM_FRACTION = 0.5;
@@ -174,17 +174,21 @@ async function searchSTAC(bbox, maxCloud) {
         }
     }
 
-    // Deduplicate by date: keep lowest cloud cover
-    const byDate = {};
+    // Deduplicate by MGRS tile + date: keep lowest cloud cover per tile per date.
+    // Different tiles cover different areas, so deduplicating across tiles
+    // can discard the tile that actually covers the target location.
+    const byTileDate = {};
     for (const item of items) {
         const dt = item.properties.datetime.slice(0, 10);
         const cloud = item.properties['eo:cloud_cover'] ?? 100;
-        if (!byDate[dt] || cloud < byDate[dt].cloud) {
-            byDate[dt] = { item, cloud };
+        const tile = item.properties['grid:code'] || item.properties['s2:mgrs_tile'] || item.id;
+        const key = `${tile}_${dt}`;
+        if (!byTileDate[key] || cloud < byTileDate[key].cloud) {
+            byTileDate[key] = { item, cloud };
         }
     }
 
-    return Object.values(byDate).map(e => e.item);
+    return Object.values(byTileDate).map(e => e.item);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,28 +213,37 @@ async function processImage(item, bbox, epsg) {
     const winInfo = bboxToWindow(bbox, b12Image, itemEpsg);
     if (winInfo.w <= 0 || winInfo.h <= 0) return [];
 
-    // 1. Check cloud cover via SCL
+    // 1. Read B12 (needed for cloud check and detection)
+    const b12Raw = await readBand(b12Url, winInfo.window);
+    if (!b12Raw) return [];
+    const b11Raw = await readBand(b11Url, winInfo.window);
+    if (!b11Raw) return [];
+
+    // 2. Check cloud cover via SCL, excluding bright SWIR pixels.
+    //    SCL often misclassifies flare pixels as cloud/cirrus. With a small
+    //    window (zoomed in) those pixels dominate the cloud fraction and cause
+    //    the image to be skipped. Exclude pixels where B12 DN is high enough
+    //    to be a candidate flare — they should not count as cloud.
+    const B12_DN_BRIGHT = B12_MIN * 10000 + 1000; // DN equivalent of B12_MIN
     if (sclUrl) {
         try {
             const sclData = await readBand(sclUrl, winInfo.window);
             if (sclData) {
                 let cloudPixels = 0;
+                let countable = 0;
                 for (let i = 0; i < sclData.data.length; i++) {
+                    // Skip bright SWIR pixels — likely flare, not cloud
+                    if (b12Raw.data[i] >= B12_DN_BRIGHT) continue;
+                    countable++;
                     const v = sclData.data[i];
                     if (v === 3 || v === 8 || v === 9 || v === 10) cloudPixels++;
                 }
-                if (cloudPixels / sclData.data.length > MAX_CLOUD_LOCAL) return [];
+                if (countable > 0 && cloudPixels / countable > MAX_CLOUD_LOCAL) return [];
             }
         } catch (e) {
             // If SCL fails, continue without cloud mask
         }
     }
-
-    // 2. Read B12, B11, B8A
-    const b12Raw = await readBand(b12Url, winInfo.window);
-    if (!b12Raw) return [];
-    const b11Raw = await readBand(b11Url, winInfo.window);
-    if (!b11Raw) return [];
 
     let b8aRaw = null;
     if (b8aUrl) {
@@ -371,8 +384,26 @@ async function processImage(item, bbox, epsg) {
 // Main entry
 // ---------------------------------------------------------------------------
 
+/** Pad a bbox to a minimum extent in degrees for stable background statistics.
+ *  The detection algorithm computes background median over the window — too
+ *  small a window (zoomed in) shifts the median and changes results. */
+function ensureMinBbox(bbox, minDeg) {
+    const cx = (bbox[0] + bbox[2]) / 2;
+    const cy = (bbox[1] + bbox[3]) / 2;
+    const halfW = Math.max((bbox[2] - bbox[0]) / 2, minDeg / 2);
+    const halfH = Math.max((bbox[3] - bbox[1]) / 2, minDeg / 2);
+    return [cx - halfW, cy - halfH, cx + halfW, cy + halfH];
+}
+
+// Minimum processing extent (~2.5 km each way) so background stats are stable
+const MIN_PROCESS_EXTENT_DEG = 0.045;
+
 self.onmessage = async function(e) {
     const { bbox, epsg } = e.data;
+
+    // Use viewport bbox for STAC search (find relevant images),
+    // but a padded bbox for per-image processing (stable background stats).
+    const processBbox = ensureMinBbox(bbox, MIN_PROCESS_EXTENT_DEG);
 
     try {
         progress('Searching STAC catalog...', 0);
@@ -392,7 +423,7 @@ self.onmessage = async function(e) {
             progress(`Processing ${dt}`, pct);
 
             try {
-                const dets = await processImage(items[i], bbox, epsg);
+                const dets = await processImage(items[i], processBbox, epsg);
                 if (dets.length > 0) {
                     totalDetections += dets.length;
                     self.postMessage({ type: 'detections', detections: dets });
