@@ -219,12 +219,10 @@ function restoreFromHash(skipFly = false) {
 
     const tryFindFeature = () => {
         const features = map.querySourceFeatures('detections', { sourceLayer: 'detections' });
-        let match = null, matchDist = Infinity;
-        for (const f of features) {
+        const match = features.find(f => {
             const [fLon, fLat] = f.geometry.coordinates;
-            const dist = Math.hypot(fLat - params.lat, fLon - params.lon);
-            if (dist < matchDist) { match = f; matchDist = dist; }
-        }
+            return fLat.toFixed(6) === params.lat.toFixed(6) && fLon.toFixed(6) === params.lon.toFixed(6);
+        });
 
         if (match) {
             let detections = match.properties.detections || [];
