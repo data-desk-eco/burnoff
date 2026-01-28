@@ -343,6 +343,26 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     overflow: visible;
 }
 
+#debug-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 4px 12px;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.35);
+    background: rgba(0, 0, 0, 0.5);
+    user-select: text;
+    pointer-events: auto;
+    z-index: 10;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: none;
+}
+#debug-bar.visible { display: block; }
+
 @media (max-width: 768px) {
     .title, .legend { min-height: 72px; }
 

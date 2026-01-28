@@ -160,6 +160,13 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     document.getElementById('info').classList.add('visible');
     document.getElementById('info-name').textContent = props.name || 'Unknown facility';
 
+    const debugBar = document.getElementById('debug-bar');
+    const [dbgLon, dbgLat] = feature.geometry.coordinates;
+    const dbgB12 = props.max_b12 != null ? Number(props.max_b12).toFixed(3) : '-';
+    const dbgCount = props.detection_count || '?';
+    debugBar.textContent = `${dbgLat.toFixed(6)}, ${dbgLon.toFixed(6)}  b12=${dbgB12}  n=${dbgCount}`;
+    debugBar.classList.add('visible');
+
     let detections = props.detections || [];
     if (typeof detections === 'string') {
         try { detections = JSON.parse(detections); } catch (e) { detections = []; }
@@ -221,6 +228,7 @@ function closeInfo() {
     if (map.getLayer('selection-highlight')) {
         map.setLayoutProperty('selection-highlight', 'visibility', 'none');
     }
+    document.getElementById('debug-bar').classList.remove('visible');
 }
 
 async function loadImageryForDetection(det) {
@@ -390,7 +398,7 @@ function downloadFlareCSV() {
 // Cross-date clustering (Union-Find, runs on main thread for live updates)
 // ---------------------------------------------------------------------------
 
-const MERGE_DISTANCE_M = 41;
+const MERGE_DISTANCE_M = 50;
 const CLUSTER_AVG_B12_MIN = 0.70;
 
 function haversineM(lat1, lon1, lat2, lon2) {
@@ -655,10 +663,28 @@ map.on('load', () => {
 
     const MIN_INTERACTIVE_ZOOM = 10;
 
+    const debugBar = document.getElementById('debug-bar');
+    function setDebugBar(feature) {
+        if (!feature) { debugBar.classList.remove('visible'); return; }
+        const [lon, lat] = feature.geometry.coordinates;
+        const p = feature.properties;
+        const count = p.detection_count || '?';
+        const b12 = p.max_b12 != null ? Number(p.max_b12).toFixed(3) : '-';
+        debugBar.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}  b12=${b12}  n=${count}`;
+        debugBar.classList.add('visible');
+    }
+
     map.on('mouseenter', 'client-detection-circles', () => {
         if (map.getZoom() >= MIN_INTERACTIVE_ZOOM) map.getCanvas().style.cursor = 'pointer';
     });
-    map.on('mouseleave', 'client-detection-circles', () => map.getCanvas().style.cursor = '');
+    map.on('mousemove', 'client-detection-circles', e => {
+        if (e.features?.length) setDebugBar(e.features[0]);
+    });
+    map.on('mouseleave', 'client-detection-circles', () => {
+        map.getCanvas().style.cursor = '';
+        if (!currentFeature) debugBar.classList.remove('visible');
+        else setDebugBar(currentFeature);
+    });
 
     map.on('click', e => {
         const tolerance = 15;
