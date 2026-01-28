@@ -29,4 +29,3 @@ Runs entirely client-side in a Web Worker with windowed COG reads (geotiff.js).
 7. Connected components (BFS, 4-connectivity)
 8. Cluster filters: size, peak, peakedness, single-pixel, warm-region halo
 9. Cross-date clustering: Union-Find merge within 41m, anchor to brightest
-10. Solar zenith correction: `b12_corrected = B12 * cos(theta_z)`

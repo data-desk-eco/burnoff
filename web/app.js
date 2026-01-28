@@ -520,17 +520,12 @@ function crossDateCluster(allDetections) {
         let anchor = deduped[0];
         for (const d of deduped) { if (d.max_b12 > anchor.max_b12) anchor = d; }
 
-        const sunEl = anchor.sun_elevation;
-        const b12Corrected = sunEl != null
-            ? anchor.max_b12 * Math.cos((90 - sunEl) * Math.PI / 180)
-            : anchor.max_b12;
-
         features.push({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [anchor.flare_lon, anchor.flare_lat] },
             properties: {
                 name: `${deduped.length} detection${deduped.length !== 1 ? 's' : ''}`,
-                max_b12: b12Corrected,
+                max_b12: anchor.max_b12,
                 detection_count: deduped.length,
                 detections: deduped.map(d => {
                     const se = d.sun_elevation;
@@ -538,8 +533,7 @@ function crossDateCluster(allDetections) {
                         date: d.date, max_b12: d.max_b12, pixels: d.pixels,
                         cog_b12: d.cog_b12, epsg: d.epsg, utm_bounds: d.utm_bounds,
                         raw_lon: d.flare_lon, raw_lat: d.flare_lat,
-                        b12_corrected: se != null
-                            ? d.max_b12 * Math.cos((90 - se) * Math.PI / 180) : d.max_b12
+                        b12_corrected: d.max_b12
                     };
                 })
             }
