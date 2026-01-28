@@ -135,13 +135,14 @@ function labelConnectedComponents(mask, width, height) {
 // STAC search
 // ---------------------------------------------------------------------------
 
-async function searchSTAC(bbox, maxCloud) {
-    const now = new Date();
-    const sixMonthsAgo = new Date(now);
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-    const startDate = sixMonthsAgo.toISOString().slice(0, 10);
-    const endDate = now.toISOString().slice(0, 10);
+async function searchSTAC(bbox, maxCloud, startDate, endDate) {
+    if (!startDate || !endDate) {
+        const now = new Date();
+        const sixMonthsAgo = new Date(now);
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        startDate = sixMonthsAgo.toISOString().slice(0, 10);
+        endDate = now.toISOString().slice(0, 10);
+    }
 
     const payload = {
         collections: ['sentinel-2-l2a'],
@@ -400,7 +401,7 @@ function ensureMinBbox(bbox, minDeg) {
 const MIN_PROCESS_EXTENT_DEG = 0.045;
 
 self.onmessage = async function(e) {
-    const { bbox, epsg } = e.data;
+    const { bbox, epsg, startDate, endDate } = e.data;
 
     // Use viewport bbox for STAC search (find relevant images),
     // but a padded bbox for per-image processing (stable background stats).
@@ -408,7 +409,7 @@ self.onmessage = async function(e) {
 
     try {
         progress('Searching STAC catalog...', 0);
-        const items = await searchSTAC(bbox, 30);
+        const items = await searchSTAC(bbox, 30, startDate, endDate);
 
         if (items.length === 0) {
             self.postMessage({ type: 'done', stats: { images: 0, rawDetections: 0 } });

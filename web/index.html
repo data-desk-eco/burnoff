@@ -16,6 +16,7 @@
         <p>Sentinel-2 flare detection</p>
         <div class="detect-separator"></div>
         <div class="map-centre" id="map-centre"></div>
+        <div class="quarter-picker" id="quarter-picker"></div>
         <button id="detect-btn" class="detect-btn">Detect</button>
         <div id="detect-progress" class="detect-progress hidden">
             <div class="detect-progress-bar" id="detect-bar"></div>
@@ -66,8 +67,6 @@
             <button class="panel-btn" id="download-btn">Download CSV</button>
         </div>
     </div>
-
-    <div id="debug-bar"></div>
 
     <script src="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js"></script>
     <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>

@@ -116,6 +116,49 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     border-bottom: 1px solid var(--border-light);
     font-variant-numeric: tabular-nums;
 }
+.quarter-picker {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-light);
+}
+.quarter-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+.quarter-row:last-child { margin-bottom: 0; }
+.quarter-year {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-faint);
+    width: 32px;
+    flex-shrink: 0;
+}
+.quarter-btn {
+    flex: 1;
+    padding: 3px 0;
+    background: transparent;
+    border: 1px solid var(--border-light);
+    color: var(--text-faint);
+    font-family: inherit;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.quarter-btn:hover {
+    border-color: var(--text-muted);
+    color: var(--text-muted);
+}
+.quarter-btn.active {
+    border-color: rgba(255, 120, 50, 0.35);
+    color: var(--text-secondary);
+    background: rgba(255, 120, 50, 0.12);
+}
 .hidden { display: none !important; }
 
 .legend {
@@ -342,26 +385,6 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     pointer-events: none;
     overflow: visible;
 }
-
-#debug-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 4px 12px;
-    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.35);
-    background: rgba(0, 0, 0, 0.5);
-    user-select: text;
-    pointer-events: auto;
-    z-index: 10;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: none;
-}
-#debug-bar.visible { display: block; }
 
 @media (max-width: 768px) {
     .title, .legend { min-height: 72px; }
