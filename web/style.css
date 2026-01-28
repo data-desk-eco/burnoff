@@ -159,6 +159,14 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     color: var(--text-secondary);
     background: rgba(255, 120, 50, 0.12);
 }
+.quarter-btn.detected,
+.quarter-btn.active.detected {
+    opacity: 0.3;
+    pointer-events: none;
+    border-color: rgba(255, 255, 255, 0.04);
+    color: var(--text-hint);
+    background: transparent;
+}
 .hidden { display: none !important; }
 
 .legend {

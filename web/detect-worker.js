@@ -1,9 +1,8 @@
 /**
  * Web Worker: Sentinel-2 SWIR flare detection (client-side).
  *
- * Port of src/burnoff/detect.py using L2A COGs from Element84 STAC.
- * Reads bands via geotiff.js windowed reads, runs DAFI v2 detection,
- * then cross-date clusters detections within 41m using Union-Find.
+ * Processing uses fixed-size pixel blocks (256x256) within each Sentinel-2
+ * COG tile for deterministic results regardless of viewport/zoom level.
  */
 
 importScripts(
@@ -25,6 +24,11 @@ const LARGE_B12_MIN = 0.70;
 const WARM_FRACTION = 0.5;
 const WARM_MAX_PIXELS = 100;
 const MAX_CLOUD_LOCAL = 0.3;
+const B12_DN_BRIGHT = B12_MIN * 10000 + 1000;
+
+// Block processing constants
+const BLOCK_SIZE = 256;      // pixels (5.12 km at 20m)
+const BLOCK_OVERLAP = 10;    // pixels (200m) per edge for flare-straddling
 
 const STAC_API = 'https://earth-search.aws.element84.com/v1';
 
@@ -48,51 +52,11 @@ function utmProj(epsg) {
     return `+proj=utm +zone=${zone} ${isNorth ? '' : '+south '}+datum=WGS84 +units=m +no_defs`;
 }
 
-/** Convert WGS84 bbox [west, south, east, north] to UTM pixel window. */
-function bboxToWindow(bbox, image, epsg) {
-    const proj = utmProj(epsg);
-    const sw = proj4('EPSG:4326', proj, [bbox[0], bbox[1]]);
-    const ne = proj4('EPSG:4326', proj, [bbox[2], bbox[3]]);
-    const utmBounds = [sw[0], sw[1], ne[0], ne[1]];
-
-    const imgBbox = image.getBoundingBox();
-    const width = image.getWidth();
-    const height = image.getHeight();
-    const [imgMinX, imgMinY, imgMaxX, imgMaxY] = imgBbox;
-    const resX = (imgMaxX - imgMinX) / width;
-    const resY = (imgMaxY - imgMinY) / height;
-
-    const clippedMinX = Math.max(utmBounds[0], imgMinX);
-    const clippedMinY = Math.max(utmBounds[1], imgMinY);
-    const clippedMaxX = Math.min(utmBounds[2], imgMaxX);
-    const clippedMaxY = Math.min(utmBounds[3], imgMaxY);
-
-    const x0 = Math.max(0, Math.floor((clippedMinX - imgMinX) / resX));
-    const y0 = Math.max(0, Math.floor((imgMaxY - clippedMaxY) / resY));
-    const x1 = Math.min(width, Math.ceil((clippedMaxX - imgMinX) / resX));
-    const y1 = Math.min(height, Math.ceil((imgMaxY - clippedMinY) / resY));
-
-    return {
-        window: [x0, y0, x1, y1],
-        actualUtmBounds: [
-            imgMinX + x0 * resX,
-            imgMaxY - y1 * resY,
-            imgMinX + x1 * resX,
-            imgMaxY - y0 * resY
-        ],
-        w: x1 - x0,
-        h: y1 - y0
-    };
-}
-
-/** Read a single band from a COG URL within a pixel window. Returns Float32Array. */
-async function readBand(url, windowArr) {
+/** Read a windowed region from an already-opened GeoTIFF image. */
+async function readWindow(image, windowArr) {
     const [x0, y0, x1, y1] = windowArr;
-    const w = x1 - x0, h = y1 - y0;
-    if (w <= 0 || h <= 0) return null;
-    const tiff = await GeoTIFF.fromUrl(url, { allowFullFile: false });
-    const image = await tiff.getImage();
-    const rasters = await image.readRasters({ window: [x0, y0, x1, y1] });
+    if (x1 - x0 <= 0 || y1 - y0 <= 0) return null;
+    const rasters = await image.readRasters({ window: windowArr });
     return { data: rasters[0], width: rasters.width, height: rasters.height };
 }
 
@@ -176,8 +140,6 @@ async function searchSTAC(bbox, maxCloud, startDate, endDate) {
     }
 
     // Deduplicate by MGRS tile + date: keep lowest cloud cover per tile per date.
-    // Different tiles cover different areas, so deduplicating across tiles
-    // can discard the tile that actually covers the target location.
     const byTileDate = {};
     for (const item of items) {
         const dt = item.properties.datetime.slice(0, 10);
@@ -193,47 +155,38 @@ async function searchSTAC(bbox, maxCloud, startDate, endDate) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-image processing (port of _process_image)
+// Per-block detection pipeline
 // ---------------------------------------------------------------------------
 
-async function processImage(item, bbox, epsg) {
-    const assets = item.assets;
-    const b12Url = assets.swir22?.href;
-    const b11Url = assets.swir16?.href;
-    const b8aUrl = assets.nir08?.href;
-    const sclUrl = assets.scl?.href;
-    if (!b12Url || !b11Url) return [];
+/**
+ * Run detection on a single block window. Returns detections with
+ * _peakImgRow/_peakImgCol for overlap dedup by the caller.
+ */
+async function processBlock(opts) {
+    const {
+        b12Image, b11Image, b8aImage, sclImage,
+        windowArr, imgDate, sunElevation, itemEpsg,
+        imgMinX, imgMaxY, resX, resY,
+        blockId, b12Url
+    } = opts;
 
-    const imgDate = item.properties.datetime.slice(0, 10);
-    const sunElevation = item.properties['view:sun_elevation'] ?? null;
-    const itemEpsg = item.properties['proj:epsg'] || epsg;
+    const [x0, y0, x1, y1] = windowArr;
+    const w = x1 - x0, h = y1 - y0;
+    if (w <= 0 || h <= 0) return [];
 
-    // Open B12 to get image geometry for windowing
-    const b12Tiff = await GeoTIFF.fromUrl(b12Url, { allowFullFile: false });
-    const b12Image = await b12Tiff.getImage();
-    const winInfo = bboxToWindow(bbox, b12Image, itemEpsg);
-    if (winInfo.w <= 0 || winInfo.h <= 0) return [];
-
-    // 1. Read B12 (needed for cloud check and detection)
-    const b12Raw = await readBand(b12Url, winInfo.window);
+    // 1. Read B12, B11
+    const b12Raw = await readWindow(b12Image, windowArr);
     if (!b12Raw) return [];
-    const b11Raw = await readBand(b11Url, winInfo.window);
+    const b11Raw = await readWindow(b11Image, windowArr);
     if (!b11Raw) return [];
 
-    // 2. Check cloud cover via SCL, excluding bright SWIR pixels.
-    //    SCL often misclassifies flare pixels as cloud/cirrus. With a small
-    //    window (zoomed in) those pixels dominate the cloud fraction and cause
-    //    the image to be skipped. Exclude pixels where B12 DN is high enough
-    //    to be a candidate flare — they should not count as cloud.
-    const B12_DN_BRIGHT = B12_MIN * 10000 + 1000; // DN equivalent of B12_MIN
-    if (sclUrl) {
+    // 2. Cloud check via SCL, excluding bright SWIR pixels
+    if (sclImage) {
         try {
-            const sclData = await readBand(sclUrl, winInfo.window);
+            const sclData = await readWindow(sclImage, windowArr);
             if (sclData) {
-                let cloudPixels = 0;
-                let countable = 0;
+                let cloudPixels = 0, countable = 0;
                 for (let i = 0; i < sclData.data.length; i++) {
-                    // Skip bright SWIR pixels — likely flare, not cloud
                     if (b12Raw.data[i] >= B12_DN_BRIGHT) continue;
                     countable++;
                     const v = sclData.data[i];
@@ -241,17 +194,14 @@ async function processImage(item, bbox, epsg) {
                 }
                 if (countable > 0 && cloudPixels / countable > MAX_CLOUD_LOCAL) return [];
             }
-        } catch (e) {
-            // If SCL fails, continue without cloud mask
-        }
+        } catch (e) { /* skip */ }
     }
 
     let b8aRaw = null;
-    if (b8aUrl) {
-        try { b8aRaw = await readBand(b8aUrl, winInfo.window); } catch (e) { /* skip */ }
+    if (b8aImage) {
+        try { b8aRaw = await readWindow(b8aImage, windowArr); } catch (e) { /* skip */ }
     }
 
-    const w = b12Raw.width, h = b12Raw.height;
     const n = w * h;
 
     // Convert to reflectance
@@ -314,11 +264,13 @@ async function processImage(item, bbox, epsg) {
 
     // UTM projection for coordinate conversion
     const projStr = utmProj(itemEpsg);
-    const [utmMinX, utmMinY, utmMaxX, utmMaxY] = winInfo.actualUtmBounds;
+    const utmMinX = imgMinX + x0 * resX;
+    const utmMinY = imgMaxY - y1 * resY;
+    const utmMaxX = imgMinX + x1 * resX;
+    const utmMaxY_w = imgMaxY - y0 * resY;
 
     const detections = [];
     for (let labelId = 1; labelId <= count; labelId++) {
-        // Collect cluster pixels
         let nPixels = 0;
         let peakB12 = -Infinity;
         let peakIdx = -1;
@@ -337,8 +289,7 @@ async function processImage(item, bbox, epsg) {
 
         const avgB12 = sumB12 / nPixels;
 
-        // Peakedness filter (bypass for saturated components — sensor
-        // saturation flattens the intensity profile of genuine flares)
+        // Peakedness filter (bypass for saturated components)
         if (nPixels > 1 && peakB12 < PEAKEDNESS_MIN * avgB12 && avgB12 < SATURATION) continue;
 
         // Single pixel confidence
@@ -362,7 +313,7 @@ async function processImage(item, bbox, epsg) {
         const colFrac = (peakCol + 0.5) / w;
         const rowFrac = (peakRow + 0.5) / h;
         const utmX = utmMinX + colFrac * (utmMaxX - utmMinX);
-        const utmY = utmMaxY - rowFrac * (utmMaxY - utmMinY);
+        const utmY = utmMaxY_w - rowFrac * (utmMaxY_w - utmMinY);
         const [flareLon, flareLat] = proj4(projStr, 'EPSG:4326', [utmX, utmY]);
 
         detections.push({
@@ -375,7 +326,10 @@ async function processImage(item, bbox, epsg) {
             epsg: itemEpsg,
             cog_b12: b12Url,
             sun_elevation: sunElevation,
-            utm_bounds: winInfo.actualUtmBounds
+            utm_bounds: [utmMinX, utmMinY, utmMaxX, utmMaxY_w],
+            block_id: blockId,
+            _peakImgRow: y0 + peakRow,
+            _peakImgCol: x0 + peakCol
         });
     }
 
@@ -383,29 +337,144 @@ async function processImage(item, bbox, epsg) {
 }
 
 // ---------------------------------------------------------------------------
+// Block-based image processing
+// ---------------------------------------------------------------------------
+
+async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, onEnumerated, onBlockDone) {
+    const assets = item.assets;
+    const b12Url = assets.swir22?.href;
+    const b11Url = assets.swir16?.href;
+    const b8aUrl = assets.nir08?.href;
+    const sclUrl = assets.scl?.href;
+    if (!b12Url || !b11Url) return [];
+
+    const imgDate = item.properties.datetime.slice(0, 10);
+    const sunElevation = item.properties['view:sun_elevation'] ?? null;
+    const itemEpsg = item.properties['proj:epsg'] || epsg;
+    const mgrs = (item.properties['grid:code'] || '').replace('MGRS-', '')
+              || item.properties['s2:mgrs_tile']
+              || item.id;
+
+    // Open B12 for image geometry
+    const b12Tiff = await GeoTIFF.fromUrl(b12Url, { allowFullFile: false });
+    const b12Image = await b12Tiff.getImage();
+
+    const imgBbox = b12Image.getBoundingBox();
+    const imgWidth = b12Image.getWidth();
+    const imgHeight = b12Image.getHeight();
+    const [imgMinX, imgMinY, imgMaxX, imgMaxY] = imgBbox;
+    const resX = (imgMaxX - imgMinX) / imgWidth;
+    const resY = (imgMaxY - imgMinY) / imgHeight;
+
+    // Convert viewport bbox to pixel range
+    const proj = utmProj(itemEpsg);
+    const sw = proj4('EPSG:4326', proj, [viewportBbox[0], viewportBbox[1]]);
+    const ne = proj4('EPSG:4326', proj, [viewportBbox[2], viewportBbox[3]]);
+
+    const px0 = Math.max(0, Math.floor((Math.max(sw[0], imgMinX) - imgMinX) / resX));
+    const py0 = Math.max(0, Math.floor((imgMaxY - Math.min(ne[1], imgMaxY)) / resY));
+    const px1 = Math.min(imgWidth, Math.ceil((Math.min(ne[0], imgMaxX) - imgMinX) / resX));
+    const py1 = Math.min(imgHeight, Math.ceil((imgMaxY - Math.max(sw[1], imgMinY)) / resY));
+
+    if (px1 <= px0 || py1 <= py0) return [];
+
+    // Compute block range overlapping viewport
+    const blockRow0 = Math.floor(py0 / BLOCK_SIZE);
+    const blockRow1 = Math.ceil(py1 / BLOCK_SIZE);
+    const blockCol0 = Math.floor(px0 / BLOCK_SIZE);
+    const blockCol1 = Math.ceil(px1 / BLOCK_SIZE);
+
+    const totalBlocksThisImage = (blockRow1 - blockRow0) * (blockCol1 - blockCol0);
+    onEnumerated(totalBlocksThisImage);
+
+    // Open other bands lazily (only if we have uncached blocks)
+    let b11Image = null, b8aImage = null, sclImage = null;
+    let bandsOpened = false;
+
+    async function ensureBandsOpen() {
+        if (bandsOpened) return;
+        bandsOpened = true;
+        const b11Tiff = await GeoTIFF.fromUrl(b11Url, { allowFullFile: false });
+        b11Image = await b11Tiff.getImage();
+        if (b8aUrl) {
+            try {
+                const b8aTiff = await GeoTIFF.fromUrl(b8aUrl, { allowFullFile: false });
+                b8aImage = await b8aTiff.getImage();
+            } catch (e) { /* skip */ }
+        }
+        if (sclUrl) {
+            try {
+                const sclTiff = await GeoTIFF.fromUrl(sclUrl, { allowFullFile: false });
+                sclImage = await sclTiff.getImage();
+            } catch (e) { /* skip */ }
+        }
+    }
+
+    const allDetections = [];
+
+    for (let br = blockRow0; br < blockRow1; br++) {
+        for (let bc = blockCol0; bc < blockCol1; bc++) {
+            const blockId = `${mgrs}_${br}_${bc}`;
+            const cacheKey = `${blockId}:${imgDate}`;
+
+            // Skip cached blocks — main thread will load from localStorage
+            if (cachedBlockDates.has(cacheKey)) {
+                self.postMessage({ type: 'cachedBlock', blockId, date: imgDate });
+                onBlockDone(imgDate, br, bc, true);
+                continue;
+            }
+
+            await ensureBandsOpen();
+
+            // Compute read window with overlap
+            const x0 = Math.max(0, bc * BLOCK_SIZE - BLOCK_OVERLAP);
+            const y0 = Math.max(0, br * BLOCK_SIZE - BLOCK_OVERLAP);
+            const x1 = Math.min(imgWidth, (bc + 1) * BLOCK_SIZE + BLOCK_OVERLAP);
+            const y1 = Math.min(imgHeight, (br + 1) * BLOCK_SIZE + BLOCK_OVERLAP);
+
+            try {
+                const dets = await processBlock({
+                    b12Image, b11Image, b8aImage, sclImage,
+                    windowArr: [x0, y0, x1, y1],
+                    imgDate, sunElevation, itemEpsg,
+                    imgMinX, imgMaxY, resX, resY,
+                    blockId, b12Url
+                });
+
+                // Overlap dedup: only keep detections whose peak pixel
+                // falls in this block's canonical area
+                const kept = [];
+                for (const det of dets) {
+                    const canonRow = Math.floor(det._peakImgRow / BLOCK_SIZE);
+                    const canonCol = Math.floor(det._peakImgCol / BLOCK_SIZE);
+                    if (canonRow === br && canonCol === bc) {
+                        delete det._peakImgRow;
+                        delete det._peakImgCol;
+                        kept.push(det);
+                    }
+                }
+
+                allDetections.push(...kept);
+                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: kept });
+            } catch (err) {
+                console.warn(`Block ${blockId} ${imgDate}: ${err.message}`);
+                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: [] });
+            }
+
+            onBlockDone(imgDate, br, bc, false);
+        }
+    }
+
+    return allDetections;
+}
+
+// ---------------------------------------------------------------------------
 // Main entry
 // ---------------------------------------------------------------------------
 
-/** Pad a bbox to a minimum extent in degrees for stable background statistics.
- *  The detection algorithm computes background median over the window — too
- *  small a window (zoomed in) shifts the median and changes results. */
-function ensureMinBbox(bbox, minDeg) {
-    const cx = (bbox[0] + bbox[2]) / 2;
-    const cy = (bbox[1] + bbox[3]) / 2;
-    const halfW = Math.max((bbox[2] - bbox[0]) / 2, minDeg / 2);
-    const halfH = Math.max((bbox[3] - bbox[1]) / 2, minDeg / 2);
-    return [cx - halfW, cy - halfH, cx + halfW, cy + halfH];
-}
-
-// Minimum processing extent (~2.5 km each way) so background stats are stable
-const MIN_PROCESS_EXTENT_DEG = 0.045;
-
 self.onmessage = async function(e) {
-    const { bbox, epsg, startDate, endDate } = e.data;
-
-    // Use viewport bbox for STAC search (find relevant images),
-    // but a padded bbox for per-image processing (stable background stats).
-    const processBbox = ensureMinBbox(bbox, MIN_PROCESS_EXTENT_DEG);
+    const { bbox, epsg, startDate, endDate, cachedBlockDates: cachedArr } = e.data;
+    const cachedBlockDates = new Set(cachedArr || []);
 
     try {
         progress('SEARCHING CATALOGUE', 0);
@@ -419,19 +488,21 @@ self.onmessage = async function(e) {
         progress(`Found ${items.length} images`, 5);
 
         let totalDetections = 0;
+
         for (let i = 0; i < items.length; i++) {
             const pct = 5 + (i / items.length) * 90;
             const dt = items[i].properties.datetime.slice(0, 10);
             progress(`Processing ${dt}`, pct);
 
             try {
-                const dets = await processImage(items[i], processBbox, epsg);
-                if (dets.length > 0) {
-                    totalDetections += dets.length;
-                    self.postMessage({ type: 'detections', detections: dets });
-                }
+                const dets = await processImageBlocks(
+                    items[i], bbox, epsg, cachedBlockDates,
+                    () => {},
+                    () => {}
+                );
+                totalDetections += dets.length;
             } catch (err) {
-                console.warn(`Failed to process image ${dt}:`, err);
+                console.warn(`Failed to process image:`, err);
             }
         }
 
