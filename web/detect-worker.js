@@ -408,7 +408,7 @@ self.onmessage = async function(e) {
     const processBbox = ensureMinBbox(bbox, MIN_PROCESS_EXTENT_DEG);
 
     try {
-        progress('Searching STAC catalog...', 0);
+        progress('SEARCHING CATALOGUE', 0);
         const items = await searchSTAC(bbox, 30, startDate, endDate);
 
         if (items.length === 0) {
