@@ -29,6 +29,79 @@ let currentFeature = null;
 let selectedDetection = null;
 let detectWorker = null;
 
+// ---------------------------------------------------------------------------
+// Quarter picker
+// ---------------------------------------------------------------------------
+
+function initQuarterPicker() {
+    const container = document.getElementById('quarter-picker');
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth(); // 0-indexed
+    const currentQuarter = Math.floor(currentMonth / 3) + 1;
+
+    const years = [currentYear - 3, currentYear - 2, currentYear - 1, currentYear];
+    container.innerHTML = '';
+
+    for (const year of years) {
+        const row = document.createElement('div');
+        row.className = 'quarter-row';
+
+        const label = document.createElement('span');
+        label.className = 'quarter-year';
+        label.textContent = year;
+        row.appendChild(label);
+
+        const maxQ = (year === currentYear) ? currentQuarter : 4;
+        for (let q = 1; q <= maxQ; q++) {
+            const btn = document.createElement('button');
+            btn.className = 'quarter-btn';
+            btn.textContent = `Q${q}`;
+            btn.dataset.year = year;
+            btn.dataset.quarter = q;
+            // Default: current quarter selected
+            if (year === currentYear && q === currentQuarter) btn.classList.add('active');
+            btn.addEventListener('click', () => toggleQuarter(btn));
+            row.appendChild(btn);
+        }
+
+        container.appendChild(row);
+    }
+}
+
+function toggleQuarter(btn) {
+    const wasActive = btn.classList.contains('active');
+    const activeCount = document.querySelectorAll('.quarter-btn.active').length;
+    // Prevent deselecting the last active quarter
+    if (wasActive && activeCount <= 1) return;
+    btn.classList.toggle('active');
+}
+
+function getSelectedDateRange() {
+    const activeBtns = document.querySelectorAll('.quarter-btn.active');
+    if (activeBtns.length === 0) return null;
+
+    const quarterStart = (year, q) => `${year}-${String((q - 1) * 3 + 1).padStart(2, '0')}-01`;
+    const quarterEnd = (year, q) => {
+        const endMonth = q * 3;
+        const d = new Date(year, endMonth, 0); // last day of end month
+        return `${year}-${String(endMonth).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    let minDate = null, maxDate = null;
+    for (const btn of activeBtns) {
+        const y = parseInt(btn.dataset.year);
+        const q = parseInt(btn.dataset.quarter);
+        const start = quarterStart(y, q);
+        const end = quarterEnd(y, q);
+        if (!minDate || start < minDate) minDate = start;
+        if (!maxDate || end > maxDate) maxDate = end;
+    }
+    return { startDate: minDate, endDate: maxDate };
+}
+
+initQuarterPicker();
+
 // Color scale for B12 intensity
 const b12ColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.9],
     0.9, '#e04090', 1.1, '#ff4530', 1.3, '#ffff00'];
@@ -160,13 +233,6 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     document.getElementById('info').classList.add('visible');
     document.getElementById('info-name').textContent = props.name || 'Unknown facility';
 
-    const debugBar = document.getElementById('debug-bar');
-    const [dbgLon, dbgLat] = feature.geometry.coordinates;
-    const dbgB12 = props.max_b12 != null ? Number(props.max_b12).toFixed(3) : '-';
-    const dbgCount = props.detection_count || '?';
-    debugBar.textContent = `${dbgLat.toFixed(6)}, ${dbgLon.toFixed(6)}  b12=${dbgB12}  n=${dbgCount}`;
-    debugBar.classList.add('visible');
-
     let detections = props.detections || [];
     if (typeof detections === 'string') {
         try { detections = JSON.parse(detections); } catch (e) { detections = []; }
@@ -207,6 +273,9 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
 
     if (firstItem && !skipAutoSelect) selectDetection(firstItem.det, firstItem.item);
 
+    // Release focus from map canvas so document keydown fires immediately
+    document.activeElement?.blur();
+
     if (detections.length === 0) {
         document.getElementById('intensity-chart').innerHTML = '';
         list.innerHTML = '<div style="padding: 16px; color: rgba(255,255,255,0.4); text-align: center;">No detections</div>';
@@ -228,7 +297,6 @@ function closeInfo() {
     if (map.getLayer('selection-highlight')) {
         map.setLayoutProperty('selection-highlight', 'visibility', 'none');
     }
-    document.getElementById('debug-bar').classList.remove('visible');
 }
 
 async function loadImageryForDetection(det) {
@@ -591,7 +659,8 @@ function startDetection() {
         setTimeout(resetDetectUI, 3000);
     };
 
-    detectWorker.postMessage({ bbox, epsg });
+    const dateRange = getSelectedDateRange();
+    detectWorker.postMessage({ bbox, epsg, startDate: dateRange?.startDate, endDate: dateRange?.endDate });
 }
 
 function resetDetectUI() {
@@ -663,27 +732,11 @@ map.on('load', () => {
 
     const MIN_INTERACTIVE_ZOOM = 10;
 
-    const debugBar = document.getElementById('debug-bar');
-    function setDebugBar(feature) {
-        if (!feature) { debugBar.classList.remove('visible'); return; }
-        const [lon, lat] = feature.geometry.coordinates;
-        const p = feature.properties;
-        const count = p.detection_count || '?';
-        const b12 = p.max_b12 != null ? Number(p.max_b12).toFixed(3) : '-';
-        debugBar.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}  b12=${b12}  n=${count}`;
-        debugBar.classList.add('visible');
-    }
-
     map.on('mouseenter', 'client-detection-circles', () => {
         if (map.getZoom() >= MIN_INTERACTIVE_ZOOM) map.getCanvas().style.cursor = 'pointer';
     });
-    map.on('mousemove', 'client-detection-circles', e => {
-        if (e.features?.length) setDebugBar(e.features[0]);
-    });
     map.on('mouseleave', 'client-detection-circles', () => {
         map.getCanvas().style.cursor = '';
-        if (!currentFeature) debugBar.classList.remove('visible');
-        else setDebugBar(currentFeature);
     });
 
     map.on('click', e => {
@@ -713,7 +766,7 @@ map.on('load', () => {
         }
 
         showInfo(closest);
-        map.flyTo({ center: closest.geometry.coordinates, zoom: Math.max(map.getZoom(), 12) });
+        map.flyTo({ center: closest.geometry.coordinates, zoom: Math.max(map.getZoom(), 15) });
     });
 
 });
@@ -730,3 +783,20 @@ document.getElementById('open-image-btn').addEventListener('click', () => {
 });
 document.querySelector('.close-btn').addEventListener('click', closeInfo);
 document.getElementById('detect-btn').addEventListener('click', startDetection);
+
+document.addEventListener('keydown', e => {
+    if (!document.getElementById('info').classList.contains('visible')) return;
+    const key = e.key;
+    let dir = 0;
+    if (key === 'ArrowDown' || key === 'j') dir = 1;
+    else if (key === 'ArrowUp' || key === 'k') dir = -1;
+    if (!dir) return;
+    e.preventDefault();
+    const items = Array.from(document.querySelectorAll('.event-item:not(.l1c-only)'));
+    if (items.length === 0) return;
+    const activeIdx = items.findIndex(el => el.classList.contains('active'));
+    const nextIdx = Math.max(0, Math.min(items.length - 1, activeIdx + dir));
+    if (nextIdx === activeIdx) return;
+    items[nextIdx].click();
+    items[nextIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
