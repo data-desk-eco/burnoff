@@ -30,6 +30,106 @@ let selectedDetection = null;
 let detectWorker = null;
 
 // ---------------------------------------------------------------------------
+// Block detection cache (localStorage)
+// ---------------------------------------------------------------------------
+
+const CACHE_PREFIX = 'b:';
+
+function getCachedBlockKeys() {
+    const keys = [];
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key.startsWith(CACHE_PREFIX)) {
+                keys.push(key.slice(CACHE_PREFIX.length));
+            }
+        }
+    } catch (e) { /* localStorage unavailable */ }
+    return keys;
+}
+
+function cacheBlockResult(blockId, date, detections) {
+    try {
+        localStorage.setItem(`${CACHE_PREFIX}${blockId}:${date}`, JSON.stringify(detections));
+    } catch (e) {
+        // Storage full — evict oldest entries and retry once
+        try {
+            const toRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k.startsWith(CACHE_PREFIX)) toRemove.push(k);
+            }
+            // Remove oldest 25%
+            toRemove.sort();
+            const removeCount = Math.max(1, Math.floor(toRemove.length / 4));
+            for (let i = 0; i < removeCount; i++) localStorage.removeItem(toRemove[i]);
+            localStorage.setItem(`${CACHE_PREFIX}${blockId}:${date}`, JSON.stringify(detections));
+        } catch (e2) { /* give up */ }
+    }
+}
+
+function loadCachedBlock(blockId, date) {
+    try {
+        const data = localStorage.getItem(`${CACHE_PREFIX}${blockId}:${date}`);
+        return data ? JSON.parse(data) : null;
+    } catch (e) { return null; }
+}
+
+// Viewport-keyed detection run tracking for quarter indicators
+const RUNS_KEY = 'burnoff:runs';
+
+function viewportKey() {
+    const c = map.getCenter();
+    // Round to 0.02° (~2km) — small enough that a real pan clears the state,
+    // large enough that tiny jitter doesn't.
+    return `${Math.round(c.lat * 50) / 50},${Math.round(c.lng * 50) / 50}`;
+}
+
+function markQuartersDetected(quarters) {
+    try {
+        const all = JSON.parse(localStorage.getItem(RUNS_KEY) || '{}');
+        const vk = viewportKey();
+        if (!all[vk]) all[vk] = {};
+        for (const q of quarters) {
+            all[vk][`${q.year}_${q.quarter}`] = true;
+        }
+        localStorage.setItem(RUNS_KEY, JSON.stringify(all));
+    } catch (e) { /* ignore */ }
+}
+
+function getDetectedQuarters() {
+    try {
+        const all = JSON.parse(localStorage.getItem(RUNS_KEY) || '{}');
+        return all[viewportKey()] || {};
+    } catch (e) { return {}; }
+}
+
+function updateQuarterIndicators() {
+    const detected = getDetectedQuarters();
+    document.querySelectorAll('.quarter-btn').forEach(btn => {
+        const qKey = `${btn.dataset.year}_${btn.dataset.quarter}`;
+        btn.classList.toggle('detected', !!detected[qKey]);
+    });
+}
+
+function loadAllCachedDetections() {
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key.startsWith(CACHE_PREFIX)) continue;
+            const data = localStorage.getItem(key);
+            if (!data) continue;
+            const dets = JSON.parse(data);
+            if (dets.length > 0) {
+                allRawDetections = allRawDetections.concat(dets);
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load cached detections:', e);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Quarter picker
 // ---------------------------------------------------------------------------
 
@@ -101,6 +201,7 @@ function getSelectedDateRange() {
 }
 
 initQuarterPicker();
+updateQuarterIndicators();
 
 // Color scale for B12 intensity
 const b12ColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.9],
@@ -605,11 +706,7 @@ function startDetection() {
 
     if (detectWorker) { detectWorker.terminate(); detectWorker = null; }
 
-    allRawDetections = [];
-
-    // Clear previous results and ensure layer exists
-    if (map.getLayer('client-detection-circles')) map.removeLayer('client-detection-circles');
-    if (map.getSource('client-detections')) map.removeSource('client-detections');
+    // Keep existing detections — new results accumulate
     ensureDetectionLayer();
 
     const btn = document.getElementById('detect-btn');
@@ -625,6 +722,9 @@ function startDetection() {
     const bbox = getViewportBbox();
     const epsg = guessEpsg(bbox);
 
+    // Load cached block keys to send to worker
+    const cachedBlockDates = getCachedBlockKeys();
+
     detectWorker = new Worker('detect-worker.js');
 
     detectWorker.onmessage = function(e) {
@@ -632,9 +732,20 @@ function startDetection() {
         if (msg.type === 'progress') {
             bar.style.width = msg.pct + '%';
             text.textContent = msg.stage;
-        } else if (msg.type === 'detections') {
-            allRawDetections = allRawDetections.concat(msg.detections);
-            updateDetectionSource();
+        } else if (msg.type === 'blockDetections') {
+            // Cache newly computed block results
+            cacheBlockResult(msg.blockId, msg.date, msg.detections);
+            if (msg.detections.length > 0) {
+                allRawDetections = allRawDetections.concat(msg.detections);
+                updateDetectionSource();
+            }
+        } else if (msg.type === 'cachedBlock') {
+            // Load detections from localStorage for this cached block
+            const cached = loadCachedBlock(msg.blockId, msg.date);
+            if (cached && cached.length > 0) {
+                allRawDetections = allRawDetections.concat(cached);
+                updateDetectionSource();
+            }
         } else if (msg.type === 'done') {
             finishDetection(msg.stats);
         } else if (msg.type === 'error') {
@@ -654,7 +765,12 @@ function startDetection() {
     };
 
     const dateRange = getSelectedDateRange();
-    detectWorker.postMessage({ bbox, epsg, startDate: dateRange?.startDate, endDate: dateRange?.endDate });
+    detectWorker.postMessage({
+        bbox, epsg,
+        startDate: dateRange?.startDate,
+        endDate: dateRange?.endDate,
+        cachedBlockDates
+    });
 }
 
 function resetDetectUI() {
@@ -668,6 +784,15 @@ function resetDetectUI() {
 
 function finishDetection(stats) {
     const features = crossDateCluster(allRawDetections);
+
+    // Mark selected quarters as detected for this viewport
+    const activeBtns = document.querySelectorAll('.quarter-btn.active');
+    const quarters = Array.from(activeBtns).map(btn => ({
+        year: parseInt(btn.dataset.year),
+        quarter: parseInt(btn.dataset.quarter)
+    }));
+    markQuartersDetected(quarters);
+    updateQuarterIndicators();
 
     if (features.length === 0) {
         document.getElementById('detect-bar').style.width = '100%';
@@ -695,8 +820,22 @@ function updateMapCentre() {
 
 map.on('move', updateMapCentre);
 
+let _quarterIndicatorTimeout;
+map.on('moveend', () => {
+    clearTimeout(_quarterIndicatorTimeout);
+    _quarterIndicatorTimeout = setTimeout(updateQuarterIndicators, 300);
+});
+
 map.on('load', () => {
     updateMapCentre();
+
+    // Restore cached detections from previous sessions
+    loadAllCachedDetections();
+    if (allRawDetections.length > 0) {
+        ensureDetectionLayer();
+        updateDetectionSource();
+    }
+
     map.addSource('selection-highlight', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] }
