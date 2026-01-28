@@ -336,8 +336,9 @@ async function processImage(item, bbox, epsg) {
 
         const avgB12 = sumB12 / nPixels;
 
-        // Peakedness filter
-        if (nPixels > 1 && peakB12 < PEAKEDNESS_MIN * avgB12) continue;
+        // Peakedness filter (bypass for saturated components — sensor
+        // saturation flattens the intensity profile of genuine flares)
+        if (nPixels > 1 && peakB12 < PEAKEDNESS_MIN * avgB12 && avgB12 < SATURATION) continue;
 
         // Single pixel confidence
         if (nPixels === 1 && peakB12 < 0.65) continue;
