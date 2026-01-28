@@ -372,6 +372,15 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         }
     });
 
+    // Snap list height to whole rows, max 7
+    const MAX_VISIBLE_ROWS = 7;
+    const items = list.querySelectorAll('.event-item');
+    if (items.length > 0) {
+        const rowH = items[0].offsetHeight;
+        const visibleRows = Math.min(items.length, MAX_VISIBLE_ROWS);
+        list.style.maxHeight = (rowH * visibleRows + 4) + 'px';
+    }
+
     if (firstItem && !skipAutoSelect) selectDetection(firstItem.det, firstItem.item);
 
     // Release focus from map canvas so document keydown fires immediately
@@ -916,6 +925,10 @@ document.getElementById('open-image-btn').addEventListener('click', () => {
 });
 document.querySelector('.close-btn').addEventListener('click', closeInfo);
 document.getElementById('detect-btn').addEventListener('click', startDetection);
+
+document.getElementById('collapse-toggle').addEventListener('click', () => {
+    document.getElementById('title-panel').classList.toggle('collapsed');
+});
 
 document.addEventListener('keydown', e => {
     if (!document.getElementById('info').classList.contains('visible')) return;

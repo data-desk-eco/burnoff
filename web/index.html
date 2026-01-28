@@ -11,8 +11,11 @@
 <body>
     <div id="map"></div>
 
-    <div class="panel title">
-        <h1>Burnoff</h1>
+    <div class="panel title" id="title-panel">
+        <div class="title-header">
+            <h1>Burnoff</h1>
+            <span class="collapse-toggle" id="collapse-toggle">&#x25B4;</span>
+        </div>
         <p>Sentinel-2 flare detection</p>
         <div class="detect-separator"></div>
         <div class="map-centre" id="map-centre"></div>
@@ -25,7 +28,7 @@
     </div>
 
     <div class="panel legend">
-        <h4 class="label-sm">B12 Intensity</h4>
+        <h4 class="label-sm">B12</h4>
         <div class="legend-item"><div class="legend-circle" style="background: #ffff00"></div>1.3+</div>
         <div class="legend-item"><div class="legend-circle" style="background: #f8765c"></div>1.1</div>
         <div class="legend-item"><div class="legend-circle" style="background: #b63679"></div>0.9</div>
