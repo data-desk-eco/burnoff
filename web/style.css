@@ -106,9 +106,13 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     cursor: pointer;
     transition: all 0.15s;
 }
-.detect-btn:hover {
+.detect-btn:hover:not(:disabled) {
     border-color: var(--text-muted);
     color: var(--text-primary);
+}
+.detect-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
 }
 .detect-progress {
     position: relative;
