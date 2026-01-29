@@ -110,6 +110,18 @@ function updateQuarterIndicators() {
         const qKey = `${btn.dataset.year}_${btn.dataset.quarter}`;
         btn.classList.toggle('detected', !!detected[qKey]);
     });
+    updateDetectButton();
+}
+
+function updateDetectButton() {
+    const detected = getDetectedQuarters();
+    const activeBtns = document.querySelectorAll('.quarter-btn.active');
+    const allDetected = activeBtns.length > 0 && Array.from(activeBtns).every(btn => {
+        const qKey = `${btn.dataset.year}_${btn.dataset.quarter}`;
+        return !!detected[qKey];
+    });
+    const btn = document.getElementById('detect-btn');
+    btn.disabled = allDetected;
 }
 
 function loadAllCachedDetections() {
@@ -175,6 +187,7 @@ function toggleQuarter(btn) {
     // Prevent deselecting the last active quarter
     if (wasActive && activeCount <= 1) return;
     btn.classList.toggle('active');
+    updateDetectButton();
 }
 
 function getSelectedDateRange() {
