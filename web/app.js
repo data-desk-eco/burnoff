@@ -372,8 +372,8 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         }
     });
 
-    // Snap list height to whole rows, max 7
-    const MAX_VISIBLE_ROWS = 7;
+    // Snap list height to whole rows (fewer on small screens)
+    const MAX_VISIBLE_ROWS = window.innerWidth <= 600 ? 4 : 7;
     const items = list.querySelectorAll('.event-item');
     if (items.length > 0) {
         const rowH = items[0].offsetHeight;
