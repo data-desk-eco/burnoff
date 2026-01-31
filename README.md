@@ -52,9 +52,10 @@ web/
   detect-worker.js    Detection algorithm (Web Worker)
   index.html          Entry point
   style.css           UI styles
-signal-server.js      WebSocket signaling relay
+signal/
+  server.js           WebSocket signaling relay
+  Dockerfile          Cloud Run container for production signaling
 test/                 Determinism + P2P tests
-Dockerfile            Cloud Run container for production signaling
 ```
 
 ## References
