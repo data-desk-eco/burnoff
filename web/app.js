@@ -24,21 +24,46 @@ const provider = new WebrtcProvider('burnoff-global', ydoc, {
 
 const P2P_DEBUG_MAX = 80;
 
+let _p2pScrollRAF = null;
+
 function p2pLog(text, cls) {
     const el = document.getElementById('p2p-debug');
     if (!el) return;
     const span = document.createElement('span');
-    if (cls) span.className = cls;
+    span.className = (cls ? cls + ' ' : '') + 'p2p-enter';
     const now = new Date();
     const ts = String(now.getHours()).padStart(2, '0') + ':' +
                String(now.getMinutes()).padStart(2, '0') + ':' +
                String(now.getSeconds()).padStart(2, '0');
     span.textContent = `[${ts}] ${text}`;
+    // Remove animation class after it finishes
+    span.addEventListener('animationend', () => span.classList.remove('p2p-enter'), { once: true });
     el.appendChild(span);
-    // trim old entries
+    // trim old entries (remove from left — oldest)
     while (el.children.length > P2P_DEBUG_MAX) el.removeChild(el.firstChild);
-    // auto-scroll to newest
-    el.scrollLeft = el.scrollWidth;
+    // smooth-scroll to newest entry
+    if (!_p2pScrollRAF) {
+        _p2pScrollRAF = requestAnimationFrame(() => {
+            _p2pScrollRAF = null;
+            smoothScrollDebugBar(el);
+        });
+    }
+}
+
+function smoothScrollDebugBar(el) {
+    const target = el.scrollWidth - el.clientWidth;
+    const current = el.scrollLeft;
+    const dist = target - current;
+    if (dist <= 1) { el.scrollLeft = target; return; }
+    const start = performance.now();
+    const duration = Math.min(400, Math.max(150, dist * 2));
+    function step(now) {
+        const t = Math.min(1, (now - start) / duration);
+        const ease = t * (2 - t); // ease-out quad
+        el.scrollLeft = current + dist * ease;
+        if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
 }
 
 p2pLog('p2p init — room: burnoff-global', 'p2p-info');
@@ -73,6 +98,7 @@ map.on('style.load', () => map.setProjection({ type: 'globe' }));
 let currentFeature = null;
 let selectedDetection = null;
 let detectWorker = null;
+let _isDetecting = false;
 
 // ---------------------------------------------------------------------------
 // Block detection cache (Yjs CRDT — synced across all peers)
@@ -82,18 +108,44 @@ function getCachedBlockKeys() {
     return Array.from(processedMap.keys());
 }
 
-function cacheBlockResult(blockId, date, detections) {
-    const key = `${blockId}:${date}`;
+// --- Batched block result writes ---
+const _pendingBlocks = [];
+let _flushTimer = null;
+const FLUSH_INTERVAL = 200;   // ms — flush every 200ms during detection
+const FLUSH_BATCH_SIZE = 20;  // or when this many blocks accumulate
+
+function flushPendingBlocks() {
+    if (_pendingBlocks.length === 0) return;
+    const batch = _pendingBlocks.splice(0);
+    let flareBlocks = 0, totalFlares = 0;
     ydoc.transact(() => {
-        processedMap.set(key, Date.now());
-        if (detections.length > 0) {
-            detectionMap.set(key, detections);
+        for (const { blockId, date, detections } of batch) {
+            const key = `${blockId}:${date}`;
+            processedMap.set(key, Date.now());
+            if (detections.length > 0) {
+                detectionMap.set(key, detections);
+                flareBlocks++;
+                totalFlares += detections.length;
+            }
         }
     });
-    if (detections.length > 0) {
-        p2pLog(`send: ${blockId} ${date} — ${detections.length} flare${detections.length !== 1 ? 's' : ''}`, 'p2p-up');
+    if (totalFlares > 0) {
+        p2pLog(`send: ${batch.length} blocks — ${totalFlares} flare${totalFlares !== 1 ? 's' : ''}`, 'p2p-up');
     } else {
-        p2pLog(`send: ${blockId} ${date} — clear`, 'p2p-info');
+        p2pLog(`send: ${batch.length} blocks — clear`, 'p2p-info');
+    }
+}
+
+function cacheBlockResult(blockId, date, detections) {
+    _pendingBlocks.push({ blockId, date, detections });
+    if (_pendingBlocks.length >= FLUSH_BATCH_SIZE) {
+        clearTimeout(_flushTimer);
+        flushPendingBlocks();
+    } else if (!_flushTimer) {
+        _flushTimer = setTimeout(() => {
+            _flushTimer = null;
+            flushPendingBlocks();
+        }, FLUSH_INTERVAL);
     }
 }
 
@@ -118,7 +170,10 @@ function scheduleDetectionUpdate() {
     _syncUpdateTimer = setTimeout(() => {
         rebuildDetections();
         ensureDetectionLayer();
-        updateDetectionSource();
+        // Skip expensive clustering during active detection — run once at end
+        if (!_isDetecting) {
+            updateDetectionSource();
+        }
     }, 50);
 }
 
@@ -839,6 +894,7 @@ function startDetection() {
     }
 
     if (detectWorker) { detectWorker.terminate(); detectWorker = null; }
+    _isDetecting = true;
 
     // Keep existing detections — new results accumulate
     ensureDetectionLayer();
@@ -874,6 +930,7 @@ function startDetection() {
         } else if (msg.type === 'done') {
             finishDetection(msg.stats);
         } else if (msg.type === 'error') {
+            _isDetecting = false;
             bar.style.width = '100%';
             bar.style.background = 'rgba(255,80,80,0.4)';
             text.textContent = 'Error: ' + msg.message;
@@ -882,6 +939,7 @@ function startDetection() {
     };
 
     detectWorker.onerror = function(err) {
+        _isDetecting = false;
         console.error('Worker error:', err);
         bar.style.width = '100%';
         bar.style.background = 'rgba(255,80,80,0.4)';
@@ -908,7 +966,17 @@ function resetDetectUI() {
 }
 
 function finishDetection(stats) {
+    // Flush any remaining batched block results before final clustering
+    clearTimeout(_flushTimer);
+    _flushTimer = null;
+    flushPendingBlocks();
+    _isDetecting = false;
+
+    // Rebuild from CRDT after flush, then cluster once
+    rebuildDetections();
     const features = crossDateCluster(allRawDetections);
+    const src = map.getSource('client-detections');
+    if (src) src.setData({ type: 'FeatureCollection', features });
 
     // Mark selected quarters as detected for this viewport
     const activeBtns = document.querySelectorAll('.quarter-btn.active');
