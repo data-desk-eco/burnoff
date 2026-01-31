@@ -11,7 +11,7 @@ make serve        # Dev server on :8000
 ## Key Files
 
 - `web/detect-worker.js` - Detection algorithm (Web Worker)
-- `web/app.js` - Map viewer + clustering
+- `web/app.js` - Map viewer, clustering, P2P sync
 - `web/style.css` - UI styles
 - `web/index.html` - Entry point
 
@@ -22,7 +22,7 @@ Runs entirely client-side in a Web Worker with windowed COG reads (geotiff.js).
 
 Processing uses fixed 256x256 pixel blocks within each Sentinel-2 tile for
 deterministic results regardless of viewport/zoom level. Each block is identified
-by `{mgrs}_{row}_{col}` and cached in localStorage keyed by `block_id:date`.
+by `{mgrs}_{row}_{col}` and cached by `block_id:date`.
 
 1. STAC search for L2A images in viewport, <30% cloud
 2. Per-image: enumerate 256px blocks overlapping viewport, skip cached blocks
@@ -36,5 +36,15 @@ by `{mgrs}_{row}_{col}` and cached in localStorage keyed by `block_id:date`.
 10. Overlap dedup: canonical block assignment via `floor(pixel / 256)`
 11. Cross-date clustering: anchor-based merge within 50m
 
-Detections persist across sessions via localStorage block cache. Multiple
-detection runs accumulate into a global view.
+## P2P Sync
+
+Detection results are stored in a Yjs CRDT document, persisted locally via
+IndexedDB and synced across peers via WebRTC (y-webrtc, signaling.yjs.dev).
+When a peer starts detection, other idle peers automatically help by processing
+a deterministic partition of the blocks.
+
+## Cross-Date Clustering Thresholds
+
+- Merge distance: 50m
+- Minimum distinct dates per cluster: 4
+- Minimum average B12 per cluster: 0.70

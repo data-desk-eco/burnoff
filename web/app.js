@@ -3,33 +3,6 @@ import { WebrtcProvider } from 'https://cdn.jsdelivr.net/npm/y-webrtc@10.3.0/+es
 import { IndexeddbPersistence } from 'https://cdn.jsdelivr.net/npm/y-indexeddb@9.0.12/+esm';
 
 // ---------------------------------------------------------------------------
-// Block dead signaling servers the y-webrtc ESM bundle tries to contact
-// ---------------------------------------------------------------------------
-
-const _blockedSignalingHosts = [
-    'y-webrtc-signaling-eu.herokuapp.com',
-    'y-webrtc-signaling-us.herokuapp.com',
-];
-
-const _NativeWebSocket = window.WebSocket;
-window.WebSocket = function(url, protocols) {
-    try {
-        const host = new URL(url).host;
-        if (_blockedSignalingHosts.some(h => host === h)) {
-            // Return a dummy that silently does nothing
-            const noop = () => {};
-            return { readyState: 3, close: noop, send: noop,
-                     addEventListener: noop, removeEventListener: noop,
-                     set onopen(_){}, set onclose(_){}, set onmessage(_){}, set onerror(_){} };
-        }
-    } catch (_) {}
-    if (protocols !== undefined) return new _NativeWebSocket(url, protocols);
-    return new _NativeWebSocket(url);
-};
-Object.assign(window.WebSocket, _NativeWebSocket);
-window.WebSocket.prototype = _NativeWebSocket.prototype;
-
-// ---------------------------------------------------------------------------
 // P2P sync (Yjs CRDT)
 // ---------------------------------------------------------------------------
 
@@ -129,7 +102,7 @@ let currentFeature = null;
 let selectedDetection = null;
 let detectWorker = null;
 let _isDetecting = false;
-let _lastClusterCount = 0;
+let _preSessionKeys = null;  // snapshot of processedMap keys before detection
 
 // ---------------------------------------------------------------------------
 // Block detection cache (Yjs CRDT — synced across all peers)
@@ -196,33 +169,21 @@ function rebuildDetections() {
 
 // Debounced detection update — coalesces rapid changes from sync
 let _syncUpdateTimer;
-let _detectingRenderTimer = null;
-const DETECTING_RENDER_INTERVAL = 500; // ms — throttle own-block renders during active detection
 
-function scheduleDetectionUpdate(forceImmediate) {
+function scheduleDetectionUpdate() {
     clearTimeout(_syncUpdateTimer);
     _syncUpdateTimer = setTimeout(() => {
         rebuildDetections();
         ensureDetectionLayer();
-        if (!_isDetecting || forceImmediate) {
-            updateDetectionSource();
-        } else if (!_detectingRenderTimer) {
-            // Throttle renders for own blocks during active detection
-            _detectingRenderTimer = setTimeout(() => {
-                _detectingRenderTimer = null;
-                updateDetectionSource();
-            }, DETECTING_RENDER_INTERVAL);
-        }
+        updateDetectionSource();
     }, 50);
 }
 
 // Subscribe to CRDT changes (local writes, IndexedDB restore, remote peers)
 detectionMap.observe((event) => {
-    // Render peer detections immediately even during our own detection
-    const fromPeer = !event.transaction.local;
-    scheduleDetectionUpdate(fromPeer);
+    scheduleDetectionUpdate();
     // Log remote changes (transaction.local === false means from a peer)
-    if (!fromPeer) return;
+    if (event.transaction.local) return;
     let added = 0, updated = 0, flares = 0;
     event.changes.keys.forEach((change, key) => {
         if (change.action === 'add') { added++; }
@@ -1063,26 +1024,10 @@ function ensureDetectionLayer() {
     }
 }
 
-function updateProgressFlareCount() {
-    const text = document.getElementById('detect-text');
-    if (!text) return;
-    // Strip any existing flare suffix, then re-append current count
-    const base = text.textContent.replace(/ · \d+ flares?$/, '');
-    if (_lastClusterCount > 0) {
-        text.textContent = `${base} · ${_lastClusterCount} flare${_lastClusterCount !== 1 ? 's' : ''}`;
-    } else {
-        text.textContent = base;
-    }
-}
-
 function updateDetectionSource() {
     const features = crossDateCluster(allRawDetections);
     const src = map.getSource('client-detections');
     if (src) src.setData({ type: 'FeatureCollection', features });
-    _lastClusterCount = features.length;
-    if (_isDetecting) {
-        updateProgressFlareCount();
-    }
 }
 
 // Track the current detection job and peer partition so we can restart on peer changes
@@ -1110,7 +1055,6 @@ function launchDetectWorker(job, bar, text) {
         if (msg.type === 'progress') {
             bar.style.width = msg.pct + '%';
             text.textContent = msg.stage;
-            updateProgressFlareCount();
         } else if (msg.type === 'blockDetections') {
             cacheBlockResult(msg.blockId, msg.date, msg.detections);
         } else if (msg.type === 'cachedBlock') {
@@ -1120,9 +1064,8 @@ function launchDetectWorker(job, bar, text) {
             finishDetection(msg.stats);
         } else if (msg.type === 'error') {
             cleanupDetection();
-            clearTimeout(_detectingRenderTimer);
-            _detectingRenderTimer = null;
             _isDetecting = false;
+            _preSessionKeys = null;
             bar.style.width = '100%';
             bar.style.background = 'rgba(255,80,80,0.4)';
             text.textContent = 'Error: ' + msg.message;
@@ -1132,9 +1075,8 @@ function launchDetectWorker(job, bar, text) {
 
     detectWorker.onerror = function(err) {
         cleanupDetection();
-        clearTimeout(_detectingRenderTimer);
-        _detectingRenderTimer = null;
         _isDetecting = false;
+        _preSessionKeys = null;
         console.error('Worker error:', err);
         bar.style.width = '100%';
         bar.style.background = 'rgba(255,80,80,0.4)';
@@ -1171,6 +1113,7 @@ async function startDetection() {
 
     if (detectWorker) { detectWorker.terminate(); detectWorker = null; }
     _isDetecting = true;
+    _preSessionKeys = new Set(processedMap.keys());
 
     // Keep existing detections — new results accumulate
     ensureDetectionLayer();
@@ -1237,16 +1180,22 @@ function finishDetection(stats) {
     // Flush any remaining batched block results before final clustering
     clearTimeout(_flushTimer);
     _flushTimer = null;
-    clearTimeout(_detectingRenderTimer);
-    _detectingRenderTimer = null;
     flushPendingBlocks();
-    _isDetecting = false;
 
     // Rebuild from CRDT after flush, then cluster once
     rebuildDetections();
     const features = crossDateCluster(allRawDetections);
     const src = map.getSource('client-detections');
     if (src) src.setData({ type: 'FeatureCollection', features });
+
+    // Count only clusters from this session's new detections
+    const sessionDetections = _preSessionKeys
+        ? allRawDetections.filter(d => !_preSessionKeys.has(`${d.block_id}:${d.date}`))
+        : allRawDetections;
+    const sessionClusters = crossDateCluster(sessionDetections);
+
+    _isDetecting = false;
+    _preSessionKeys = null;
 
     // Mark selected quarters as detected for this viewport
     const activeBtns = document.querySelectorAll('.quarter-btn.active');
@@ -1257,20 +1206,17 @@ function finishDetection(stats) {
     markQuartersDetected(quarters);
     updateQuarterIndicators();
 
-    if (features.length === 0) {
-        document.getElementById('detect-bar').style.width = '100%';
-        document.getElementById('detect-bar').style.background = 'rgba(255,255,255,0.1)';
-        document.getElementById('detect-text').textContent = stats
-            ? `No flares found (${stats.images} images)`
-            : 'No flares found';
-        setTimeout(resetDetectUI, 3000);
-        return;
-    }
-
     document.getElementById('detect-bar').style.width = '100%';
     document.getElementById('detect-bar').style.background = 'rgba(255,255,255,0.1)';
-    document.getElementById('detect-text').textContent =
-        `${features.length} flare${features.length !== 1 ? 's' : ''} · ${stats?.images || '?'} images`;
+
+    if (sessionClusters.length === 0) {
+        document.getElementById('detect-text').textContent = stats
+            ? `No flares found · ${stats.images} images`
+            : 'No flares found';
+    } else {
+        document.getElementById('detect-text').textContent =
+            `${sessionClusters.length} flare${sessionClusters.length !== 1 ? 's' : ''} · ${stats?.images || '?'} images`;
+    }
     setTimeout(resetDetectUI, 3000);
 }
 
