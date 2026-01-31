@@ -273,42 +273,106 @@ setInterval(updatePeerStatus, 2000);
 // Awareness helpers for distributed detection
 // ---------------------------------------------------------------------------
 
-function setDetectingState(bbox) {
+function setDetectingState(job) {
     const prev = provider.awareness.getLocalState() || {};
-    provider.awareness.setLocalState({ ...prev, detecting: true, bbox, t: Date.now() });
+    provider.awareness.setLocalState({ ...prev, detecting: true, job, t: Date.now() });
 }
 
 function clearDetectingState() {
     const prev = provider.awareness.getLocalState() || {};
     delete prev.detecting;
-    delete prev.bbox;
+    delete prev.job;
     provider.awareness.setLocalState({ ...prev, t: Date.now() });
 }
 
 /**
- * Get a deterministic partition for this peer among all peers currently
- * detecting an overlapping viewport.  Returns { peerIndex, peerCount }.
+ * Get a deterministic partition for this peer among all connected peers.
+ * Every peer gets an index into a sorted list of all awareness client IDs.
  */
-function getDetectionPartition(myBbox) {
+function getPeerPartition() {
+    const states = provider.awareness.getStates();
+    const myId = provider.awareness.clientID;
+    const ids = [];
+    states.forEach((_state, id) => ids.push(id));
+    ids.sort((a, b) => a - b);
+    const peerIndex = ids.indexOf(myId);
+    return { peerIndex: Math.max(0, peerIndex), peerCount: ids.length };
+}
+
+// --- Helper worker for assisting a peer's detection ---
+let _helpWorker = null;
+let _helpingJobId = null;   // tracks which job we're helping with
+
+function startHelpingDetection(job, peerIndex, peerCount) {
+    if (_helpWorker) { _helpWorker.terminate(); _helpWorker = null; }
+    _helpingJobId = job.id;
+
+    const cachedBlockDates = getCachedBlockKeys();
+    _helpWorker = new Worker('detect-worker.js');
+
+    _helpWorker.onmessage = function(e) {
+        const msg = e.data;
+        if (msg.type === 'blockDetections') {
+            cacheBlockResult(msg.blockId, msg.date, msg.detections);
+        } else if (msg.type === 'done') {
+            const s = msg.stats;
+            p2pLog(`help done: ${s.images} img, ${s.rawDetections} flares`, 'p2p-up');
+            _helpWorker = null;
+            _helpingJobId = null;
+        } else if (msg.type === 'error') {
+            p2pLog(`help error: ${msg.message}`, 'p2p-info');
+            _helpWorker = null;
+            _helpingJobId = null;
+        }
+    };
+
+    _helpWorker.onerror = function() {
+        _helpWorker = null;
+        _helpingJobId = null;
+    };
+
+    p2pLog(`helping: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
+
+    _helpWorker.postMessage({
+        bbox: job.bbox,
+        epsg: job.epsg,
+        startDate: job.startDate,
+        endDate: job.endDate,
+        cachedBlockDates,
+        peerIndex,
+        peerCount
+    });
+}
+
+// Watch for peers that start detecting — automatically help them
+provider.awareness.on('change', () => {
+    // Don't help if we're running our own detection
+    if (_isDetecting) return;
+
     const states = provider.awareness.getStates();
     const myId = provider.awareness.clientID;
 
-    // Collect peers (including self) that are detecting with overlapping bbox
-    const detectingIds = [];
+    // Find any peer that is detecting
+    let activeJob = null;
     states.forEach((state, id) => {
-        if (!state.detecting || !state.bbox) return;
-        // Check bbox overlap
-        const b = state.bbox;
-        const overlaps = !(b[2] < myBbox[0] || b[0] > myBbox[2] ||
-                           b[3] < myBbox[1] || b[1] > myBbox[3]);
-        if (overlaps) detectingIds.push(id);
+        if (id === myId) return;
+        if (state.detecting && state.job) activeJob = state.job;
     });
 
-    // Sort for deterministic ordering across all peers
-    detectingIds.sort((a, b) => a - b);
-    const peerIndex = detectingIds.indexOf(myId);
-    return { peerIndex: Math.max(0, peerIndex), peerCount: detectingIds.length };
-}
+    if (activeJob && _helpingJobId !== activeJob.id) {
+        // New job to help with — compute partition across ALL peers
+        const { peerIndex, peerCount } = getPeerPartition();
+        if (peerCount > 1) {
+            startHelpingDetection(activeJob, peerIndex, peerCount);
+        }
+    } else if (!activeJob && _helpWorker) {
+        // Requesting peer finished or disconnected — stop helping
+        _helpWorker.terminate();
+        _helpWorker = null;
+        _helpingJobId = null;
+        p2pLog('help stopped — requester done', 'p2p-info');
+    }
+});
 
 // Viewport-keyed detection run tracking for quarter indicators
 const RUNS_KEY = 'burnoff:runs';
@@ -964,13 +1028,22 @@ async function startDetection() {
 
     const bbox = getViewportBbox();
     const epsg = guessEpsg(bbox);
+    const dateRange = getSelectedDateRange();
 
-    // Announce detection intent via awareness so peers can partition work
-    setDetectingState(bbox);
+    // Build a job descriptor shared with all peers so they can help
+    const job = {
+        id: `${provider.awareness.clientID}-${Date.now()}`,
+        bbox, epsg,
+        startDate: dateRange?.startDate,
+        endDate: dateRange?.endDate
+    };
 
-    // Brief delay to let awareness propagate, then compute partition
-    await new Promise(r => setTimeout(r, 150));
-    const { peerIndex, peerCount } = getDetectionPartition(bbox);
+    // Broadcast job via awareness — all idle peers auto-join
+    setDetectingState(job);
+
+    // Brief delay to let awareness propagate so helpers can join
+    await new Promise(r => setTimeout(r, 200));
+    const { peerIndex, peerCount } = getPeerPartition();
     if (peerCount > 1) {
         p2pLog(`distributed: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
     }
@@ -1013,11 +1086,10 @@ async function startDetection() {
         setTimeout(resetDetectUI, 3000);
     };
 
-    const dateRange = getSelectedDateRange();
     detectWorker.postMessage({
         bbox, epsg,
-        startDate: dateRange?.startDate,
-        endDate: dateRange?.endDate,
+        startDate: job.startDate,
+        endDate: job.endDate,
         cachedBlockDates,
         peerIndex,
         peerCount
