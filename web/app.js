@@ -63,6 +63,103 @@ function getActiveStates() {
 }
 
 // ---------------------------------------------------------------------------
+// Signaling-relayed document sync
+// ---------------------------------------------------------------------------
+// y-webrtc syncs the Yjs doc over WebRTC data channels, but those channels
+// can be slow to establish or fail entirely (NAT, ICE). As a fallback we run
+// the standard Yjs 2-step sync protocol over the signaling WebSocket so that
+// peers always converge, even if WebRTC never connects.
+
+const SYNC_TOPIC = 'burnoff-global-sync';
+let _syncWs = null;
+let _syncReconnectDelay = 1000;
+let _lastSyncStep1 = 0;
+const SYNC_STEP1_DEBOUNCE = 2000; // prevent echo loops between peers
+
+function connectSyncWs() {
+    if (_syncWs) return;
+    const ws = new WebSocket(_sigUrl);
+    _syncWs = ws;
+
+    ws.onopen = () => {
+        _syncReconnectDelay = 1000;
+        ws.send(JSON.stringify({ type: 'subscribe', topics: [SYNC_TOPIC] }));
+        // Broadcast our state vector so existing peers send us what we're missing
+        broadcastSyncStep1();
+    };
+
+    ws.onmessage = (event) => {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch { return; }
+        if (msg.type !== 'publish' || msg.topic !== SYNC_TOPIC || !msg.sync) return;
+
+        const data = base64ToUint8(msg.sync);
+        if (msg.step === 1) {
+            // Peer sent their state vector — reply with the updates they need
+            const diff = Y.encodeStateAsUpdate(ydoc, data);
+            if (diff.byteLength > 2) { // skip empty updates
+                sendSyncMsg({ step: 2, sync: uint8ToBase64(diff) });
+            }
+            // Echo our own state vector so the sender can also compute what
+            // we need. Debounce to break the echo loop: A→step1, B→step1,
+            // A→step1… — the second round is suppressed by the 2s window.
+            const now = Date.now();
+            if (now - _lastSyncStep1 > SYNC_STEP1_DEBOUNCE) {
+                broadcastSyncStep1();
+            }
+        } else if (msg.step === 2) {
+            // Peer sent us the updates we were missing — apply them
+            Y.applyUpdate(ydoc, data);
+        }
+    };
+
+    ws.onclose = () => {
+        _syncWs = null;
+        setTimeout(connectSyncWs, _syncReconnectDelay);
+        _syncReconnectDelay = Math.min(_syncReconnectDelay * 2, 30_000);
+    };
+    ws.onerror = () => ws.close();
+}
+
+function sendSyncMsg(payload) {
+    if (_syncWs?.readyState === WebSocket.OPEN) {
+        _syncWs.send(JSON.stringify({ type: 'publish', topic: SYNC_TOPIC, ...payload }));
+    }
+}
+
+function broadcastSyncStep1() {
+    _lastSyncStep1 = Date.now();
+    sendSyncMsg({ step: 1, sync: uint8ToBase64(Y.encodeStateVector(ydoc)) });
+}
+
+function uint8ToBase64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+}
+
+function base64ToUint8(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
+
+// Start sync WebSocket after IndexedDB has loaded (so we have local state to offer)
+persistence.once('synced', () => connectSyncWs());
+
+// When new WebRTC peers appear, also trigger a sync exchange in case the
+// data channel is slow or one-directional
+provider.on('peers', ({ added }) => {
+    if (added.length > 0) broadcastSyncStep1();
+});
+
+// Also clean up on page unload
+window.addEventListener('beforeunload', () => {
+    if (_syncWs) { _syncWs.close(); _syncWs = null; }
+});
+
+// ---------------------------------------------------------------------------
 // P2P debug bar
 // ---------------------------------------------------------------------------
 
