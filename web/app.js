@@ -14,13 +14,8 @@ const processedMap = ydoc.getMap('processed');     // block_id:date → timestam
 const persistence = new IndexeddbPersistence('burnoff', ydoc);
 
 // P2P mesh — all Burnoff users share one room
-// Multiple signaling servers for faster, more reliable peer discovery
 const provider = new WebrtcProvider('burnoff-global', ydoc, {
-    signaling: [
-        'wss://signaling.yjs.dev',
-        'wss://y-webrtc-signaling-eu.herokuapp.com',
-        'wss://y-webrtc-signaling-us.herokuapp.com'
-    ]
+    signaling: ['wss://signaling.yjs.dev']
 });
 
 // Immediately set awareness state so signaling announces us to peers right away
