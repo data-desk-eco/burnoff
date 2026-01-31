@@ -3,6 +3,33 @@ import { WebrtcProvider } from 'https://cdn.jsdelivr.net/npm/y-webrtc@10.3.0/+es
 import { IndexeddbPersistence } from 'https://cdn.jsdelivr.net/npm/y-indexeddb@9.0.12/+esm';
 
 // ---------------------------------------------------------------------------
+// Block dead signaling servers the y-webrtc ESM bundle tries to contact
+// ---------------------------------------------------------------------------
+
+const _blockedSignalingHosts = [
+    'y-webrtc-signaling-eu.herokuapp.com',
+    'y-webrtc-signaling-us.herokuapp.com',
+];
+
+const _NativeWebSocket = window.WebSocket;
+window.WebSocket = function(url, protocols) {
+    try {
+        const host = new URL(url).host;
+        if (_blockedSignalingHosts.some(h => host === h)) {
+            // Return a dummy that silently does nothing
+            const noop = () => {};
+            return { readyState: 3, close: noop, send: noop,
+                     addEventListener: noop, removeEventListener: noop,
+                     set onopen(_){}, set onclose(_){}, set onmessage(_){}, set onerror(_){} };
+        }
+    } catch (_) {}
+    if (protocols !== undefined) return new _NativeWebSocket(url, protocols);
+    return new _NativeWebSocket(url);
+};
+Object.assign(window.WebSocket, _NativeWebSocket);
+window.WebSocket.prototype = _NativeWebSocket.prototype;
+
+// ---------------------------------------------------------------------------
 // P2P sync (Yjs CRDT)
 // ---------------------------------------------------------------------------
 
