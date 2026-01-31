@@ -195,14 +195,22 @@ function rebuildDetections() {
 
 // Debounced detection update — coalesces rapid changes from sync
 let _syncUpdateTimer;
+let _detectingRenderTimer = null;
+const DETECTING_RENDER_INTERVAL = 2000; // ms — throttle renders during active detection
+
 function scheduleDetectionUpdate() {
     clearTimeout(_syncUpdateTimer);
     _syncUpdateTimer = setTimeout(() => {
         rebuildDetections();
         ensureDetectionLayer();
-        // Skip expensive clustering during active detection — run once at end
         if (!_isDetecting) {
             updateDetectionSource();
+        } else if (!_detectingRenderTimer) {
+            // Throttle renders during active detection so results appear live
+            _detectingRenderTimer = setTimeout(() => {
+                _detectingRenderTimer = null;
+                updateDetectionSource();
+            }, DETECTING_RENDER_INTERVAL);
         }
     }, 50);
 }
@@ -1098,6 +1106,8 @@ async function startDetection() {
             finishDetection(msg.stats);
         } else if (msg.type === 'error') {
             clearDetectingState();
+            clearTimeout(_detectingRenderTimer);
+            _detectingRenderTimer = null;
             _isDetecting = false;
             bar.style.width = '100%';
             bar.style.background = 'rgba(255,80,80,0.4)';
@@ -1108,6 +1118,8 @@ async function startDetection() {
 
     detectWorker.onerror = function(err) {
         clearDetectingState();
+        clearTimeout(_detectingRenderTimer);
+        _detectingRenderTimer = null;
         _isDetecting = false;
         console.error('Worker error:', err);
         bar.style.width = '100%';
@@ -1139,6 +1151,8 @@ function finishDetection(stats) {
     // Flush any remaining batched block results before final clustering
     clearTimeout(_flushTimer);
     _flushTimer = null;
+    clearTimeout(_detectingRenderTimer);
+    _detectingRenderTimer = null;
     flushPendingBlocks();
     _isDetecting = false;
 
