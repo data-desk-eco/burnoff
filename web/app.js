@@ -270,7 +270,13 @@ persistence.once('synced', () => {
 let _lastPeerCount = 0;
 function updatePeerStatus() {
     const states = provider.awareness.getStates();
-    const peers = states.size - 1; // exclude self
+    let peers = states.size - 1; // exclude self
+    // Fallback: iOS Chrome can fail to propagate awareness states while the
+    // WebRTC data channel works fine — use actual connection count instead.
+    if (peers <= 0 && provider.room) {
+        const conns = provider.room.webrtcConns;
+        if (conns && conns.size > 0) peers = conns.size;
+    }
     const el = document.getElementById('peer-status');
     if (!el) return;
     if (peers > 0) {
