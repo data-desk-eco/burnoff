@@ -6,6 +6,9 @@ import { IndexeddbPersistence } from 'https://esm.sh/y-indexeddb@9.0.12?deps=yjs
 // P2P sync (Yjs CRDT)
 // ---------------------------------------------------------------------------
 
+const MIN_DETECT_ZOOM = 11;
+let allRawDetections = [];
+
 const ydoc = new Y.Doc();
 const detectionMap = ydoc.getMap('detections');   // block_id:date → Detection[]
 const processedMap = ydoc.getMap('processed');     // block_id:date → timestamp
@@ -1121,9 +1124,6 @@ function crossDateCluster(allDetections) {
 // ---------------------------------------------------------------------------
 // Client-side detection
 // ---------------------------------------------------------------------------
-
-const MIN_DETECT_ZOOM = 11;
-let allRawDetections = [];
 
 function getViewportBbox() {
     const bounds = map.getBounds();
