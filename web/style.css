@@ -469,9 +469,9 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
 .p2p-debug .p2p-tag {
     color: var(--text-faint);
 }
-.p2p-debug .p2p-up { color: #6ecf6e; }
-.p2p-debug .p2p-down { color: #6eb4cf; }
-.p2p-debug .p2p-peer { color: var(--accent); }
+.p2p-debug .p2p-up { color: var(--text-hint); }
+.p2p-debug .p2p-down { color: var(--text-hint); }
+.p2p-debug .p2p-peer { color: var(--text-hint); }
 .p2p-debug .p2p-info { color: var(--text-hint); }
 
 @media (max-width: 768px) {
