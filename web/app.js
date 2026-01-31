@@ -14,7 +14,7 @@ const detectionMap = new LWWMap();
 const processedMap = new LWWMap();
 
 // Local persistence
-const store = new Store('burnoff-crdt');
+const store = new Store('burnoff');
 
 // Signaling server URL
 const _sigMeta = document.querySelector('meta[name="signaling-url"]');
@@ -120,10 +120,11 @@ function flushPendingBlocks() {
     const batch = _pendingBlocks.splice(0);
     const ts = Date.now();
     const peerId = mesh.localPeerId;
-    for (const { blockId, date, detections } of batch) {
+    for (const { blockId, date, detections, lat, lng } of batch) {
         const key = `${blockId}:${date}`;
-        processedMap.set(key, ts, ts, peerId);
-        store.put('proc', key, ts, ts, peerId);
+        const loc = [lat || 0, lng || 0];
+        processedMap.set(key, loc, ts, peerId);
+        store.put('proc', key, loc, ts, peerId);
         syncManager.onLocalWrite('proc', key);
         if (detections.length > 0) {
             detectionMap.set(key, detections, ts, peerId);
@@ -133,8 +134,8 @@ function flushPendingBlocks() {
     }
 }
 
-function cacheBlockResult(blockId, date, detections) {
-    _pendingBlocks.push({ blockId, date, detections });
+function cacheBlockResult(blockId, date, detections, lat, lng) {
+    _pendingBlocks.push({ blockId, date, detections, lat, lng });
     if (_pendingBlocks.length >= FLUSH_BATCH_SIZE) {
         flushNow();
     } else if (!_flushTimer) {
@@ -274,7 +275,7 @@ function startHelpingDetection(job, peerIndex, peerCount) {
     _helpWorker.onmessage = function(e) {
         const msg = e.data;
         if (msg.type === 'blockDetections') {
-            cacheBlockResult(msg.blockId, msg.date, msg.detections);
+            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng);
         } else if (msg.type === 'done') {
             stopHelping();
         } else if (msg.type === 'error') {
@@ -327,48 +328,35 @@ syncManager.onAwarenessChange(() => {
     }
 });
 
-// Viewport-keyed detection run tracking for quarter indicators
-const RUNS_KEY = 'burnoff:runs';
-
-function viewportKey() {
-    const c = map.getCenter();
-    return `${Math.round(c.lat * 50) / 50},${Math.round(c.lng * 50) / 50}`;
-}
-
-function markQuartersDetected(quarters) {
-    try {
-        const all = JSON.parse(localStorage.getItem(RUNS_KEY) || '{}');
-        const vk = viewportKey();
-        if (!all[vk]) all[vk] = {};
-        for (const q of quarters) {
-            all[vk][`${q.year}_${q.quarter}`] = true;
-        }
-        localStorage.setItem(RUNS_KEY, JSON.stringify(all));
-    } catch (e) { /* ignore */ }
-}
-
 function getDetectedQuarters() {
-    try {
-        const all = JSON.parse(localStorage.getItem(RUNS_KEY) || '{}');
-        return all[viewportKey()] || {};
-    } catch (e) { return {}; }
+    const bounds = map.getBounds();
+    const quarters = new Set();
+    processedMap.forEach((value, key) => {
+        if (!Array.isArray(value)) return;
+        const [lat, lng] = value;
+        if (!bounds.contains([lng, lat])) return;
+        const date = key.split(':')[1];           // "YYYY-MM-DD"
+        const y = date.substring(0, 4);
+        const q = Math.floor((parseInt(date.substring(5, 7)) - 1) / 3) + 1;
+        quarters.add(`${y}_${q}`);
+    });
+    return quarters;
 }
 
 function updateQuarterIndicators() {
-    const detected = getDetectedQuarters();
+    const quarters = getDetectedQuarters();
     document.querySelectorAll('.quarter-btn').forEach(btn => {
-        const qKey = `${btn.dataset.year}_${btn.dataset.quarter}`;
-        btn.classList.toggle('detected', !!detected[qKey]);
+        btn.classList.toggle('detected', quarters.has(`${btn.dataset.year}_${btn.dataset.quarter}`));
     });
-    updateDetectButton();
+    updateDetectButton(quarters);
 }
 
-function updateDetectButton() {
-    const detected = getDetectedQuarters();
+function updateDetectButton(quarters) {
+    if (!quarters) quarters = getDetectedQuarters();
     const activeBtns = document.querySelectorAll('.quarter-btn.active');
     const allDetected = activeBtns.length > 0 && Array.from(activeBtns).every(btn => {
         const qKey = `${btn.dataset.year}_${btn.dataset.quarter}`;
-        return !!detected[qKey];
+        return quarters.has(qKey);
     });
     const tooZoomedOut = map.getZoom() < MIN_DETECT_ZOOM;
     const btn = document.getElementById('detect-btn');
@@ -986,7 +974,7 @@ function launchDetectWorker(job) {
             bar.style.width = msg.pct + '%';
             text.textContent = msg.stage;
         } else if (msg.type === 'blockDetections') {
-            cacheBlockResult(msg.blockId, msg.date, msg.detections);
+            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng);
         } else if (msg.type === 'done') {
             cleanupDetection();
             finishDetection(msg.stats);
@@ -1080,12 +1068,6 @@ function finishDetection(stats) {
     _isDetecting = false;
     _preSessionKeys = null;
 
-    const activeBtns = document.querySelectorAll('.quarter-btn.active');
-    const quarters = Array.from(activeBtns).map(btn => ({
-        year: parseInt(btn.dataset.year),
-        quarter: parseInt(btn.dataset.quarter)
-    }));
-    markQuartersDetected(quarters);
     updateQuarterIndicators();
 
     document.getElementById('detect-bar').style.width = '100%';

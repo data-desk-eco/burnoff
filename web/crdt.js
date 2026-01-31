@@ -329,7 +329,7 @@ export function decodeStateVector(buf) {
 // ---------------------------------------------------------------------------
 // [stringTable][u32 count][per entry: u8 mapType(0=det,1=proc), 9B key, u32 ts, u16 peerId, payload]
 // Detection payload: u16 detCount, [44B detection]...
-// Processed payload: u32 timestamp (the value)
+// Processed payload: i16 lat×100, i16 lng×100 (block center, ~1.1 km precision)
 
 export function encodeEntries(keys, detMap, procMap) {
     // Build string table from all COG URLs
@@ -364,7 +364,7 @@ export function encodeEntries(keys, detMap, procMap) {
         if (mapName === 'det' && Array.isArray(entry.value)) {
             payloadSize += 2 + entry.value.length * 44;
         } else {
-            payloadSize += 4; // processed timestamp
+            payloadSize += 4; // processed [lat, lng] packed as 2x i16
         }
     }
 
@@ -395,9 +395,10 @@ export function encodeEntries(keys, detMap, procMap) {
                 pos += 44;
             }
         } else {
-            // processed: store value as u32 (seconds)
-            const val = typeof entry.value === 'number' ? entry.value : 0;
-            view.setUint32(pos, (val / 1000) >>> 0, true); pos += 4;
+            // processed: store [lat, lng] packed as 2x i16 (×100, ~1.1 km precision)
+            const [lat, lng] = Array.isArray(entry.value) ? entry.value : [0, 0];
+            view.setInt16(pos, Math.round(lat * 100), true); pos += 2;
+            view.setInt16(pos, Math.round(lng * 100), true); pos += 2;
         }
     }
 
@@ -432,7 +433,9 @@ export function decodeEntries(buf) {
                 pos += 44;
             }
         } else {
-            value = view.getUint32(pos, true) * 1000; pos += 4;
+            const lat = view.getInt16(pos, true) / 100; pos += 2;
+            const lng = view.getInt16(pos, true) / 100; pos += 2;
+            value = [lat, lng];
         }
 
         entries.push({ mapName, key, value, ts, peerId });
