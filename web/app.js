@@ -18,6 +18,31 @@ const provider = new WebrtcProvider('burnoff-global', ydoc, {
     signaling: ['wss://signaling.yjs.dev']
 });
 
+// ---------------------------------------------------------------------------
+// P2P debug bar
+// ---------------------------------------------------------------------------
+
+const P2P_DEBUG_MAX = 80;
+
+function p2pLog(text, cls) {
+    const el = document.getElementById('p2p-debug');
+    if (!el) return;
+    const span = document.createElement('span');
+    if (cls) span.className = cls;
+    const now = new Date();
+    const ts = String(now.getHours()).padStart(2, '0') + ':' +
+               String(now.getMinutes()).padStart(2, '0') + ':' +
+               String(now.getSeconds()).padStart(2, '0');
+    span.textContent = `[${ts}] ${text}`;
+    el.appendChild(span);
+    // trim old entries
+    while (el.children.length > P2P_DEBUG_MAX) el.removeChild(el.firstChild);
+    // auto-scroll to newest
+    el.scrollLeft = el.scrollWidth;
+}
+
+p2pLog('p2p init — room: burnoff-global', 'p2p-info');
+
 // Initialize map
 const map = new maplibregl.Map({
     container: 'map',
@@ -65,6 +90,11 @@ function cacheBlockResult(blockId, date, detections) {
             detectionMap.set(key, detections);
         }
     });
+    if (detections.length > 0) {
+        p2pLog(`send: ${blockId} ${date} — ${detections.length} flare${detections.length !== 1 ? 's' : ''}`, 'p2p-up');
+    } else {
+        p2pLog(`send: ${blockId} ${date} — clear`, 'p2p-info');
+    }
 }
 
 function loadCachedBlock(blockId, date) {
@@ -93,7 +123,23 @@ function scheduleDetectionUpdate() {
 }
 
 // Subscribe to CRDT changes (local writes, IndexedDB restore, remote peers)
-detectionMap.observe(() => scheduleDetectionUpdate());
+detectionMap.observe((event) => {
+    scheduleDetectionUpdate();
+    // Log remote changes (transaction.local === false means from a peer)
+    if (event.transaction.local) return;
+    let added = 0, updated = 0, flares = 0;
+    event.changes.keys.forEach((change, key) => {
+        if (change.action === 'add') { added++; }
+        else if (change.action === 'update') { updated++; }
+        const dets = detectionMap.get(key);
+        if (dets) flares += dets.length;
+    });
+    const parts = [];
+    if (added) parts.push(`${added} new block${added !== 1 ? 's' : ''}`);
+    if (updated) parts.push(`${updated} updated`);
+    if (flares) parts.push(`${flares} flare${flares !== 1 ? 's' : ''}`);
+    if (parts.length) p2pLog(`recv: ${parts.join(', ')}`, 'p2p-down');
+});
 
 // Migrate existing localStorage cache to Yjs (one-time)
 function migrateFromLocalStorage() {
@@ -119,11 +165,14 @@ function migrateFromLocalStorage() {
 }
 
 persistence.once('synced', () => {
+    const blocks = detectionMap.size;
+    p2pLog(`indexeddb loaded — ${blocks} block${blocks !== 1 ? 's' : ''} in cache`, 'p2p-info');
     migrateFromLocalStorage();
     scheduleDetectionUpdate();
 });
 
 // Peer count indicator
+let _lastPeerCount = 0;
 function updatePeerStatus() {
     const states = provider.awareness.getStates();
     const peers = states.size - 1; // exclude self
@@ -136,10 +185,21 @@ function updatePeerStatus() {
         el.textContent = 'no peers';
         el.classList.remove('active');
     }
+    if (peers !== _lastPeerCount) {
+        if (peers > _lastPeerCount) {
+            p2pLog(`peer joined — ${peers} connected`, 'p2p-peer');
+        } else {
+            p2pLog(`peer left — ${peers} connected`, 'p2p-peer');
+        }
+        _lastPeerCount = peers;
+    }
 }
 
 provider.awareness.on('change', updatePeerStatus);
-provider.on('synced', updatePeerStatus);
+provider.on('synced', () => {
+    updatePeerStatus();
+    p2pLog('webrtc synced', 'p2p-info');
+});
 updatePeerStatus();
 
 // Viewport-keyed detection run tracking for quarter indicators
