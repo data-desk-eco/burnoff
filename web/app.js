@@ -14,9 +14,17 @@ const processedMap = ydoc.getMap('processed');     // block_id:date → timestam
 const persistence = new IndexeddbPersistence('burnoff', ydoc);
 
 // P2P mesh — all Burnoff users share one room
+// Multiple signaling servers for faster, more reliable peer discovery
 const provider = new WebrtcProvider('burnoff-global', ydoc, {
-    signaling: ['wss://signaling.yjs.dev']
+    signaling: [
+        'wss://signaling.yjs.dev',
+        'wss://y-webrtc-signaling-eu.herokuapp.com',
+        'wss://y-webrtc-signaling-us.herokuapp.com'
+    ]
 });
+
+// Immediately set awareness state so signaling announces us to peers right away
+provider.awareness.setLocalState({ active: true, t: Date.now() });
 
 // ---------------------------------------------------------------------------
 // P2P debug bar
@@ -256,6 +264,51 @@ provider.on('synced', () => {
     p2pLog('webrtc synced', 'p2p-info');
 });
 updatePeerStatus();
+
+// Poll peer status every 2s as a fallback — awareness change events can be
+// missed when the WebRTC data channel connects slightly after signaling.
+setInterval(updatePeerStatus, 2000);
+
+// ---------------------------------------------------------------------------
+// Awareness helpers for distributed detection
+// ---------------------------------------------------------------------------
+
+function setDetectingState(bbox) {
+    const prev = provider.awareness.getLocalState() || {};
+    provider.awareness.setLocalState({ ...prev, detecting: true, bbox, t: Date.now() });
+}
+
+function clearDetectingState() {
+    const prev = provider.awareness.getLocalState() || {};
+    delete prev.detecting;
+    delete prev.bbox;
+    provider.awareness.setLocalState({ ...prev, t: Date.now() });
+}
+
+/**
+ * Get a deterministic partition for this peer among all peers currently
+ * detecting an overlapping viewport.  Returns { peerIndex, peerCount }.
+ */
+function getDetectionPartition(myBbox) {
+    const states = provider.awareness.getStates();
+    const myId = provider.awareness.clientID;
+
+    // Collect peers (including self) that are detecting with overlapping bbox
+    const detectingIds = [];
+    states.forEach((state, id) => {
+        if (!state.detecting || !state.bbox) return;
+        // Check bbox overlap
+        const b = state.bbox;
+        const overlaps = !(b[2] < myBbox[0] || b[0] > myBbox[2] ||
+                           b[3] < myBbox[1] || b[1] > myBbox[3]);
+        if (overlaps) detectingIds.push(id);
+    });
+
+    // Sort for deterministic ordering across all peers
+    detectingIds.sort((a, b) => a - b);
+    const peerIndex = detectingIds.indexOf(myId);
+    return { peerIndex: Math.max(0, peerIndex), peerCount: detectingIds.length };
+}
 
 // Viewport-keyed detection run tracking for quarter indicators
 const RUNS_KEY = 'burnoff:runs';
@@ -887,7 +940,7 @@ function updateDetectionSource() {
     if (src) src.setData({ type: 'FeatureCollection', features });
 }
 
-function startDetection() {
+async function startDetection() {
     if (map.getZoom() < MIN_DETECT_ZOOM) {
         alert('Zoom in to at least level 11 before running detection.');
         return;
@@ -912,6 +965,16 @@ function startDetection() {
     const bbox = getViewportBbox();
     const epsg = guessEpsg(bbox);
 
+    // Announce detection intent via awareness so peers can partition work
+    setDetectingState(bbox);
+
+    // Brief delay to let awareness propagate, then compute partition
+    await new Promise(r => setTimeout(r, 150));
+    const { peerIndex, peerCount } = getDetectionPartition(bbox);
+    if (peerCount > 1) {
+        p2pLog(`distributed: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
+    }
+
     // Load cached block keys to send to worker
     const cachedBlockDates = getCachedBlockKeys();
 
@@ -928,8 +991,10 @@ function startDetection() {
         } else if (msg.type === 'cachedBlock') {
             // Already in CRDT from initial load — nothing to do
         } else if (msg.type === 'done') {
+            clearDetectingState();
             finishDetection(msg.stats);
         } else if (msg.type === 'error') {
+            clearDetectingState();
             _isDetecting = false;
             bar.style.width = '100%';
             bar.style.background = 'rgba(255,80,80,0.4)';
@@ -939,6 +1004,7 @@ function startDetection() {
     };
 
     detectWorker.onerror = function(err) {
+        clearDetectingState();
         _isDetecting = false;
         console.error('Worker error:', err);
         bar.style.width = '100%';
@@ -952,7 +1018,9 @@ function startDetection() {
         bbox, epsg,
         startDate: dateRange?.startDate,
         endDate: dateRange?.endDate,
-        cachedBlockDates
+        cachedBlockDates,
+        peerIndex,
+        peerCount
     });
 }
 
