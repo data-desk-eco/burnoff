@@ -1,9 +1,40 @@
 CLOUD_RUN_SERVICE := burnoff-signaling
 CLOUD_RUN_REGION  := europe-west2
 
-.PHONY: serve signal deploy help
+.PHONY: serve signal deploy terminals help
 
-serve: signal
+terminals: web/terminals.geojson
+
+web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
+	@duckdb -c "\
+	COPY ( \
+	  SELECT json_object( \
+	    'type', 'FeatureCollection', \
+	    'features', json_group_array(json_object( \
+	      'type', 'Feature', \
+	      'geometry', json_object( \
+	        'type', 'Point', \
+	        'coordinates', json_array(CAST(Longitude AS DOUBLE), CAST(Latitude AS DOUBLE)) \
+	      ), \
+	      'properties', json_object( \
+	        'name', TerminalName, \
+	        'country', \"Country/Area\", \
+	        'type', FacilityType, \
+	        'status', Status, \
+	        'capacity_mtpa', CAST(CapacityinMtpa AS DOUBLE), \
+	        'owner', Owner \
+	      ) \
+	    )) \
+	  ) \
+	  FROM read_xlsx('data/GEM-GGIT-LNG-Teminals-2025-09.xlsx', sheet='LNG Terminals', header=true, all_varchar=true) \
+	  WHERE Status IN ('operating', 'construction') \
+	    AND Latitude IS NOT NULL AND Longitude IS NOT NULL \
+	    AND CAST(Latitude AS DOUBLE) BETWEEN -90 AND 90 \
+	    AND CAST(Longitude AS DOUBLE) BETWEEN -180 AND 180 \
+	) TO 'web/terminals.geojson' (FORMAT CSV, HEADER false, QUOTE '', DELIMITER '');"
+	@echo "web/terminals.geojson: $$(python3 -c "import json; print(len(json.load(open('web/terminals.geojson'))['features']))" 2>/dev/null) features"
+
+serve: signal terminals
 	@echo "http://localhost:8000  (signaling on :4444)"
 	@npx serve web -l 8000
 
