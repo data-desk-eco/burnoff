@@ -518,6 +518,18 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     .logo { display: none; }
     .panel-actions { display: none; }
 
+    .p2p-debug {
+        height: 18px;
+        font-size: 8px;
+        padding: 0 6px;
+        gap: 4px;
+        z-index: 1001;
+    }
+
+    .info-panel {
+        bottom: 18px;
+    }
+
     .modal-content {
         margin: 16px;
         padding: 20px;
