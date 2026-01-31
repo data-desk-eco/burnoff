@@ -633,8 +633,7 @@ function renderIntensityChart(detections, onSelectDate) {
     const innerH = height - margin.top - margin.bottom;
 
     const dates = sorted.map(d => new Date(d.date));
-    const firstDate = new Date(Math.min(...dates));
-    const minDate = new Date(firstDate.getFullYear(), 0, 1).getTime();
+    const minDate = Math.min(...dates);
     const maxDate = Math.max(...dates);
     const dateRange = maxDate - minDate || 1;
 
@@ -648,6 +647,16 @@ function renderIntensityChart(detections, onSelectDate) {
     let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
     svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
 
+    // Year labels at Jan 1st boundaries within the data range
+    const firstYear = new Date(minDate).getFullYear();
+    const lastYear = new Date(maxDate).getFullYear();
+    for (let y = firstYear + 1; y <= lastYear; y++) {
+        const jan1 = new Date(y, 0, 1).getTime();
+        const x = margin.left + ((jan1 - minDate) / dateRange) * innerW;
+        svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
+        svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="middle">${y}</text>`;
+    }
+
     sorted.forEach((det, i) => {
         const date = new Date(det.date);
         const x = margin.left + ((date - minDate) / dateRange) * innerW;
@@ -655,12 +664,6 @@ function renderIntensityChart(detections, onSelectDate) {
         const y = margin.top + innerH - ((b12 - minB12) / b12Range) * innerH;
         svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${b12Color(b12)}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
     });
-
-    if (dateRange > 30 * 24 * 60 * 60 * 1000) {
-        const endMonth = new Date(maxDate).toLocaleString('en', { month: 'short' });
-        svg += `<text x="${margin.left}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8">Jan</text>`;
-        svg += `<text x="${width - margin.right}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="end">${endMonth}</text>`;
-    }
 
     svg += '</svg>';
     container.innerHTML = svg;
