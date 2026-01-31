@@ -7,3 +7,12 @@ debug.html
 # Dependencies
 node_modules/
 package-lock.json
+
+# Local data
+data/
+src/
+web/data
+dist/
+
+# Planning docs
+PLAN-*.md
