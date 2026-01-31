@@ -129,6 +129,7 @@ let currentFeature = null;
 let selectedDetection = null;
 let detectWorker = null;
 let _isDetecting = false;
+let _lastClusterCount = 0;
 
 // ---------------------------------------------------------------------------
 // Block detection cache (Yjs CRDT — synced across all peers)
@@ -363,7 +364,7 @@ function startHelpingDetection(job, peerIndex, peerCount) {
             cacheBlockResult(msg.blockId, msg.date, msg.detections);
         } else if (msg.type === 'done') {
             const s = msg.stats;
-            p2pLog(`help done: ${s.images} img, ${s.rawDetections} flares`, 'p2p-up');
+            p2pLog(`help done: ${s.images} img, ${s.rawDetections} detections`, 'p2p-up');
             _helpWorker = null;
             _helpingJobId = null;
             _helpingPeerCount = 0;
@@ -1056,10 +1057,26 @@ function ensureDetectionLayer() {
     }
 }
 
+function updateProgressFlareCount() {
+    const text = document.getElementById('detect-text');
+    if (!text) return;
+    // Strip any existing flare suffix, then re-append current count
+    const base = text.textContent.replace(/ · \d+ flares?$/, '');
+    if (_lastClusterCount > 0) {
+        text.textContent = `${base} · ${_lastClusterCount} flare${_lastClusterCount !== 1 ? 's' : ''}`;
+    } else {
+        text.textContent = base;
+    }
+}
+
 function updateDetectionSource() {
     const features = crossDateCluster(allRawDetections);
     const src = map.getSource('client-detections');
     if (src) src.setData({ type: 'FeatureCollection', features });
+    _lastClusterCount = features.length;
+    if (_isDetecting) {
+        updateProgressFlareCount();
+    }
 }
 
 // Track the current detection job and peer partition so we can restart on peer changes
@@ -1087,6 +1104,7 @@ function launchDetectWorker(job, bar, text) {
         if (msg.type === 'progress') {
             bar.style.width = msg.pct + '%';
             text.textContent = msg.stage;
+            updateProgressFlareCount();
         } else if (msg.type === 'blockDetections') {
             cacheBlockResult(msg.blockId, msg.date, msg.detections);
         } else if (msg.type === 'cachedBlock') {
