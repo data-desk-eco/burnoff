@@ -467,6 +467,11 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
             const x1 = Math.min(imgWidth, (bc + 1) * BLOCK_SIZE + BLOCK_OVERLAP);
             const y1 = Math.min(imgHeight, (br + 1) * BLOCK_SIZE + BLOCK_OVERLAP);
 
+            // Block center in UTM → WGS84
+            const cx = imgMinX + (bc + 0.5) * BLOCK_SIZE * resX;
+            const cy = imgMaxY - (br + 0.5) * BLOCK_SIZE * resY;
+            const [bLng, bLat] = proj4(utmProj(itemEpsg), 'EPSG:4326', [cx, cy]);
+
             try {
                 const dets = await processBlock({
                     b12Image, b11Image, b8aImage, sclImage,
@@ -490,10 +495,10 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
                 }
 
                 allDetections.push(...kept);
-                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: kept });
+                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: kept, lat: bLat, lng: bLng });
             } catch (err) {
                 console.warn(`Block ${blockId} ${imgDate}: ${err.message}`);
-                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: [] });
+                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: [], lat: bLat, lng: bLng });
             }
 
             onBlockDone(imgDate, br, bc, false);
