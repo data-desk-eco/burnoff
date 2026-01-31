@@ -29,6 +29,136 @@ const provider = new WebrtcProvider('burnoff-global', ydoc, {
 // Immediately set awareness state so signaling announces us to peers right away
 provider.awareness.setLocalState({ active: true, t: Date.now() });
 
+// Clear awareness on page unload so peers drop us immediately instead of
+// waiting for the 30s awareness timeout (fixes inflated count on refresh).
+window.addEventListener('beforeunload', () => {
+    provider.awareness.setLocalState(null);
+    provider.disconnect();
+});
+
+// Heartbeat: update our timestamp every 15s so peers can detect stale entries
+// (covers cases where beforeunload doesn't fire, e.g. crash / network drop).
+const AWARENESS_HEARTBEAT_MS = 15_000;
+const AWARENESS_STALE_MS = 45_000; // 3× heartbeat — generous enough for jitter
+
+setInterval(() => {
+    const prev = provider.awareness.getLocalState();
+    if (prev) provider.awareness.setLocalState({ ...prev, t: Date.now() });
+}, AWARENESS_HEARTBEAT_MS);
+
+/**
+ * Return only awareness states that are not stale.
+ * A peer is stale if its `t` timestamp is older than AWARENESS_STALE_MS,
+ * meaning it stopped heartbeating (crash, lost network, etc.).
+ */
+function getActiveStates() {
+    const now = Date.now();
+    const states = provider.awareness.getStates();
+    const active = new Map();
+    states.forEach((state, id) => {
+        if (state.t && (now - state.t) > AWARENESS_STALE_MS) return;
+        active.set(id, state);
+    });
+    return active;
+}
+
+// ---------------------------------------------------------------------------
+// Signaling-relayed document sync
+// ---------------------------------------------------------------------------
+// y-webrtc syncs the Yjs doc over WebRTC data channels, but those channels
+// can be slow to establish or fail entirely (NAT, ICE). As a fallback we run
+// the standard Yjs 2-step sync protocol over the signaling WebSocket so that
+// peers always converge, even if WebRTC never connects.
+
+const SYNC_TOPIC = 'burnoff-global-sync';
+let _syncWs = null;
+let _syncReconnectDelay = 1000;
+let _lastSyncStep1 = 0;
+const SYNC_STEP1_DEBOUNCE = 2000; // prevent echo loops between peers
+
+function connectSyncWs() {
+    if (_syncWs) return;
+    const ws = new WebSocket(_sigUrl);
+    _syncWs = ws;
+
+    ws.onopen = () => {
+        _syncReconnectDelay = 1000;
+        ws.send(JSON.stringify({ type: 'subscribe', topics: [SYNC_TOPIC] }));
+        // Broadcast our state vector so existing peers send us what we're missing
+        broadcastSyncStep1();
+    };
+
+    ws.onmessage = (event) => {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch { return; }
+        if (msg.type !== 'publish' || msg.topic !== SYNC_TOPIC || !msg.sync) return;
+
+        const data = base64ToUint8(msg.sync);
+        if (msg.step === 1) {
+            // Peer sent their state vector — reply with the updates they need
+            const diff = Y.encodeStateAsUpdate(ydoc, data);
+            if (diff.byteLength > 2) { // skip empty updates
+                sendSyncMsg({ step: 2, sync: uint8ToBase64(diff) });
+            }
+            // Echo our own state vector so the sender can also compute what
+            // we need. Debounce to break the echo loop: A→step1, B→step1,
+            // A→step1… — the second round is suppressed by the 2s window.
+            const now = Date.now();
+            if (now - _lastSyncStep1 > SYNC_STEP1_DEBOUNCE) {
+                broadcastSyncStep1();
+            }
+        } else if (msg.step === 2) {
+            // Peer sent us the updates we were missing — apply them
+            Y.applyUpdate(ydoc, data);
+        }
+    };
+
+    ws.onclose = () => {
+        _syncWs = null;
+        setTimeout(connectSyncWs, _syncReconnectDelay);
+        _syncReconnectDelay = Math.min(_syncReconnectDelay * 2, 30_000);
+    };
+    ws.onerror = () => ws.close();
+}
+
+function sendSyncMsg(payload) {
+    if (_syncWs?.readyState === WebSocket.OPEN) {
+        _syncWs.send(JSON.stringify({ type: 'publish', topic: SYNC_TOPIC, ...payload }));
+    }
+}
+
+function broadcastSyncStep1() {
+    _lastSyncStep1 = Date.now();
+    sendSyncMsg({ step: 1, sync: uint8ToBase64(Y.encodeStateVector(ydoc)) });
+}
+
+function uint8ToBase64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+}
+
+function base64ToUint8(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
+
+// Start sync WebSocket after IndexedDB has loaded (so we have local state to offer)
+persistence.once('synced', () => connectSyncWs());
+
+// When new WebRTC peers appear, also trigger a sync exchange in case the
+// data channel is slow or one-directional
+provider.on('peers', ({ added }) => {
+    if (added.length > 0) broadcastSyncStep1();
+});
+
+// Also clean up on page unload
+window.addEventListener('beforeunload', () => {
+    if (_syncWs) { _syncWs.close(); _syncWs = null; }
+});
+
 // ---------------------------------------------------------------------------
 // P2P debug bar
 // ---------------------------------------------------------------------------
@@ -93,7 +223,7 @@ setInterval(() => {
         c.connected ? 'ok' : c.connecting ? 'connecting' : 'closed'
     ).join(',');
     const webrtc = room ? room.webrtcConns.size : '?';
-    const awareness = provider.awareness.getStates().size;
+    const awareness = getActiveStates().size;
     const state = `sig=[${sig}] rtc=${webrtc} aware=${awareness}`;
     if (state !== _lastDebugState) {
         p2pLog(`state: ${state}`, 'p2p-info');
@@ -262,7 +392,7 @@ persistence.once('synced', () => {
 // Peer count indicator
 let _lastPeerCount = 0;
 function updatePeerStatus() {
-    const states = provider.awareness.getStates();
+    const states = getActiveStates();
     let peers = states.size - 1; // exclude self
     const el = document.getElementById('peer-status');
     if (!el) return;
@@ -320,7 +450,7 @@ function clearDetectingState() {
  *   *different* job in their awareness state are excluded.
  */
 function getPeerPartition(jobId) {
-    const states = provider.awareness.getStates();
+    const states = getActiveStates();
     const myId = provider.awareness.clientID;
     const ids = [];
     states.forEach((state, id) => {
@@ -390,7 +520,7 @@ provider.awareness.on('change', () => {
     }
 
     // Helper: look for a peer's job to assist with
-    const states = provider.awareness.getStates();
+    const states = getActiveStates();
     const myId = provider.awareness.clientID;
     let activeJob = null;
     states.forEach((state, id) => {
