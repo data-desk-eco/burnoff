@@ -15,7 +15,8 @@ make signal       # Signaling server only
 - `web/app.js` - Map viewer, clustering, P2P sync
 - `web/style.css` - UI styles
 - `web/index.html` - Entry point
-- `signal-server.js` - WebRTC signaling relay (Node.js)
+- `signal-server.js` - WebRTC signaling relay (Node.js, local dev)
+- `signal-worker/` - Cloudflare Worker signaling relay (production)
 
 ## Detection Algorithm
 
@@ -42,9 +43,10 @@ by `{mgrs}_{row}_{col}` and cached by `block_id:date`.
 
 Detection results are stored in a Yjs CRDT document, persisted locally via
 IndexedDB and synced across peers via WebRTC (y-webrtc). Signaling is handled
-by `signal-server.js` — a lightweight WebSocket relay. In dev, the client
-auto-connects to `ws://<hostname>:4444`. For production, deploy signal-server.js
-and set the URL via `<meta name="signaling-url" content="wss://...">`.
+by a lightweight WebSocket relay. In dev, `signal-server.js` runs on :4444
+and the client auto-connects. For production, deploy `signal-worker/` to
+Cloudflare (`cd signal-worker && npx wrangler deploy`) and set the URL via
+`<meta name="signaling-url" content="wss://burnoff-signaling.<account>.workers.dev">`.
 When a peer starts detection, other idle peers automatically help by processing
 a deterministic partition of the blocks.
 
