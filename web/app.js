@@ -1,170 +1,72 @@
-import * as Y from 'https://esm.sh/yjs@13.6.29';
-import { WebrtcProvider } from 'https://esm.sh/y-webrtc@10.3.0?deps=yjs@13.6.29';
-import { IndexeddbPersistence } from 'https://esm.sh/y-indexeddb@9.0.12?deps=yjs@13.6.29';
+import { LWWMap } from './crdt.js';
+import { Store } from './store.js';
+import { PeerMesh } from './rtc.js';
+import { SyncManager, validateDetection } from './sync.js';
 
 // ---------------------------------------------------------------------------
-// P2P sync (Yjs CRDT)
+// P2P sync (LWW-Map CRDT)
 // ---------------------------------------------------------------------------
 
 const MIN_DETECT_ZOOM = 11;
 let allRawDetections = [];
 
-const ydoc = new Y.Doc();
-const detectionMap = ydoc.getMap('detections');   // block_id:date → Detection[]
-const processedMap = ydoc.getMap('processed');     // block_id:date → timestamp
+const detectionMap = new LWWMap();
+const processedMap = new LWWMap();
 
-// Local persistence (replaces localStorage block cache)
-const persistence = new IndexeddbPersistence('burnoff', ydoc);
+// Local persistence
+const store = new Store('burnoff-crdt');
 
-// P2P mesh — all Burnoff users share one room
-// Signaling server runs alongside the app (see signal-server.js).
-// In dev the app is on :8000 and signaling on :4444 of the same host.
-// In production, set SIGNALING_URL via a <meta> tag or deploy signal-server.js.
+// Signaling server URL
 const _sigMeta = document.querySelector('meta[name="signaling-url"]');
 const _sigUrl = _sigMeta
     ? _sigMeta.content
     : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:4444`;
 
-const provider = new WebrtcProvider('burnoff-global', ydoc, {
-    signaling: [_sigUrl]
+// P2P mesh
+const mesh = new PeerMesh({
+    signalingUrl: _sigUrl,
+    room: 'burnoff',
+    onPeerConnect: () => {},
+    onPeerDisconnect: () => {},
+    onMessage: () => {}
 });
 
-// Immediately set awareness state so signaling announces us to peers right away
-provider.awareness.setLocalState({ active: true, t: Date.now() });
+const syncManager = new SyncManager({
+    detectionMap,
+    processedMap,
+    store,
+    mesh
+});
 
-// Clear awareness on page unload so peers drop us immediately instead of
-// waiting for the 30s awareness timeout (fixes inflated count on refresh).
+// Init: load from IndexedDB, then connect mesh
+(async () => {
+    await store.open();
+    await store.loadAll(detectionMap, processedMap);
+    scheduleDetectionUpdate();
+    mesh.connect();
+})();
+
+// Set initial awareness
+syncManager.setLocalAwareness({ active: true, t: Date.now() });
+
+// Clear awareness on page unload
 window.addEventListener('beforeunload', () => {
-    provider.awareness.setLocalState(null);
-    provider.disconnect();
+    syncManager.setLocalAwareness(null);
+    mesh.disconnect();
 });
 
-// Heartbeat: update our timestamp every 15s so peers can detect stale entries
-// (covers cases where beforeunload doesn't fire, e.g. crash / network drop).
+// Heartbeat: update timestamp every 15s
 const AWARENESS_HEARTBEAT_MS = 15_000;
-const AWARENESS_STALE_MS = 45_000; // 3× heartbeat — generous enough for jitter
 
 setInterval(() => {
-    const prev = provider.awareness.getLocalState();
-    if (prev) provider.awareness.setLocalState({ ...prev, t: Date.now() });
+    const states = syncManager.getActiveStates();
+    const myState = states.get(mesh.localPeerId);
+    if (myState) syncManager.setLocalAwareness({ ...myState, t: Date.now() });
 }, AWARENESS_HEARTBEAT_MS);
 
-/**
- * Return only awareness states that are not stale.
- * A peer is stale if its `t` timestamp is older than AWARENESS_STALE_MS,
- * meaning it stopped heartbeating (crash, lost network, etc.).
- */
 function getActiveStates() {
-    const now = Date.now();
-    const states = provider.awareness.getStates();
-    const active = new Map();
-    states.forEach((state, id) => {
-        if (state.t && (now - state.t) > AWARENESS_STALE_MS) return;
-        active.set(id, state);
-    });
-    return active;
+    return syncManager.getActiveStates();
 }
-
-// ---------------------------------------------------------------------------
-// Signaling-relayed document sync
-// ---------------------------------------------------------------------------
-// y-webrtc syncs the Yjs doc over WebRTC data channels, but those channels
-// can be slow to establish or fail entirely (NAT, ICE). As a fallback we run
-// the standard Yjs 2-step sync protocol over the signaling WebSocket so that
-// peers always converge, even if WebRTC never connects.
-
-const SYNC_TOPIC = 'burnoff-global-sync';
-let _syncWs = null;
-let _syncReconnectDelay = 1000;
-let _lastSyncStep1 = 0;
-const SYNC_STEP1_DEBOUNCE = 2000; // prevent echo loops between peers
-
-function connectSyncWs() {
-    if (_syncWs) return;
-    const ws = new WebSocket(_sigUrl);
-    _syncWs = ws;
-
-    ws.onopen = () => {
-        _syncReconnectDelay = 1000;
-        ws.send(JSON.stringify({ type: 'subscribe', topics: [SYNC_TOPIC] }));
-        // Broadcast our state vector so existing peers send us what we're missing
-        broadcastSyncStep1();
-    };
-
-    ws.onmessage = (event) => {
-        let msg;
-        try { msg = JSON.parse(event.data); } catch { return; }
-        if (msg.type !== 'publish' || msg.topic !== SYNC_TOPIC || !msg.sync) return;
-
-        const data = base64ToUint8(msg.sync);
-        if (msg.step === 1) {
-            // Peer sent their state vector — reply with the updates they need
-            const diff = Y.encodeStateAsUpdate(ydoc, data);
-            if (diff.byteLength > 2) { // skip empty updates
-                sendSyncMsg({ step: 2, sync: uint8ToBase64(diff) });
-            }
-            // Echo our own state vector so the sender can also compute what
-            // we need. Debounce to break the echo loop: A→step1, B→step1,
-            // A→step1… — the second round is suppressed by the 2s window.
-            const now = Date.now();
-            if (now - _lastSyncStep1 > SYNC_STEP1_DEBOUNCE) {
-                broadcastSyncStep1();
-            }
-        } else if (msg.step === 2) {
-            // Peer sent us the updates we were missing — apply them
-            Y.applyUpdate(ydoc, data);
-        }
-    };
-
-    ws.onclose = () => {
-        _syncWs = null;
-        setTimeout(connectSyncWs, _syncReconnectDelay);
-        _syncReconnectDelay = Math.min(_syncReconnectDelay * 2, 30_000);
-    };
-    ws.onerror = () => ws.close();
-}
-
-function sendSyncMsg(payload) {
-    if (_syncWs?.readyState === WebSocket.OPEN) {
-        _syncWs.send(JSON.stringify({ type: 'publish', topic: SYNC_TOPIC, ...payload }));
-    }
-}
-
-function broadcastSyncStep1() {
-    _lastSyncStep1 = Date.now();
-    sendSyncMsg({ step: 1, sync: uint8ToBase64(Y.encodeStateVector(ydoc)) });
-}
-
-function uint8ToBase64(bytes) {
-    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    const CHUNK = 8192;
-    let binary = '';
-    for (let i = 0; i < arr.length; i += CHUNK) {
-        binary += String.fromCharCode.apply(null, arr.subarray(i, i + CHUNK));
-    }
-    return btoa(binary);
-}
-
-function base64ToUint8(b64) {
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-}
-
-// Start sync WebSocket after IndexedDB has loaded (so we have local state to offer)
-persistence.once('synced', () => connectSyncWs());
-
-// When new WebRTC peers appear, also trigger a sync exchange in case the
-// data channel is slow or one-directional
-provider.on('peers', ({ added }) => {
-    if (added.length > 0) broadcastSyncStep1();
-});
-
-// Also clean up on page unload
-window.addEventListener('beforeunload', () => {
-    if (_syncWs) { _syncWs.close(); _syncWs = null; }
-});
 
 // Initialize map
 const map = new maplibregl.Map({
@@ -197,10 +99,10 @@ let currentFeature = null;
 let selectedDetection = null;
 let detectWorker = null;
 let _isDetecting = false;
-let _preSessionKeys = null;  // snapshot of processedMap keys before detection
+let _preSessionKeys = null;
 
 // ---------------------------------------------------------------------------
-// Block detection cache (Yjs CRDT — synced across all peers)
+// Block detection cache (LWW-Map CRDT — synced across all peers)
 // ---------------------------------------------------------------------------
 
 function getCachedBlockKeys() {
@@ -210,21 +112,25 @@ function getCachedBlockKeys() {
 // --- Batched block result writes ---
 const _pendingBlocks = [];
 let _flushTimer = null;
-const FLUSH_INTERVAL = 200;   // ms — flush every 200ms during detection
-const FLUSH_BATCH_SIZE = 20;  // or when this many blocks accumulate
+const FLUSH_INTERVAL = 200;
+const FLUSH_BATCH_SIZE = 20;
 
 function flushPendingBlocks() {
     if (_pendingBlocks.length === 0) return;
     const batch = _pendingBlocks.splice(0);
-    ydoc.transact(() => {
-        for (const { blockId, date, detections } of batch) {
-            const key = `${blockId}:${date}`;
-            processedMap.set(key, Date.now());
-            if (detections.length > 0) {
-                detectionMap.set(key, detections);
-            }
+    const ts = Date.now();
+    const peerId = mesh.localPeerId;
+    for (const { blockId, date, detections } of batch) {
+        const key = `${blockId}:${date}`;
+        processedMap.set(key, ts, ts, peerId);
+        store.put('proc', key, ts, ts, peerId);
+        syncManager.onLocalWrite('proc', key);
+        if (detections.length > 0) {
+            detectionMap.set(key, detections, ts, peerId);
+            store.put('det', key, detections, ts, peerId);
+            syncManager.onLocalWrite('det', key);
         }
-    });
+    }
 }
 
 function cacheBlockResult(blockId, date, detections) {
@@ -255,7 +161,7 @@ function rebuildDetections() {
     });
 }
 
-// Debounced detection update — coalesces rapid changes from sync
+// Debounced detection update
 let _syncUpdateTimer;
 
 function scheduleDetectionUpdate() {
@@ -268,96 +174,38 @@ function scheduleDetectionUpdate() {
 }
 
 // ---------------------------------------------------------------------------
-// Detection sanitisation — reject invalid entries written by peers
+// Detection sanitisation
 // ---------------------------------------------------------------------------
-
-const COG_URL_ALLOWLIST = [
-    'https://earth-search.aws.element84.com/',
-    'https://sentinel-cogs.s3.us-west-2.amazonaws.com/',
-    'https://sentinel-cogs.s3.amazonaws.com/',
-];
-
-function isAllowedCogUrl(url) {
-    if (!url) return true; // missing is OK (some detections lack imagery)
-    if (typeof url !== 'string') return false;
-    return COG_URL_ALLOWLIST.some(prefix => url.startsWith(prefix));
-}
-
-function validateDetection(d) {
-    if (!d || typeof d !== 'object') return false;
-    if (typeof d.flare_lat !== 'number' || !Number.isFinite(d.flare_lat)) return false;
-    if (typeof d.flare_lon !== 'number' || !Number.isFinite(d.flare_lon)) return false;
-    if (d.flare_lat < -90 || d.flare_lat > 90) return false;
-    if (d.flare_lon < -180 || d.flare_lon > 180) return false;
-    if (typeof d.max_b12 !== 'number' || !Number.isFinite(d.max_b12)) return false;
-    if (d.max_b12 < 0 || d.max_b12 > 10) return false;
-    if (typeof d.pixels !== 'number' || d.pixels < 1 || d.pixels > 10000) return false;
-    if (typeof d.date !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(d.date)) return false;
-    if (!isAllowedCogUrl(d.cog_b12)) return false;
-    return true;
-}
 
 function sanitizeDetections(key, dets) {
     if (!Array.isArray(dets)) return null;
-    if (dets.length > 500) return null; // unreasonably large for a single block
+    if (dets.length > 500) return null;
     const valid = dets.filter(validateDetection);
     return valid.length > 0 ? valid : null;
 }
 
-// Subscribe to CRDT changes (local writes, IndexedDB restore, remote peers)
-detectionMap.observe((event) => {
-    // Sanitize changed keys — delete or replace entries that fail validation
-    const toDelete = [];
-    const toReplace = [];
-    for (const [key, change] of event.changes.keys) {
-        if (change.action === 'delete') continue;
-        const raw = detectionMap.get(key);
-        const clean = sanitizeDetections(key, raw);
-        if (clean === null) toDelete.push(key);
-        else if (clean.length !== raw.length) toReplace.push({ key, clean });
-    }
-    if (toDelete.length > 0 || toReplace.length > 0) {
-        ydoc.transact(() => {
-            for (const key of toDelete) detectionMap.delete(key);
-            for (const { key, clean } of toReplace) detectionMap.set(key, clean);
-        });
-    }
-    scheduleDetectionUpdate();
-});
-
-// Migrate existing localStorage cache to Yjs (one-time)
-function migrateFromLocalStorage() {
-    if (localStorage.getItem('burnoff:migrated')) return;
-    const keysToRemove = [];
-    try {
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (!key.startsWith('b:')) continue;
-            keysToRemove.push(key);
-            const blockDateKey = key.slice(2);
-            const data = localStorage.getItem(key);
-            if (!data) continue;
-            const dets = JSON.parse(data);
-            ydoc.transact(() => {
-                processedMap.set(blockDateKey, Date.now());
-                if (dets.length > 0) detectionMap.set(blockDateKey, dets);
-            });
+// Subscribe to CRDT changes
+detectionMap.onChange = (key, value, source) => {
+    if (source === 'remote') {
+        // Sanitize remote entries
+        const clean = sanitizeDetections(key, value);
+        if (clean === null) {
+            detectionMap.delete(key);
+        } else if (clean.length !== value.length) {
+            const entry = detectionMap.getEntry(key);
+            if (entry) {
+                detectionMap.set(key, clean, entry.ts, entry.peerId);
+            }
         }
-        keysToRemove.forEach(k => localStorage.removeItem(k));
-        localStorage.setItem('burnoff:migrated', '1');
-    } catch (e) { console.warn('Migration failed:', e); }
-}
-
-persistence.once('synced', () => {
-    migrateFromLocalStorage();
+    }
     scheduleDetectionUpdate();
-});
+};
 
 // Peer count indicator
 let _lastPeerCount = 0;
 function updatePeerStatus() {
     const states = getActiveStates();
-    let peers = states.size - 1; // exclude self
+    let peers = states.size - 1;
     const el = document.getElementById('peer-status');
     if (!el) return;
     if (peers > 0) {
@@ -370,8 +218,7 @@ function updatePeerStatus() {
     if (peers !== _lastPeerCount) _lastPeerCount = peers;
 }
 
-provider.awareness.on('change', updatePeerStatus);
-provider.on('synced', updatePeerStatus);
+syncManager.onAwarenessChange(updatePeerStatus);
 updatePeerStatus();
 
 
@@ -380,31 +227,24 @@ updatePeerStatus();
 // ---------------------------------------------------------------------------
 
 function setDetectingState(job) {
-    const prev = provider.awareness.getLocalState() || {};
-    provider.awareness.setLocalState({ ...prev, detecting: true, job, t: Date.now() });
+    const states = getActiveStates();
+    const prev = states.get(mesh.localPeerId) || {};
+    syncManager.setLocalAwareness({ ...prev, detecting: true, job, t: Date.now() });
 }
 
 function clearDetectingState() {
-    const prev = provider.awareness.getLocalState() || {};
+    const states = getActiveStates();
+    const prev = { ...(states.get(mesh.localPeerId) || {}) };
     delete prev.detecting;
     delete prev.job;
-    provider.awareness.setLocalState({ ...prev, t: Date.now() });
+    syncManager.setLocalAwareness({ ...prev, t: Date.now() });
 }
 
-/**
- * Get a deterministic partition for this peer among available peers.
- * Excludes peers that are busy running their own (different) detection,
- * so only idle helpers + the requester participate.
- *
- * @param {string} jobId — the job being partitioned; peers with a
- *   *different* job in their awareness state are excluded.
- */
 function getPeerPartition(jobId) {
     const states = getActiveStates();
-    const myId = provider.awareness.clientID;
+    const myId = mesh.localPeerId;
     const ids = [];
     states.forEach((state, id) => {
-        // Exclude peers busy with a different job
         if (state.detecting && state.job && state.job.id !== jobId) return;
         ids.push(id);
     });
@@ -436,15 +276,12 @@ function startHelpingDetection(job, peerIndex, peerCount) {
         if (msg.type === 'blockDetections') {
             cacheBlockResult(msg.blockId, msg.date, msg.detections);
         } else if (msg.type === 'done') {
-
             stopHelping();
         } else if (msg.type === 'error') {
-
             stopHelping();
         }
     };
     _helpWorker.onerror = () => stopHelping();
-
 
     _helpWorker.postMessage({
         bbox: job.bbox, epsg: job.epsg,
@@ -454,15 +291,12 @@ function startHelpingDetection(job, peerIndex, peerCount) {
     });
 }
 
-// Single awareness listener for all distributed detection coordination.
-// Handles both requester-side (peer count changed, restart own worker) and
-// helper-side (idle peer joins/leaves/stops helping another peer's job).
-provider.awareness.on('change', () => {
+// Awareness listener for distributed detection coordination
+syncManager.onAwarenessChange(() => {
     // Requester: update worker partition without restarting
     if (_isDetecting && _currentJob) {
         const { peerIndex, peerCount } = getPeerPartition(_currentJob.id);
         if (peerCount !== _currentPeerCount) {
-
             _currentPeerCount = peerCount;
             if (detectWorker) {
                 detectWorker.postMessage({ type: 'updatePeers', peerIndex, peerCount });
@@ -473,7 +307,7 @@ provider.awareness.on('change', () => {
 
     // Helper: look for a peer's job to assist with
     const states = getActiveStates();
-    const myId = provider.awareness.clientID;
+    const myId = mesh.localPeerId;
     let activeJob = null;
     states.forEach((state, id) => {
         if (id !== myId && state.detecting && state.job) activeJob = state.job;
@@ -485,12 +319,10 @@ provider.awareness.on('change', () => {
     } else if (activeJob && _helpingJobId === activeJob.id && _helpWorker) {
         const { peerIndex, peerCount } = getPeerPartition(activeJob.id);
         if (peerCount !== _helpingPeerCount) {
-
             _helpingPeerCount = peerCount;
             _helpWorker.postMessage({ type: 'updatePeers', peerIndex, peerCount });
         }
     } else if (!activeJob && _helpWorker) {
-
         stopHelping();
     }
 });
@@ -500,8 +332,6 @@ const RUNS_KEY = 'burnoff:runs';
 
 function viewportKey() {
     const c = map.getCenter();
-    // Round to 0.02° (~2km) — small enough that a real pan clears the state,
-    // large enough that tiny jitter doesn't.
     return `${Math.round(c.lat * 50) / 50},${Math.round(c.lng * 50) / 50}`;
 }
 
@@ -555,7 +385,7 @@ function initQuarterPicker() {
     const container = document.getElementById('quarter-picker');
     const now = new Date();
     const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth(); // 0-indexed
+    const currentMonth = now.getMonth();
     const currentQuarter = Math.floor(currentMonth / 3) + 1;
 
     const years = [currentYear - 3, currentYear - 2, currentYear - 1, currentYear];
@@ -577,7 +407,6 @@ function initQuarterPicker() {
             btn.textContent = `Q${q}`;
             btn.dataset.year = year;
             btn.dataset.quarter = q;
-            // Default: current quarter selected
             if (year === currentYear && q === currentQuarter) btn.classList.add('active');
             btn.addEventListener('click', () => toggleQuarter(btn));
             row.appendChild(btn);
@@ -590,7 +419,6 @@ function initQuarterPicker() {
 function toggleQuarter(btn) {
     const wasActive = btn.classList.contains('active');
     const activeCount = document.querySelectorAll('.quarter-btn.active').length;
-    // Prevent deselecting the last active quarter
     if (wasActive && activeCount <= 1) return;
     btn.classList.toggle('active');
     updateDetectButton();
@@ -603,7 +431,7 @@ function getSelectedDateRange() {
     const quarterStart = (year, q) => `${year}-${String((q - 1) * 3 + 1).padStart(2, '0')}-01`;
     const quarterEnd = (year, q) => {
         const endMonth = q * 3;
-        const d = new Date(year, endMonth, 0); // last day of end month
+        const d = new Date(year, endMonth, 0);
         return `${year}-${String(endMonth).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     };
 
@@ -700,7 +528,6 @@ function renderIntensityChart(detections, onSelectDate) {
     let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
     svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
 
-    // Year labels at Jan 1st boundaries within the data range
     const firstYear = new Date(minDate).getFullYear();
     const lastYear = new Date(maxDate).getFullYear();
     for (let y = firstYear + 1; y <= lastYear; y++) {
@@ -794,7 +621,6 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         }
     });
 
-    // Snap list height to whole rows (fewer on small screens)
     const MAX_VISIBLE_ROWS = window.innerWidth <= 768 ? 4 : 7;
     const items = list.querySelectorAll('.event-item');
     if (items.length > 0) {
@@ -805,7 +631,6 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
 
     if (firstItem && !skipAutoSelect) selectDetection(firstItem.det, firstItem.item);
 
-    // Release focus from map canvas so document keydown fires immediately
     document.activeElement?.blur();
 
     if (detections.length === 0) {
@@ -1014,21 +839,17 @@ function haversineM(lat1, lon1, lat2, lon2) {
 function crossDateCluster(allDetections) {
     if (allDetections.length === 0) return [];
 
-    // Sort brightest first so cluster anchors are the strongest detections.
     const sorted = allDetections.slice().sort((a, b) => b.max_b12 - a.max_b12);
 
-    // Grid-based spatial index: bucket anchors into ~50m cells so we only
-    // check nearby cells instead of scanning all clusters (O(n) vs O(n²)).
-    const CELL_DEG = MERGE_DISTANCE_M / 111320; // ~50m in degrees latitude
-    const grid = new Map(); // "row,col" → [cluster indices]
-    const clusters = [];    // [{anchor, members}]
+    const CELL_DEG = MERGE_DISTANCE_M / 111320;
+    const grid = new Map();
+    const clusters = [];
 
     for (const det of sorted) {
         const gRow = Math.floor(det.flare_lat / CELL_DEG);
         const gCol = Math.floor(det.flare_lon / CELL_DEG);
         let bestIdx = -1, bestDist = Infinity;
 
-        // Search 3×3 neighbourhood
         for (let dr = -1; dr <= 1; dr++) {
             for (let dc = -1; dc <= 1; dc++) {
                 const key = `${gRow + dr},${gCol + dc}`;
@@ -1079,7 +900,6 @@ function crossDateCluster(allDetections) {
                 max_b12: anchor.max_b12,
                 detection_count: deduped.length,
                 detections: deduped.map(d => {
-                    const se = d.sun_elevation;
                     return {
                         date: d.date, max_b12: d.max_b12, pixels: d.pixels,
                         cog_b12: d.cog_b12, epsg: d.epsg, utm_bounds: d.utm_bounds,
@@ -1155,9 +975,6 @@ function launchDetectWorker(job) {
 
     const { peerIndex, peerCount } = getPeerPartition(job.id);
     _currentPeerCount = peerCount;
-    if (peerCount > 1) {
-
-    }
 
     const bar = document.getElementById('detect-bar');
     const text = document.getElementById('detect-text');
@@ -1224,18 +1041,15 @@ async function startDetection() {
     const dateRange = getSelectedDateRange();
 
     const job = {
-        id: `${provider.awareness.clientID}-${Date.now()}`,
+        id: `${mesh.localPeerId}-${Date.now()}`,
         bbox, epsg,
         startDate: dateRange?.startDate,
         endDate: dateRange?.endDate
     };
     _currentJob = job;
 
-    // Broadcast job via awareness — idle peers auto-join via the
-    // unified awareness listener above
     setDetectingState(job);
 
-    // Brief delay to let awareness propagate so helpers can join
     await new Promise(r => setTimeout(r, 200));
 
     launchDetectWorker(job);
@@ -1253,13 +1067,11 @@ function resetDetectUI() {
 function finishDetection(stats) {
     flushNow();
 
-    // Rebuild from CRDT after flush, then cluster once
     rebuildDetections();
     const features = crossDateCluster(allRawDetections);
     const src = map.getSource('client-detections');
     if (src) src.setData({ type: 'FeatureCollection', features });
 
-    // Count only clusters from this session's new detections
     const sessionDetections = _preSessionKeys
         ? allRawDetections.filter(d => !_preSessionKeys.has(`${d.block_id}:${d.date}`))
         : allRawDetections;
@@ -1268,7 +1080,6 @@ function finishDetection(stats) {
     _isDetecting = false;
     _preSessionKeys = null;
 
-    // Mark selected quarters as detected for this viewport
     const activeBtns = document.querySelectorAll('.quarter-btn.active');
     const quarters = Array.from(activeBtns).map(btn => ({
         year: parseInt(btn.dataset.year),
@@ -1310,9 +1121,42 @@ map.on('moveend', () => {
 map.on('load', () => {
     updateMapCentre();
 
-    // Detections are restored from Yjs IndexedDB + peers via the observer.
-    // Trigger an update in case persistence synced before the map loaded.
+    // Detections restored from IndexedDB + peers via onChange callback.
     scheduleDetectionUpdate();
+
+    // LNG terminal dots
+    fetch('terminals.geojson').then(r => r.json()).then(geojson => {
+        map.addSource('lng-terminals', { type: 'geojson', data: geojson });
+        map.addLayer({
+            id: 'lng-terminal-dots',
+            type: 'circle',
+            source: 'lng-terminals',
+            paint: {
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 4, 6, 6, 12, 9],
+                'circle-color': '#ffffff',
+                'circle-opacity': 0.55,
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 1,
+                'circle-stroke-opacity': 0.4
+            }
+        });
+
+        const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'terminal-popup', offset: 10 });
+
+        map.on('mousemove', 'lng-terminal-dots', e => {
+            map.getCanvas().style.cursor = 'pointer';
+            const f = e.features[0];
+            const p = f.properties;
+            const cap = p.capacity_mtpa ? `${p.capacity_mtpa} mtpa` : '\u2014';
+            popup.setLngLat(e.lngLat)
+                .setHTML(`<strong>${p.name}</strong><br>${p.country} \u00b7 ${p.type}<br>${cap}`)
+                .addTo(map);
+        });
+        map.on('mouseleave', 'lng-terminal-dots', () => {
+            map.getCanvas().style.cursor = '';
+            popup.remove();
+        });
+    });
 
     map.addSource('selection-highlight', {
         type: 'geojson',
