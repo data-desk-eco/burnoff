@@ -267,8 +267,61 @@ function scheduleDetectionUpdate() {
     }, 50);
 }
 
+// ---------------------------------------------------------------------------
+// Detection sanitisation — reject invalid entries written by peers
+// ---------------------------------------------------------------------------
+
+const COG_URL_ALLOWLIST = [
+    'https://earth-search.aws.element84.com/',
+    'https://sentinel-cogs.s3.us-west-2.amazonaws.com/',
+    'https://sentinel-cogs.s3.amazonaws.com/',
+];
+
+function isAllowedCogUrl(url) {
+    if (!url) return true; // missing is OK (some detections lack imagery)
+    if (typeof url !== 'string') return false;
+    return COG_URL_ALLOWLIST.some(prefix => url.startsWith(prefix));
+}
+
+function validateDetection(d) {
+    if (!d || typeof d !== 'object') return false;
+    if (typeof d.flare_lat !== 'number' || !Number.isFinite(d.flare_lat)) return false;
+    if (typeof d.flare_lon !== 'number' || !Number.isFinite(d.flare_lon)) return false;
+    if (d.flare_lat < -90 || d.flare_lat > 90) return false;
+    if (d.flare_lon < -180 || d.flare_lon > 180) return false;
+    if (typeof d.max_b12 !== 'number' || !Number.isFinite(d.max_b12)) return false;
+    if (d.max_b12 < 0 || d.max_b12 > 10) return false;
+    if (typeof d.pixels !== 'number' || d.pixels < 1 || d.pixels > 10000) return false;
+    if (typeof d.date !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(d.date)) return false;
+    if (!isAllowedCogUrl(d.cog_b12)) return false;
+    return true;
+}
+
+function sanitizeDetections(key, dets) {
+    if (!Array.isArray(dets)) return null;
+    if (dets.length > 500) return null; // unreasonably large for a single block
+    const valid = dets.filter(validateDetection);
+    return valid.length > 0 ? valid : null;
+}
+
 // Subscribe to CRDT changes (local writes, IndexedDB restore, remote peers)
 detectionMap.observe((event) => {
+    // Sanitize changed keys — delete or replace entries that fail validation
+    const toDelete = [];
+    const toReplace = [];
+    for (const [key, change] of event.changes.keys) {
+        if (change.action === 'delete') continue;
+        const raw = detectionMap.get(key);
+        const clean = sanitizeDetections(key, raw);
+        if (clean === null) toDelete.push(key);
+        else if (clean.length !== raw.length) toReplace.push({ key, clean });
+    }
+    if (toDelete.length > 0 || toReplace.length > 0) {
+        ydoc.transact(() => {
+            for (const key of toDelete) detectionMap.delete(key);
+            for (const { key, clean } of toReplace) detectionMap.set(key, clean);
+        });
+    }
     scheduleDetectionUpdate();
 });
 
