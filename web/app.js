@@ -286,14 +286,22 @@ function clearDetectingState() {
 }
 
 /**
- * Get a deterministic partition for this peer among all connected peers.
- * Every peer gets an index into a sorted list of all awareness client IDs.
+ * Get a deterministic partition for this peer among available peers.
+ * Excludes peers that are busy running their own (different) detection,
+ * so only idle helpers + the requester participate.
+ *
+ * @param {string} jobId — the job being partitioned; peers with a
+ *   *different* job in their awareness state are excluded.
  */
-function getPeerPartition() {
+function getPeerPartition(jobId) {
     const states = provider.awareness.getStates();
     const myId = provider.awareness.clientID;
     const ids = [];
-    states.forEach((_state, id) => ids.push(id));
+    states.forEach((state, id) => {
+        // Exclude peers busy with a different job
+        if (state.detecting && state.job && state.job.id !== jobId) return;
+        ids.push(id);
+    });
     ids.sort((a, b) => a - b);
     const peerIndex = ids.indexOf(myId);
     return { peerIndex: Math.max(0, peerIndex), peerCount: ids.length };
@@ -360,8 +368,8 @@ provider.awareness.on('change', () => {
     });
 
     if (activeJob && _helpingJobId !== activeJob.id) {
-        // New job to help with — compute partition across ALL peers
-        const { peerIndex, peerCount } = getPeerPartition();
+        // New job to help with — partition excludes peers busy with other jobs
+        const { peerIndex, peerCount } = getPeerPartition(activeJob.id);
         if (peerCount > 1) {
             startHelpingDetection(activeJob, peerIndex, peerCount);
         }
@@ -1043,7 +1051,7 @@ async function startDetection() {
 
     // Brief delay to let awareness propagate so helpers can join
     await new Promise(r => setTimeout(r, 200));
-    const { peerIndex, peerCount } = getPeerPartition();
+    const { peerIndex, peerCount } = getPeerPartition(job.id);
     if (peerCount > 1) {
         p2pLog(`distributed: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
     }
