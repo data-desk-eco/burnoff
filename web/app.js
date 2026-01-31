@@ -71,6 +71,48 @@ function smoothScrollDebugBar(el) {
 
 p2pLog('p2p init — room: burnoff-global', 'p2p-info');
 
+// ---------------------------------------------------------------------------
+// P2P connection lifecycle logging
+// ---------------------------------------------------------------------------
+
+// Log signaling WebSocket state changes
+for (const sigConn of (provider.signalingConns || [])) {
+    const ws = sigConn.ws;  // lib0 WebsocketClient
+    if (!ws) continue;
+    const origOnOpen = ws.onconnect;
+    ws.onconnect = () => {
+        p2pLog(`signal: connected to ${sigConn.url}`, 'p2p-info');
+        if (origOnOpen) origOnOpen();
+    };
+    const origOnClose = ws.ondisconnect;
+    ws.ondisconnect = () => {
+        p2pLog(`signal: disconnected from ${sigConn.url}`, 'p2p-info');
+        if (origOnClose) origOnClose();
+    };
+}
+
+// Poll internal provider state every 3s — shows exactly where iOS gets stuck
+let _lastDebugState = '';
+setInterval(() => {
+    const room = provider.room;
+    const sig = (provider.signalingConns || []).map(c => {
+        const ws = c.ws;
+        if (!ws) return 'no-ws';
+        if (ws.connected) return 'ok';
+        if (ws.connecting) return 'connecting';
+        return 'closed';
+    }).join(',');
+    const webrtc = room ? room.webrtcConns.size : '?';
+    const bc = room ? (room.bcConns || new Set()).size : '?';
+    const awareness = provider.awareness.getStates().size;
+    const connected = provider.connected;
+    const state = `sig=[${sig}] rtc=${webrtc} bc=${bc} aware=${awareness} conn=${connected}`;
+    if (state !== _lastDebugState) {
+        p2pLog(`state: ${state}`, 'p2p-info');
+        _lastDebugState = state;
+    }
+}, 3000);
+
 // Initialize map
 const map = new maplibregl.Map({
     container: 'map',
@@ -262,6 +304,10 @@ provider.awareness.on('change', updatePeerStatus);
 provider.on('synced', () => {
     updatePeerStatus();
     p2pLog('webrtc synced', 'p2p-info');
+});
+provider.on('peers', ({ added, removed, webrtcPeers, bcPeers }) => {
+    if (added.length) p2pLog(`rtc peer added: ${added.length} (total rtc=${webrtcPeers.length} bc=${bcPeers.length})`, 'p2p-peer');
+    if (removed.length) p2pLog(`rtc peer removed: ${removed.length} (total rtc=${webrtcPeers.length} bc=${bcPeers.length})`, 'p2p-peer');
 });
 updatePeerStatus();
 
