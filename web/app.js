@@ -167,8 +167,34 @@ window.addEventListener('beforeunload', () => {
 // ---------------------------------------------------------------------------
 
 const P2P_DEBUG_MAX = 80;
+const P2P_SCROLL_PX_PER_SEC = 80;   // steady ticker speed
 
-let _p2pScrollRAF = null;
+// Persistent ticker-tape scroll loop — runs once, advances scrollLeft at a
+// constant rate toward the right edge so new entries glide in smoothly.
+(function initDebugTicker() {
+    const el = document.getElementById('p2p-debug');
+    if (!el) return;
+    const t0 = performance.now();
+    let prev = null;
+    function tick(now) {
+        if (prev === null) prev = now;
+        const dt = (now - prev) / 1000;
+        prev = now;
+        const target = el.scrollWidth - el.clientWidth;
+        // Snap instantly during first second (init burst), then gentle ticker
+        if (now - t0 < 1000) {
+            el.scrollLeft = target;
+        } else {
+            const dist = target - el.scrollLeft;
+            if (dist > 0.5) {
+                const speed = P2P_SCROLL_PX_PER_SEC * (1 + dist / 400);
+                el.scrollLeft += Math.min(dist, speed * dt);
+            }
+        }
+        requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+})();
 
 function p2pLog(text, cls) {
     const el = document.getElementById('p2p-debug');
@@ -180,34 +206,10 @@ function p2pLog(text, cls) {
                String(now.getMinutes()).padStart(2, '0') + ':' +
                String(now.getSeconds()).padStart(2, '0');
     span.textContent = `[${ts}] ${text}`;
-    // Remove animation class after it finishes
     span.addEventListener('animationend', () => span.classList.remove('p2p-enter'), { once: true });
     el.appendChild(span);
-    // trim old entries (remove from left — oldest)
+    // trim old entries
     while (el.children.length > P2P_DEBUG_MAX) el.removeChild(el.firstChild);
-    // smooth-scroll to newest entry
-    if (!_p2pScrollRAF) {
-        _p2pScrollRAF = requestAnimationFrame(() => {
-            _p2pScrollRAF = null;
-            smoothScrollDebugBar(el);
-        });
-    }
-}
-
-function smoothScrollDebugBar(el) {
-    const target = el.scrollWidth - el.clientWidth;
-    const current = el.scrollLeft;
-    const dist = target - current;
-    if (dist <= 1) { el.scrollLeft = target; return; }
-    const start = performance.now();
-    const duration = Math.min(400, Math.max(150, dist * 2));
-    function step(now) {
-        const t = Math.min(1, (now - start) / duration);
-        const ease = t * (2 - t); // ease-out quad
-        el.scrollLeft = current + dist * ease;
-        if (t < 1) requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
 }
 
 p2pLog(`p2p init — signaling: ${_sigUrl}`, 'p2p-info');
