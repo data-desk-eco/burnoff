@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "playwright": "^1.58.1",
-    "ws": "^8.18.0",
+    "ws": "^8.19.0",
     "y-indexeddb": "^9.0.12",
     "yjs": "^13.6.29"
   }
