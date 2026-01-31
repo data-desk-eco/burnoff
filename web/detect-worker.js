@@ -412,12 +412,14 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
 
     const allDetections = [];
 
+    // Collect blocks that need processing
+    const blocksToProcess = [];
     for (let br = blockRow0; br < blockRow1; br++) {
         for (let bc = blockCol0; bc < blockCol1; bc++) {
             const blockId = `${mgrs}_${br}_${bc}`;
             const cacheKey = `${blockId}:${imgDate}`;
 
-            // Skip cached blocks — main thread will load from localStorage
+            // Skip cached blocks
             if (cachedBlockDates.has(cacheKey)) {
                 self.postMessage({ type: 'cachedBlock', blockId, date: imgDate });
                 onBlockDone(imgDate, br, bc, true);
@@ -425,7 +427,6 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
             }
 
             // Distributed detection: deterministic partition across peers
-            // Uses a simple hash of the block key so each peer processes ~1/N blocks
             if (peerCount > 1) {
                 let h = 0;
                 for (let ci = 0; ci < cacheKey.length; ci++) {
@@ -437,9 +438,22 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
                 }
             }
 
-            await ensureBandsOpen();
+            blocksToProcess.push({ br, bc, blockId });
+        }
+    }
 
-            // Compute read window with overlap
+    if (blocksToProcess.length === 0) return allDetections;
+
+    await ensureBandsOpen();
+
+    // Process blocks with concurrency to overlap network I/O
+    const CONCURRENCY = 4;
+    let idx = 0;
+
+    async function processNext() {
+        while (idx < blocksToProcess.length) {
+            const { br, bc, blockId } = blocksToProcess[idx++];
+
             const x0 = Math.max(0, bc * BLOCK_SIZE - BLOCK_OVERLAP);
             const y0 = Math.max(0, br * BLOCK_SIZE - BLOCK_OVERLAP);
             const x1 = Math.min(imgWidth, (bc + 1) * BLOCK_SIZE + BLOCK_OVERLAP);
@@ -478,6 +492,13 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
         }
     }
 
+    // Launch concurrent workers
+    const workers = [];
+    for (let i = 0; i < Math.min(CONCURRENCY, blocksToProcess.length); i++) {
+        workers.push(processNext());
+    }
+    await Promise.all(workers);
+
     return allDetections;
 }
 
@@ -504,24 +525,40 @@ self.onmessage = async function(e) {
         progress(`Found ${items.length} images`, 5);
 
         let totalDetections = 0;
+        let imagesCompleted = 0;
 
-        for (let i = 0; i < items.length; i++) {
-            const pct = 5 + (i / items.length) * 90;
-            const dt = items[i].properties.datetime.slice(0, 10);
-            progress(`Processing ${dt}`, pct);
+        // Process images with limited concurrency (each image has its own
+        // block-level concurrency, so keep image parallelism modest)
+        const IMG_CONCURRENCY = 2;
+        let imgIdx = 0;
 
-            try {
-                const dets = await processImageBlocks(
-                    items[i], bbox, epsg, cachedBlockDates,
-                    () => {},
-                    () => {},
-                    peerIndex, peerCount
-                );
-                totalDetections += dets.length;
-            } catch (err) {
-                console.warn(`Failed to process image:`, err);
+        async function processNextImage() {
+            while (imgIdx < items.length) {
+                const i = imgIdx++;
+                const dt = items[i].properties.datetime.slice(0, 10);
+                progress(`Processing ${dt}`, 5 + (i / items.length) * 90);
+
+                try {
+                    const dets = await processImageBlocks(
+                        items[i], bbox, epsg, cachedBlockDates,
+                        () => {},
+                        () => {},
+                        peerIndex, peerCount
+                    );
+                    totalDetections += dets.length;
+                } catch (err) {
+                    console.warn(`Failed to process image:`, err);
+                }
+                imagesCompleted++;
+                progress(`Processed ${imagesCompleted}/${items.length}`, 5 + (imagesCompleted / items.length) * 90);
             }
         }
+
+        const imgWorkers = [];
+        for (let i = 0; i < Math.min(IMG_CONCURRENCY, items.length); i++) {
+            imgWorkers.push(processNextImage());
+        }
+        await Promise.all(imgWorkers);
 
         self.postMessage({
             type: 'done',
