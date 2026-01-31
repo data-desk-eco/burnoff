@@ -136,8 +136,12 @@ function broadcastSyncStep1() {
 }
 
 function uint8ToBase64(bytes) {
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const CHUNK = 8192;
     let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    for (let i = 0; i < arr.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, arr.subarray(i, i + CHUNK));
+    }
     return btoa(binary);
 }
 
@@ -513,13 +517,15 @@ function startHelpingDetection(job, peerIndex, peerCount) {
 // Handles both requester-side (peer count changed, restart own worker) and
 // helper-side (idle peer joins/leaves/stops helping another peer's job).
 provider.awareness.on('change', () => {
-    // Requester: restart our own worker if peer count changed
+    // Requester: update worker partition without restarting
     if (_isDetecting && _currentJob) {
-        const { peerCount } = getPeerPartition(_currentJob.id);
+        const { peerIndex, peerCount } = getPeerPartition(_currentJob.id);
         if (peerCount !== _currentPeerCount) {
-            p2pLog(`peers changed ${_currentPeerCount}→${peerCount}, restarting`, 'p2p-info');
-            flushNow();
-            launchDetectWorker(_currentJob);
+            p2pLog(`peers changed ${_currentPeerCount}→${peerCount}`, 'p2p-info');
+            _currentPeerCount = peerCount;
+            if (detectWorker) {
+                detectWorker.postMessage({ type: 'updatePeers', peerIndex, peerCount });
+            }
         }
         return;
     }
@@ -538,8 +544,9 @@ provider.awareness.on('change', () => {
     } else if (activeJob && _helpingJobId === activeJob.id && _helpWorker) {
         const { peerIndex, peerCount } = getPeerPartition(activeJob.id);
         if (peerCount !== _helpingPeerCount) {
-            p2pLog(`peers changed ${_helpingPeerCount}→${peerCount}, restarting help`, 'p2p-info');
-            startHelpingDetection(activeJob, peerIndex, peerCount);
+            p2pLog(`peers changed ${_helpingPeerCount}→${peerCount}`, 'p2p-info');
+            _helpingPeerCount = peerCount;
+            _helpWorker.postMessage({ type: 'updatePeers', peerIndex, peerCount });
         }
     } else if (!activeJob && _helpWorker) {
         p2pLog('help stopped — requester done', 'p2p-info');
@@ -1066,24 +1073,43 @@ function crossDateCluster(allDetections) {
     // Sort brightest first so cluster anchors are the strongest detections.
     const sorted = allDetections.slice().sort((a, b) => b.max_b12 - a.max_b12);
 
-    // Anchor-based clustering: each detection joins the nearest cluster whose
-    // anchor is within MERGE_DISTANCE_M, or starts a new cluster. No transitive
-    // chaining — prevents nearby but distinct flares from merging.
-    const clusters = [];  // [{anchor, members}]
+    // Grid-based spatial index: bucket anchors into ~50m cells so we only
+    // check nearby cells instead of scanning all clusters (O(n) vs O(n²)).
+    const CELL_DEG = MERGE_DISTANCE_M / 111320; // ~50m in degrees latitude
+    const grid = new Map(); // "row,col" → [cluster indices]
+    const clusters = [];    // [{anchor, members}]
+
     for (const det of sorted) {
+        const gRow = Math.floor(det.flare_lat / CELL_DEG);
+        const gCol = Math.floor(det.flare_lon / CELL_DEG);
         let bestIdx = -1, bestDist = Infinity;
-        for (let c = 0; c < clusters.length; c++) {
-            const a = clusters[c].anchor;
-            const d = haversineM(det.flare_lat, det.flare_lon, a.flare_lat, a.flare_lon);
-            if (d <= MERGE_DISTANCE_M && d < bestDist) {
-                bestDist = d;
-                bestIdx = c;
+
+        // Search 3×3 neighbourhood
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                const key = `${gRow + dr},${gCol + dc}`;
+                const bucket = grid.get(key);
+                if (!bucket) continue;
+                for (const ci of bucket) {
+                    const a = clusters[ci].anchor;
+                    const d = haversineM(det.flare_lat, det.flare_lon, a.flare_lat, a.flare_lon);
+                    if (d <= MERGE_DISTANCE_M && d < bestDist) {
+                        bestDist = d;
+                        bestIdx = ci;
+                    }
+                }
             }
         }
+
         if (bestIdx >= 0) {
             clusters[bestIdx].members.push(det);
         } else {
+            const ci = clusters.length;
             clusters.push({ anchor: det, members: [det] });
+            const key = `${gRow},${gCol}`;
+            const bucket = grid.get(key);
+            if (bucket) bucket.push(ci);
+            else grid.set(key, [ci]);
         }
     }
 
