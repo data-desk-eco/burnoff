@@ -340,7 +340,7 @@ async function processBlock(opts) {
 // Block-based image processing
 // ---------------------------------------------------------------------------
 
-async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, onEnumerated, onBlockDone) {
+async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, onEnumerated, onBlockDone, peerIndex, peerCount) {
     const assets = item.assets;
     const b12Url = assets.swir22?.href;
     const b11Url = assets.swir16?.href;
@@ -424,6 +424,19 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
                 continue;
             }
 
+            // Distributed detection: deterministic partition across peers
+            // Uses a simple hash of the block key so each peer processes ~1/N blocks
+            if (peerCount > 1) {
+                let h = 0;
+                for (let ci = 0; ci < cacheKey.length; ci++) {
+                    h = ((h << 5) - h + cacheKey.charCodeAt(ci)) | 0;
+                }
+                if (((h >>> 0) % peerCount) !== peerIndex) {
+                    onBlockDone(imgDate, br, bc, true);
+                    continue;
+                }
+            }
+
             await ensureBandsOpen();
 
             // Compute read window with overlap
@@ -473,8 +486,11 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
 // ---------------------------------------------------------------------------
 
 self.onmessage = async function(e) {
-    const { bbox, epsg, startDate, endDate, cachedBlockDates: cachedArr } = e.data;
+    const { bbox, epsg, startDate, endDate, cachedBlockDates: cachedArr,
+            peerIndex: pi, peerCount: pc } = e.data;
     const cachedBlockDates = new Set(cachedArr || []);
+    const peerIndex = pi || 0;
+    const peerCount = pc || 1;
 
     try {
         progress('SEARCHING CATALOGUE', 0);
@@ -498,7 +514,8 @@ self.onmessage = async function(e) {
                 const dets = await processImageBlocks(
                     items[i], bbox, epsg, cachedBlockDates,
                     () => {},
-                    () => {}
+                    () => {},
+                    peerIndex, peerCount
                 );
                 totalDetections += dets.length;
             } catch (err) {

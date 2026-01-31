@@ -14,9 +14,17 @@ const processedMap = ydoc.getMap('processed');     // block_id:date → timestam
 const persistence = new IndexeddbPersistence('burnoff', ydoc);
 
 // P2P mesh — all Burnoff users share one room
+// Multiple signaling servers for faster, more reliable peer discovery
 const provider = new WebrtcProvider('burnoff-global', ydoc, {
-    signaling: ['wss://signaling.yjs.dev']
+    signaling: [
+        'wss://signaling.yjs.dev',
+        'wss://y-webrtc-signaling-eu.herokuapp.com',
+        'wss://y-webrtc-signaling-us.herokuapp.com'
+    ]
 });
+
+// Immediately set awareness state so signaling announces us to peers right away
+provider.awareness.setLocalState({ active: true, t: Date.now() });
 
 // ---------------------------------------------------------------------------
 // P2P debug bar
@@ -256,6 +264,123 @@ provider.on('synced', () => {
     p2pLog('webrtc synced', 'p2p-info');
 });
 updatePeerStatus();
+
+// Poll peer status every 2s as a fallback — awareness change events can be
+// missed when the WebRTC data channel connects slightly after signaling.
+setInterval(updatePeerStatus, 2000);
+
+// ---------------------------------------------------------------------------
+// Awareness helpers for distributed detection
+// ---------------------------------------------------------------------------
+
+function setDetectingState(job) {
+    const prev = provider.awareness.getLocalState() || {};
+    provider.awareness.setLocalState({ ...prev, detecting: true, job, t: Date.now() });
+}
+
+function clearDetectingState() {
+    const prev = provider.awareness.getLocalState() || {};
+    delete prev.detecting;
+    delete prev.job;
+    provider.awareness.setLocalState({ ...prev, t: Date.now() });
+}
+
+/**
+ * Get a deterministic partition for this peer among available peers.
+ * Excludes peers that are busy running their own (different) detection,
+ * so only idle helpers + the requester participate.
+ *
+ * @param {string} jobId — the job being partitioned; peers with a
+ *   *different* job in their awareness state are excluded.
+ */
+function getPeerPartition(jobId) {
+    const states = provider.awareness.getStates();
+    const myId = provider.awareness.clientID;
+    const ids = [];
+    states.forEach((state, id) => {
+        // Exclude peers busy with a different job
+        if (state.detecting && state.job && state.job.id !== jobId) return;
+        ids.push(id);
+    });
+    ids.sort((a, b) => a - b);
+    const peerIndex = ids.indexOf(myId);
+    return { peerIndex: Math.max(0, peerIndex), peerCount: ids.length };
+}
+
+// --- Helper worker for assisting a peer's detection ---
+let _helpWorker = null;
+let _helpingJobId = null;   // tracks which job we're helping with
+
+function startHelpingDetection(job, peerIndex, peerCount) {
+    if (_helpWorker) { _helpWorker.terminate(); _helpWorker = null; }
+    _helpingJobId = job.id;
+
+    const cachedBlockDates = getCachedBlockKeys();
+    _helpWorker = new Worker('detect-worker.js');
+
+    _helpWorker.onmessage = function(e) {
+        const msg = e.data;
+        if (msg.type === 'blockDetections') {
+            cacheBlockResult(msg.blockId, msg.date, msg.detections);
+        } else if (msg.type === 'done') {
+            const s = msg.stats;
+            p2pLog(`help done: ${s.images} img, ${s.rawDetections} flares`, 'p2p-up');
+            _helpWorker = null;
+            _helpingJobId = null;
+        } else if (msg.type === 'error') {
+            p2pLog(`help error: ${msg.message}`, 'p2p-info');
+            _helpWorker = null;
+            _helpingJobId = null;
+        }
+    };
+
+    _helpWorker.onerror = function() {
+        _helpWorker = null;
+        _helpingJobId = null;
+    };
+
+    p2pLog(`helping: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
+
+    _helpWorker.postMessage({
+        bbox: job.bbox,
+        epsg: job.epsg,
+        startDate: job.startDate,
+        endDate: job.endDate,
+        cachedBlockDates,
+        peerIndex,
+        peerCount
+    });
+}
+
+// Watch for peers that start detecting — automatically help them
+provider.awareness.on('change', () => {
+    // Don't help if we're running our own detection
+    if (_isDetecting) return;
+
+    const states = provider.awareness.getStates();
+    const myId = provider.awareness.clientID;
+
+    // Find any peer that is detecting
+    let activeJob = null;
+    states.forEach((state, id) => {
+        if (id === myId) return;
+        if (state.detecting && state.job) activeJob = state.job;
+    });
+
+    if (activeJob && _helpingJobId !== activeJob.id) {
+        // New job to help with — partition excludes peers busy with other jobs
+        const { peerIndex, peerCount } = getPeerPartition(activeJob.id);
+        if (peerCount > 1) {
+            startHelpingDetection(activeJob, peerIndex, peerCount);
+        }
+    } else if (!activeJob && _helpWorker) {
+        // Requesting peer finished or disconnected — stop helping
+        _helpWorker.terminate();
+        _helpWorker = null;
+        _helpingJobId = null;
+        p2pLog('help stopped — requester done', 'p2p-info');
+    }
+});
 
 // Viewport-keyed detection run tracking for quarter indicators
 const RUNS_KEY = 'burnoff:runs';
@@ -887,7 +1012,7 @@ function updateDetectionSource() {
     if (src) src.setData({ type: 'FeatureCollection', features });
 }
 
-function startDetection() {
+async function startDetection() {
     if (map.getZoom() < MIN_DETECT_ZOOM) {
         alert('Zoom in to at least level 11 before running detection.');
         return;
@@ -911,6 +1036,25 @@ function startDetection() {
 
     const bbox = getViewportBbox();
     const epsg = guessEpsg(bbox);
+    const dateRange = getSelectedDateRange();
+
+    // Build a job descriptor shared with all peers so they can help
+    const job = {
+        id: `${provider.awareness.clientID}-${Date.now()}`,
+        bbox, epsg,
+        startDate: dateRange?.startDate,
+        endDate: dateRange?.endDate
+    };
+
+    // Broadcast job via awareness — all idle peers auto-join
+    setDetectingState(job);
+
+    // Brief delay to let awareness propagate so helpers can join
+    await new Promise(r => setTimeout(r, 200));
+    const { peerIndex, peerCount } = getPeerPartition(job.id);
+    if (peerCount > 1) {
+        p2pLog(`distributed: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
+    }
 
     // Load cached block keys to send to worker
     const cachedBlockDates = getCachedBlockKeys();
@@ -928,8 +1072,10 @@ function startDetection() {
         } else if (msg.type === 'cachedBlock') {
             // Already in CRDT from initial load — nothing to do
         } else if (msg.type === 'done') {
+            clearDetectingState();
             finishDetection(msg.stats);
         } else if (msg.type === 'error') {
+            clearDetectingState();
             _isDetecting = false;
             bar.style.width = '100%';
             bar.style.background = 'rgba(255,80,80,0.4)';
@@ -939,6 +1085,7 @@ function startDetection() {
     };
 
     detectWorker.onerror = function(err) {
+        clearDetectingState();
         _isDetecting = false;
         console.error('Worker error:', err);
         bar.style.width = '100%';
@@ -947,12 +1094,13 @@ function startDetection() {
         setTimeout(resetDetectUI, 3000);
     };
 
-    const dateRange = getSelectedDateRange();
     detectWorker.postMessage({
         bbox, epsg,
-        startDate: dateRange?.startDate,
-        endDate: dateRange?.endDate,
-        cachedBlockDates
+        startDate: job.startDate,
+        endDate: job.endDate,
+        cachedBlockDates,
+        peerIndex,
+        peerCount
     });
 }
 
