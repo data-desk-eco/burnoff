@@ -587,8 +587,10 @@ function updateDetectButton() {
         const qKey = `${btn.dataset.year}_${btn.dataset.quarter}`;
         return !!detected[qKey];
     });
+    const tooZoomedOut = map.getZoom() < MIN_DETECT_ZOOM;
     const btn = document.getElementById('detect-btn');
-    btn.disabled = allDetected;
+    btn.disabled = allDetected || tooZoomedOut;
+    btn.title = tooZoomedOut ? 'Zoom in to at least level 11' : '';
 }
 
 
@@ -1235,11 +1237,6 @@ function cleanupDetection() {
 }
 
 async function startDetection() {
-    if (map.getZoom() < MIN_DETECT_ZOOM) {
-        alert('Zoom in to at least level 11 before running detection.');
-        return;
-    }
-
     if (detectWorker) { detectWorker.terminate(); detectWorker = null; }
     _isDetecting = true;
     _preSessionKeys = new Set(processedMap.keys());
@@ -1335,6 +1332,7 @@ let _quarterIndicatorTimeout;
 map.on('moveend', () => {
     clearTimeout(_quarterIndicatorTimeout);
     _quarterIndicatorTimeout = setTimeout(updateQuarterIndicators, 300);
+    updateDetectButton();
 });
 
 map.on('load', () => {
