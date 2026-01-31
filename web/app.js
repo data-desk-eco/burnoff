@@ -1,6 +1,6 @@
-import * as Y from 'https://cdn.jsdelivr.net/npm/yjs@13.6.29/+esm';
-import { WebrtcProvider } from 'https://cdn.jsdelivr.net/npm/y-webrtc@10.3.0/+esm';
-import { IndexeddbPersistence } from 'https://cdn.jsdelivr.net/npm/y-indexeddb@9.0.12/+esm';
+import * as Y from 'https://esm.sh/yjs@13.6.29';
+import { WebrtcProvider } from 'https://esm.sh/y-webrtc@10.3.0?deps=yjs@13.6.29';
+import { IndexeddbPersistence } from 'https://esm.sh/y-indexeddb@9.0.12?deps=yjs@13.6.29';
 
 // ---------------------------------------------------------------------------
 // P2P sync (Yjs CRDT)
@@ -1330,6 +1330,7 @@ document.getElementById('collapse-toggle').addEventListener('click', () => {
 document.addEventListener('keydown', e => {
     if (!document.getElementById('info').classList.contains('visible')) return;
     const key = e.key;
+    if (key === 'Escape') { closeInfo(); return; }
     let dir = 0;
     if (key === 'ArrowDown' || key === 'j') dir = 1;
     else if (key === 'ArrowUp' || key === 'k') dir = -1;
