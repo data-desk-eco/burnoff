@@ -5,7 +5,8 @@ Client-side Sentinel-2 SWIR flare detection.
 ## Commands
 
 ```bash
-make serve        # Dev server on :8000
+make serve        # Dev server on :8000 + signaling on :4444
+make signal       # Signaling server only
 ```
 
 ## Key Files
@@ -14,6 +15,7 @@ make serve        # Dev server on :8000
 - `web/app.js` - Map viewer, clustering, P2P sync
 - `web/style.css` - UI styles
 - `web/index.html` - Entry point
+- `signal-server.js` - WebRTC signaling relay (Node.js)
 
 ## Detection Algorithm
 
@@ -39,7 +41,10 @@ by `{mgrs}_{row}_{col}` and cached by `block_id:date`.
 ## P2P Sync
 
 Detection results are stored in a Yjs CRDT document, persisted locally via
-IndexedDB and synced across peers via WebRTC (y-webrtc, signaling.yjs.dev).
+IndexedDB and synced across peers via WebRTC (y-webrtc). Signaling is handled
+by `signal-server.js` — a lightweight WebSocket relay. In dev, the client
+auto-connects to `ws://<hostname>:4444`. For production, deploy signal-server.js
+and set the URL via `<meta name="signaling-url" content="wss://...">`.
 When a peer starts detection, other idle peers automatically help by processing
 a deterministic partition of the blocks.
 
