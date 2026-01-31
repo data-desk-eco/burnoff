@@ -166,80 +166,6 @@ window.addEventListener('beforeunload', () => {
     if (_syncWs) { _syncWs.close(); _syncWs = null; }
 });
 
-// ---------------------------------------------------------------------------
-// P2P debug bar
-// ---------------------------------------------------------------------------
-
-const P2P_DEBUG_MAX = 80;
-const P2P_SCROLL_PX_PER_SEC = 80;   // steady ticker speed
-
-// Persistent ticker-tape scroll loop — runs once, advances scrollLeft at a
-// constant rate toward the right edge so new entries glide in smoothly.
-(function initDebugTicker() {
-    const el = document.getElementById('p2p-debug');
-    if (!el) return;
-    const t0 = performance.now();
-    let prev = null;
-    function tick(now) {
-        if (prev === null) prev = now;
-        const dt = (now - prev) / 1000;
-        prev = now;
-        const target = el.scrollWidth - el.clientWidth;
-        // Snap instantly during first second (init burst), then gentle ticker
-        if (now - t0 < 1000) {
-            el.scrollLeft = target;
-        } else {
-            const dist = target - el.scrollLeft;
-            if (dist > 0.5) {
-                const speed = P2P_SCROLL_PX_PER_SEC * (1 + dist / 400);
-                el.scrollLeft += Math.min(dist, speed * dt);
-            }
-        }
-        requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-})();
-
-function p2pLog(text, cls) {
-    const el = document.getElementById('p2p-debug');
-    if (!el) return;
-    const span = document.createElement('span');
-    span.className = (cls ? cls + ' ' : '') + 'p2p-enter';
-    const now = new Date();
-    const ts = String(now.getHours()).padStart(2, '0') + ':' +
-               String(now.getMinutes()).padStart(2, '0') + ':' +
-               String(now.getSeconds()).padStart(2, '0');
-    span.textContent = `[${ts}] ${text}`;
-    span.addEventListener('animationend', () => span.classList.remove('p2p-enter'), { once: true });
-    el.appendChild(span);
-    // trim old entries
-    while (el.children.length > P2P_DEBUG_MAX) el.removeChild(el.firstChild);
-}
-
-p2pLog(`p2p init — signaling: ${_sigUrl}`, 'p2p-info');
-
-// Log signaling connect/disconnect via provider status events
-provider.on('status', ({ connected }) => {
-    p2pLog(`signal: ${connected ? 'connected' : 'disconnected'}`, 'p2p-info');
-});
-
-// Poll internal provider state every 5s for debug bar
-let _lastDebugState = '';
-setInterval(() => {
-    const room = provider.room;
-    // signalingConns are lib0 WebsocketClients — check .connected on them directly
-    const sig = (provider.signalingConns || []).map(c =>
-        c.connected ? 'ok' : c.connecting ? 'connecting' : 'closed'
-    ).join(',');
-    const webrtc = room ? room.webrtcConns.size : '?';
-    const awareness = getActiveStates().size;
-    const state = `sig=[${sig}] rtc=${webrtc} aware=${awareness}`;
-    if (state !== _lastDebugState) {
-        p2pLog(`state: ${state}`, 'p2p-info');
-        _lastDebugState = state;
-    }
-}, 5000);
-
 // Initialize map
 const map = new maplibregl.Map({
     container: 'map',
@@ -290,23 +216,15 @@ const FLUSH_BATCH_SIZE = 20;  // or when this many blocks accumulate
 function flushPendingBlocks() {
     if (_pendingBlocks.length === 0) return;
     const batch = _pendingBlocks.splice(0);
-    let flareBlocks = 0, totalFlares = 0;
     ydoc.transact(() => {
         for (const { blockId, date, detections } of batch) {
             const key = `${blockId}:${date}`;
             processedMap.set(key, Date.now());
             if (detections.length > 0) {
                 detectionMap.set(key, detections);
-                flareBlocks++;
-                totalFlares += detections.length;
             }
         }
     });
-    if (totalFlares > 0) {
-        p2pLog(`send: ${batch.length} blocks — ${totalFlares} flare${totalFlares !== 1 ? 's' : ''}`, 'p2p-up');
-    } else {
-        p2pLog(`send: ${batch.length} blocks — clear`, 'p2p-info');
-    }
 }
 
 function cacheBlockResult(blockId, date, detections) {
@@ -352,20 +270,6 @@ function scheduleDetectionUpdate() {
 // Subscribe to CRDT changes (local writes, IndexedDB restore, remote peers)
 detectionMap.observe((event) => {
     scheduleDetectionUpdate();
-    // Log remote changes (transaction.local === false means from a peer)
-    if (event.transaction.local) return;
-    let added = 0, updated = 0, flares = 0;
-    event.changes.keys.forEach((change, key) => {
-        if (change.action === 'add') { added++; }
-        else if (change.action === 'update') { updated++; }
-        const dets = detectionMap.get(key);
-        if (dets) flares += dets.length;
-    });
-    const parts = [];
-    if (added) parts.push(`${added} new block${added !== 1 ? 's' : ''}`);
-    if (updated) parts.push(`${updated} updated`);
-    if (flares) parts.push(`${flares} flare${flares !== 1 ? 's' : ''}`);
-    if (parts.length) p2pLog(`recv: ${parts.join(', ')}`, 'p2p-down');
 });
 
 // Migrate existing localStorage cache to Yjs (one-time)
@@ -392,8 +296,6 @@ function migrateFromLocalStorage() {
 }
 
 persistence.once('synced', () => {
-    const blocks = detectionMap.size;
-    p2pLog(`indexeddb loaded — ${blocks} block${blocks !== 1 ? 's' : ''} in cache`, 'p2p-info');
     migrateFromLocalStorage();
     scheduleDetectionUpdate();
 });
@@ -412,25 +314,11 @@ function updatePeerStatus() {
         el.textContent = 'no peers';
         el.classList.remove('active');
     }
-    if (peers !== _lastPeerCount) {
-        if (peers > _lastPeerCount) {
-            p2pLog(`peer joined — ${peers} connected`, 'p2p-peer');
-        } else {
-            p2pLog(`peer left — ${peers} connected`, 'p2p-peer');
-        }
-        _lastPeerCount = peers;
-    }
+    if (peers !== _lastPeerCount) _lastPeerCount = peers;
 }
 
 provider.awareness.on('change', updatePeerStatus);
-provider.on('synced', () => {
-    updatePeerStatus();
-    p2pLog('webrtc synced', 'p2p-info');
-});
-provider.on('peers', ({ added, removed, webrtcPeers, bcPeers }) => {
-    if (added.length) p2pLog(`rtc peer added: ${added.length} (total rtc=${webrtcPeers.length} bc=${bcPeers.length})`, 'p2p-peer');
-    if (removed.length) p2pLog(`rtc peer removed: ${removed.length} (total rtc=${webrtcPeers.length} bc=${bcPeers.length})`, 'p2p-peer');
-});
+provider.on('synced', updatePeerStatus);
 updatePeerStatus();
 
 
@@ -495,16 +383,16 @@ function startHelpingDetection(job, peerIndex, peerCount) {
         if (msg.type === 'blockDetections') {
             cacheBlockResult(msg.blockId, msg.date, msg.detections);
         } else if (msg.type === 'done') {
-            p2pLog(`help done: ${msg.stats.images} img, ${msg.stats.rawDetections} detections`, 'p2p-up');
+
             stopHelping();
         } else if (msg.type === 'error') {
-            p2pLog(`help error: ${msg.message}`, 'p2p-info');
+
             stopHelping();
         }
     };
     _helpWorker.onerror = () => stopHelping();
 
-    p2pLog(`helping: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
+
     _helpWorker.postMessage({
         bbox: job.bbox, epsg: job.epsg,
         startDate: job.startDate, endDate: job.endDate,
@@ -521,7 +409,7 @@ provider.awareness.on('change', () => {
     if (_isDetecting && _currentJob) {
         const { peerIndex, peerCount } = getPeerPartition(_currentJob.id);
         if (peerCount !== _currentPeerCount) {
-            p2pLog(`peers changed ${_currentPeerCount}→${peerCount}`, 'p2p-info');
+
             _currentPeerCount = peerCount;
             if (detectWorker) {
                 detectWorker.postMessage({ type: 'updatePeers', peerIndex, peerCount });
@@ -544,12 +432,12 @@ provider.awareness.on('change', () => {
     } else if (activeJob && _helpingJobId === activeJob.id && _helpWorker) {
         const { peerIndex, peerCount } = getPeerPartition(activeJob.id);
         if (peerCount !== _helpingPeerCount) {
-            p2pLog(`peers changed ${_helpingPeerCount}→${peerCount}`, 'p2p-info');
+
             _helpingPeerCount = peerCount;
             _helpWorker.postMessage({ type: 'updatePeers', peerIndex, peerCount });
         }
     } else if (!activeJob && _helpWorker) {
-        p2pLog('help stopped — requester done', 'p2p-info');
+
         stopHelping();
     }
 });
@@ -1212,7 +1100,7 @@ function launchDetectWorker(job) {
     const { peerIndex, peerCount } = getPeerPartition(job.id);
     _currentPeerCount = peerCount;
     if (peerCount > 1) {
-        p2pLog(`distributed: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
+
     }
 
     const bar = document.getElementById('detect-bar');
