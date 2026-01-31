@@ -204,57 +204,43 @@ async function processBlock(opts) {
 
     const n = w * h;
 
-    // Convert to reflectance
+    // Pre-pass: convert B12 to reflectance and collect background for median
     const b12 = new Float32Array(n);
-    const b11 = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-        b12[i] = dnToReflectance(b12Raw.data[i]);
-        b11[i] = dnToReflectance(b11Raw.data[i]);
-    }
-    let b8a = null;
-    if (b8aRaw) {
-        b8a = new Float32Array(n);
-        for (let i = 0; i < n; i++) b8a[i] = dnToReflectance(b8aRaw.data[i]);
-    }
-
-    // 3. Brightness filter
-    const bright = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-        bright[i] = (b12[i] > B12_MIN && b11[i] > B11_MIN) ? 1 : 0;
-    }
-
-    // 4. Contrast filter: B12 > median(background) * CONTRAST_RATIO
     const bgPixels = [];
     for (let i = 0; i < n; i++) {
-        if (b12[i] < B12_MIN) bgPixels.push(b12[i]);
+        const v = (b12Raw.data[i] - 1000) / 10000;
+        b12[i] = v;
+        if (v < B12_MIN) bgPixels.push(v);
     }
     if (bgPixels.length < 10) return [];
     bgPixels.sort((a, b) => a - b);
     const medianBg = bgPixels[Math.floor(bgPixels.length / 2)];
-    const bgBaseline = Math.max(medianBg, BACKGROUND_FLOOR);
-    const contrastThresh = bgBaseline * CONTRAST_RATIO;
+    const contrastThresh = Math.max(medianBg, BACKGROUND_FLOOR) * CONTRAST_RATIO;
 
-    const contrast = new Uint8Array(n);
-    for (let i = 0; i < n; i++) contrast[i] = b12[i] > contrastThresh ? 1 : 0;
-
-    // 5. Thermal filter: NHISWNIR > 0 or saturation
-    const thermal = new Uint8Array(n);
-    if (b8a) {
-        for (let i = 0; i < n; i++) {
-            const denom = b11[i] + b8a[i];
-            const nhiswnir = denom > 0.01 ? (b11[i] - b8a[i]) / denom : 0;
-            thermal[i] = (nhiswnir > 0 || b11[i] > SATURATION || b12[i] > SATURATION) ? 1 : 0;
-        }
-    } else {
-        for (let i = 0; i < n; i++) thermal[i] = b11[i] > SATURATION ? 1 : 0;
-    }
-
-    // Combined mask
+    // Fused pass: DN→reflectance for B11/B8A + brightness + contrast + thermal → mask
+    const b11 = new Float32Array(n);
     const mask = new Uint8Array(n);
     let anyMask = false;
+    const hasB8a = !!b8aRaw;
     for (let i = 0; i < n; i++) {
-        mask[i] = bright[i] & contrast[i] & thermal[i];
-        if (mask[i]) anyMask = true;
+        const b11v = (b11Raw.data[i] - 1000) / 10000;
+        b11[i] = b11v;
+        const b12v = b12[i];
+        // Brightness
+        if (b12v <= B12_MIN || b11v <= B11_MIN) continue;
+        // Contrast
+        if (b12v <= contrastThresh) continue;
+        // Thermal
+        if (hasB8a) {
+            const b8av = (b8aRaw.data[i] - 1000) / 10000;
+            const denom = b11v + b8av;
+            const nhiswnir = denom > 0.01 ? (b11v - b8av) / denom : 0;
+            if (!(nhiswnir > 0 || b11v > SATURATION || b12v > SATURATION)) continue;
+        } else {
+            if (b11v <= SATURATION) continue;
+        }
+        mask[i] = 1;
+        anyMask = true;
     }
     if (!anyMask) return [];
 
@@ -295,17 +281,27 @@ async function processBlock(opts) {
         // Single pixel confidence
         if (nPixels === 1 && peakB12 < 0.65) continue;
 
-        // Warm region (point source) filter
+        // Warm region (point source) filter — BFS from peak pixel over
+        // b12 > warmThresh, counting reachable pixels without a full CC pass.
         const peakRow = Math.floor(peakIdx / w);
         const peakCol = peakIdx % w;
         const warmThresh = peakB12 * WARM_FRACTION;
-        const warmMask = new Uint8Array(n);
-        for (let i = 0; i < n; i++) warmMask[i] = b12[i] > warmThresh ? 1 : 0;
-        const warmLabels = labelConnectedComponents(warmMask, w, h);
-        const warmLabel = warmLabels.labels[peakIdx];
         let warmSize = 0;
-        for (let i = 0; i < n; i++) {
-            if (warmLabels.labels[i] === warmLabel) warmSize++;
+        if (b12[peakIdx] > warmThresh) {
+            const visited = new Uint8Array(n);
+            const q = [peakIdx];
+            visited[peakIdx] = 1;
+            let head = 0;
+            while (head < q.length) {
+                warmSize++;
+                if (warmSize > WARM_MAX_PIXELS) break;
+                const idx = q[head++];
+                const r = Math.floor(idx / w), c = idx % w;
+                if (r > 0 && !visited[idx - w] && b12[idx - w] > warmThresh) { visited[idx - w] = 1; q.push(idx - w); }
+                if (r < h - 1 && !visited[idx + w] && b12[idx + w] > warmThresh) { visited[idx + w] = 1; q.push(idx + w); }
+                if (c > 0 && !visited[idx - 1] && b12[idx - 1] > warmThresh) { visited[idx - 1] = 1; q.push(idx - 1); }
+                if (c < w - 1 && !visited[idx + 1] && b12[idx + 1] > warmThresh) { visited[idx + 1] = 1; q.push(idx + 1); }
+            }
         }
         if (warmSize > WARM_MAX_PIXELS) continue;
 
@@ -340,7 +336,7 @@ async function processBlock(opts) {
 // Block-based image processing
 // ---------------------------------------------------------------------------
 
-async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, onEnumerated, onBlockDone, peerIndex, peerCount) {
+async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, onEnumerated, onBlockDone) {
     const assets = item.assets;
     const b12Url = assets.swir22?.href;
     const b11Url = assets.swir16?.href;
@@ -394,20 +390,32 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
     async function ensureBandsOpen() {
         if (bandsOpened) return;
         bandsOpened = true;
-        const b11Tiff = await GeoTIFF.fromUrl(b11Url, { allowFullFile: false });
-        b11Image = await b11Tiff.getImage();
+        const promises = [];
+        // B11 (required)
+        promises.push(
+            GeoTIFF.fromUrl(b11Url, { allowFullFile: false })
+                .then(tiff => tiff.getImage())
+                .then(img => { b11Image = img; })
+        );
+        // B8A (optional)
         if (b8aUrl) {
-            try {
-                const b8aTiff = await GeoTIFF.fromUrl(b8aUrl, { allowFullFile: false });
-                b8aImage = await b8aTiff.getImage();
-            } catch (e) { /* skip */ }
+            promises.push(
+                GeoTIFF.fromUrl(b8aUrl, { allowFullFile: false })
+                    .then(tiff => tiff.getImage())
+                    .then(img => { b8aImage = img; })
+                    .catch(() => { /* skip */ })
+            );
         }
+        // SCL (optional)
         if (sclUrl) {
-            try {
-                const sclTiff = await GeoTIFF.fromUrl(sclUrl, { allowFullFile: false });
-                sclImage = await sclTiff.getImage();
-            } catch (e) { /* skip */ }
+            promises.push(
+                GeoTIFF.fromUrl(sclUrl, { allowFullFile: false })
+                    .then(tiff => tiff.getImage())
+                    .then(img => { sclImage = img; })
+                    .catch(() => { /* skip */ })
+            );
         }
+        await Promise.all(promises);
     }
 
     const allDetections = [];
@@ -426,19 +434,7 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
                 continue;
             }
 
-            // Distributed detection: deterministic partition across peers
-            if (peerCount > 1) {
-                let h = 0;
-                for (let ci = 0; ci < cacheKey.length; ci++) {
-                    h = ((h << 5) - h + cacheKey.charCodeAt(ci)) | 0;
-                }
-                if (((h >>> 0) % peerCount) !== peerIndex) {
-                    onBlockDone(imgDate, br, bc, true);
-                    continue;
-                }
-            }
-
-            blocksToProcess.push({ br, bc, blockId });
+            blocksToProcess.push({ br, bc, blockId, cacheKey });
         }
     }
 
@@ -447,12 +443,24 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
     await ensureBandsOpen();
 
     // Process blocks with concurrency to overlap network I/O
-    const CONCURRENCY = 4;
+    const CONCURRENCY = 6;
     let idx = 0;
 
     async function processNext() {
         while (idx < blocksToProcess.length) {
-            const { br, bc, blockId } = blocksToProcess[idx++];
+            const { br, bc, blockId, cacheKey } = blocksToProcess[idx++];
+
+            // Check live peer partition — skip blocks not owned by this peer
+            if (_livePeerCount > 1) {
+                let h = 0;
+                for (let ci = 0; ci < cacheKey.length; ci++) {
+                    h = ((h << 5) - h + cacheKey.charCodeAt(ci)) | 0;
+                }
+                if (((h >>> 0) % _livePeerCount) !== _livePeerIndex) {
+                    onBlockDone(imgDate, br, bc, true);
+                    continue;
+                }
+            }
 
             const x0 = Math.max(0, bc * BLOCK_SIZE - BLOCK_OVERLAP);
             const y0 = Math.max(0, br * BLOCK_SIZE - BLOCK_OVERLAP);
@@ -506,12 +514,22 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
 // Main entry
 // ---------------------------------------------------------------------------
 
+// Live peer partition — updated via 'updatePeers' messages without restarting
+let _livePeerIndex = 0;
+let _livePeerCount = 1;
+
 self.onmessage = async function(e) {
+    if (e.data.type === 'updatePeers') {
+        _livePeerIndex = e.data.peerIndex || 0;
+        _livePeerCount = e.data.peerCount || 1;
+        return;
+    }
+
     const { bbox, epsg, startDate, endDate, cachedBlockDates: cachedArr,
             peerIndex: pi, peerCount: pc } = e.data;
     const cachedBlockDates = new Set(cachedArr || []);
-    const peerIndex = pi || 0;
-    const peerCount = pc || 1;
+    _livePeerIndex = pi ?? 0;
+    _livePeerCount = pc ?? 1;
 
     try {
         progress('SEARCHING CATALOGUE', 0);
@@ -542,8 +560,7 @@ self.onmessage = async function(e) {
                     const dets = await processImageBlocks(
                         items[i], bbox, epsg, cachedBlockDates,
                         () => {},
-                        () => {},
-                        peerIndex, peerCount
+                        () => {}
                     );
                     totalDetections += dets.length;
                 } catch (err) {
