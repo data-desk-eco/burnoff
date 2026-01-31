@@ -1,45 +1,60 @@
 # Burnoff
 
-Client-side Sentinel-2 SWIR flare detection.
+Client-side Sentinel-2 SWIR flare detection with peer-to-peer sync.
+
+```
+  Browser                              Browser (peer)
+ ┌─────────────────────┐              ┌─────────────────────┐
+ │  Map + UI           │   WebRTC /   │  Map + UI           │
+ │  Yjs CRDT ◄─────────┼── WS sync ─►┼──► Yjs CRDT        │
+ │  ┌───────────────┐  │              │  ┌───────────────┐  │
+ │  │ detect-worker │  │              │  │ detect-worker │  │
+ │  └───────┬───────┘  │              │  └───────┬───────┘  │
+ └──────────┼──────────┘              └──────────┼──────────┘
+            │ HTTP range requests                │
+            ▼                                    ▼
+      Element84 STAC — Sentinel-2 L2A COGs
+```
+
+Open the map, navigate to an area of interest, select date quarters, click
+**Detect**. The app downloads Sentinel-2 imagery and runs the detection
+algorithm entirely in your browser. Results sync between all open sessions
+via WebRTC -- when you detect, idle peers automatically split the work.
 
 ## Quick Start
 
 ```
-make serve     # Dev server on :8000
+make serve     # Dev server on :8000 + signaling on :4444
 ```
-
-Open the map, navigate to an area of interest, select date quarters, and click
-**Detect**. The app downloads and processes Sentinel-2 L2A imagery directly in
-your browser using a Web Worker.
-
-Detection results sync peer-to-peer between all open sessions via WebRTC. When
-you run a detection, other peers automatically split the work and share results
-in real time.
 
 ## How It Works
 
-Flares emit strongly in shortwave infrared. Burnoff reads cloud-optimized GeoTIFF
-bands (B12, B11, B8A) from Element84's STAC catalog via windowed HTTP range requests,
-runs a version of the DAFI v2 detection algorithm client-side, and clusters
-detections across dates using anchor-based merging within 50m.
+Gas flares emit strongly in shortwave infrared. Burnoff reads cloud-optimised
+GeoTIFF bands (B12, B11, B8A) from Element84's STAC catalogue via windowed HTTP
+range requests, runs a multi-stage detection pipeline client-side in a Web Worker,
+and clusters detections across dates using anchor-based spatial merging.
 
-**Detection pipeline:**
-1. STAC search for L2A images in viewport (<30% cloud)
-2. Per-image: brightness, contrast, thermal signature (NHISWNIR), connected components
-3. Cross-date clustering, anchored to brightest detection per cluster
+**Detection pipeline** (per 256x256 pixel block):
+1. Cloud screening via SCL band
+2. DN to surface reflectance, background median for contrast threshold
+3. Fused brightness + contrast + thermal filter pass
+4. Connected components, cluster quality filters, warm-region halo rejection
+5. Cross-date clustering (grid-indexed, anchor-based merge within 50m)
+
+**P2P sync**: results are stored in a Yjs CRDT document, persisted locally
+via IndexedDB, and synced across peers via WebRTC with a WebSocket fallback.
 
 ## Project Structure
 
 ```
-burnoff/
-├── web/
-│   ├── index.html           # Entry point
-│   ├── app.js               # Map viewer, clustering, P2P sync
-│   ├── detect-worker.js     # Detection algorithm (Web Worker)
-│   └── style.css            # UI styles
-├── test/                    # Determinism + P2P tests
-├── Makefile
-└── package.json
+web/
+  app.js              Map viewer, Yjs sync, cross-date clustering
+  detect-worker.js    Detection algorithm (Web Worker)
+  index.html          Entry point
+  style.css           UI styles
+signal-server.js      WebSocket signaling relay
+test/                 Determinism + P2P tests
+Dockerfile            Cloud Run container for production signaling
 ```
 
 ## References
