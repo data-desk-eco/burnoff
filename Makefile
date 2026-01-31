@@ -8,11 +8,11 @@ serve: signal
 	@npx serve web -l 8000
 
 signal:
-	@node signal-server.js &
+	@node signal/server.js &
 
 deploy:
 	gcloud run deploy $(CLOUD_RUN_SERVICE) \
-		--source . \
+		--source signal/ \
 		--region $(CLOUD_RUN_REGION) \
 		--allow-unauthenticated \
 		--session-affinity \

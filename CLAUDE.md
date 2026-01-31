@@ -48,9 +48,11 @@ web/
   detect-worker.js    Web Worker: STAC search, band reads, per-block detection
   index.html          Entry point
   style.css           UI styles
-signal-server.js      WebSocket signaling relay (y-webrtc pub/sub)
+signal/
+  server.js           WebSocket signaling relay (y-webrtc pub/sub)
+  Dockerfile          Cloud Run container for production signaling
+  package.json        Signal server dependencies (ws only)
 test/                 Determinism + P2P integration tests
-Dockerfile            Cloud Run container for production signaling
 ```
 
 ## Detection Algorithm
@@ -96,6 +98,6 @@ the cache key. Partition updates are sent to workers live (no restart).
 
 ## Signaling
 
-`signal-server.js` is a stateless WebSocket relay (~80 lines).
+`signal/server.js` is a stateless WebSocket relay (~80 lines).
 Messages: `subscribe`, `unsubscribe`, `publish`, `ping`/`pong`.
 Dev: `ws://localhost:4444`. Production: set via `<meta name="signaling-url">`.
