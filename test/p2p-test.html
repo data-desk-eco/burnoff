@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Burnoff P2P Tests</title></head>
+<body>
+<pre id="log"></pre>
+<script type="module">
+import * as Y from 'https://cdn.jsdelivr.net/npm/yjs@13.6.29/+esm';
+import { IndexeddbPersistence } from 'https://cdn.jsdelivr.net/npm/y-indexeddb@9.0.12/+esm';
+import { WebrtcProvider } from 'https://cdn.jsdelivr.net/npm/y-webrtc@10.3.0/+esm';
+
+const el = document.getElementById('log');
+const results = [];
+
+function log(msg) { el.textContent += msg + '\n'; }
+function assert(condition, name) {
+    results.push({ name, ok: !!condition });
+    log(condition ? `  PASS: ${name}` : `  FAIL: ${name}`);
+}
+
+async function run() {
+    log('=== Burnoff P2P Test Suite ===\n');
+
+    // 1. Yjs document creation
+    log('1. Yjs Document');
+    const doc = new Y.Doc();
+    assert(doc instanceof Y.Doc, 'Y.Doc instantiates');
+
+    const detections = doc.getMap('detections');
+    const processed = doc.getMap('processed');
+    assert(detections.size === 0, 'detections map starts empty');
+    assert(processed.size === 0, 'processed map starts empty');
+
+    // 2. CRDT map operations
+    log('\n2. CRDT Map Operations');
+    const testDets = [{ date: '2024-01-15', max_b12: 0.95, flare_lon: 51.5, flare_lat: 25.9 }];
+    doc.transact(() => {
+        detections.set('31RDL_10_20:2024-01-15', testDets);
+        processed.set('31RDL_10_20:2024-01-15', Date.now());
+    });
+    assert(detections.size === 1, 'detection stored');
+    assert(processed.size === 1, 'processed marker stored');
+
+    const retrieved = detections.get('31RDL_10_20:2024-01-15');
+    assert(Array.isArray(retrieved) && retrieved.length === 1, 'detection retrieved as array');
+    assert(retrieved[0].max_b12 === 0.95, 'detection data preserved');
+
+    // 3. Observe fires on changes
+    log('\n3. Observer Pattern');
+    let observeCalled = false;
+    detections.observe(() => { observeCalled = true; });
+    detections.set('31RDL_10_21:2024-01-15', [{ date: '2024-01-15', max_b12: 0.80 }]);
+    assert(observeCalled, 'observer fires on set');
+
+    // 4. Rebuild pattern (simulates allRawDetections rebuild)
+    log('\n4. Detection Rebuild');
+    let allRaw = [];
+    detections.forEach(dets => {
+        if (dets && dets.length > 0) allRaw = allRaw.concat(dets);
+    });
+    assert(allRaw.length === 2, 'rebuild collects all detections');
+
+    // 5. Deduplication (same key overwrites)
+    log('\n5. CRDT Deduplication');
+    detections.set('31RDL_10_20:2024-01-15', testDets);
+    assert(detections.size === 2, 'same key does not create duplicate');
+
+    // 6. getCachedBlockKeys equivalent
+    log('\n6. Cached Block Keys');
+    const keys = Array.from(processed.keys());
+    assert(keys.length === 1, 'processed map has correct key count');
+    assert(keys[0] === '31RDL_10_20:2024-01-15', 'key format correct');
+
+    // 7. Two-doc sync (simulates P2P)
+    log('\n7. Two-Doc Sync');
+    const doc2 = new Y.Doc();
+    const detections2 = doc2.getMap('detections');
+
+    // Apply state from doc1 to doc2
+    const state1 = Y.encodeStateAsUpdate(doc);
+    Y.applyUpdate(doc2, state1);
+    assert(detections2.size === 2, 'doc2 received detections from doc1');
+
+    const d2Retrieved = detections2.get('31RDL_10_20:2024-01-15');
+    assert(d2Retrieved && d2Retrieved[0].max_b12 === 0.95, 'synced data intact');
+
+    // 8. Bidirectional sync
+    log('\n8. Bidirectional Sync');
+    detections2.set('40RBN_5_5:2024-02-01', [{ date: '2024-02-01', max_b12: 1.10 }]);
+    const state2 = Y.encodeStateAsUpdate(doc2);
+    Y.applyUpdate(doc, state2);
+    assert(detections.size === 3, 'doc1 received new detection from doc2');
+
+    // 9. IndexeddbPersistence constructor
+    log('\n9. IndexedDB Persistence');
+    try {
+        const p = new IndexeddbPersistence('burnoff-test', doc);
+        assert(true, 'IndexeddbPersistence instantiates');
+        p.destroy();
+    } catch (e) {
+        assert(false, 'IndexeddbPersistence instantiates: ' + e.message);
+    }
+
+    // 10. WebrtcProvider constructor
+    log('\n10. WebRTC Provider');
+    try {
+        const wp = new WebrtcProvider('burnoff-test-room', doc, {
+            signaling: ['wss://signaling.yjs.dev']
+        });
+        assert(true, 'WebrtcProvider instantiates');
+        assert(wp.awareness !== undefined, 'awareness available');
+        wp.destroy();
+    } catch (e) {
+        assert(false, 'WebrtcProvider instantiates: ' + e.message);
+    }
+
+    // 11. Empty block caching (processed but no detections)
+    log('\n11. Empty Block Cache');
+    doc.transact(() => {
+        processed.set('31RDL_0_0:2024-03-01', Date.now());
+    });
+    assert(processed.has('31RDL_0_0:2024-03-01'), 'empty block marked processed');
+    assert(!detections.has('31RDL_0_0:2024-03-01'), 'no detection entry for empty block');
+
+    // Summary
+    const passed = results.filter(r => r.ok).length;
+    const total = results.length;
+    log(`\n=== ${passed}/${total} tests passed ===`);
+
+    // Signal completion for headless runner
+    window.__testResults = { passed, total, results };
+}
+
+run().catch(e => { log('ERROR: ' + e.message); console.error(e); });
+</script>
+</body>
+</html>

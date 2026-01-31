@@ -1,3 +1,23 @@
+import * as Y from 'https://cdn.jsdelivr.net/npm/yjs@13.6.29/+esm';
+import { WebrtcProvider } from 'https://cdn.jsdelivr.net/npm/y-webrtc@10.3.0/+esm';
+import { IndexeddbPersistence } from 'https://cdn.jsdelivr.net/npm/y-indexeddb@9.0.12/+esm';
+
+// ---------------------------------------------------------------------------
+// P2P sync (Yjs CRDT)
+// ---------------------------------------------------------------------------
+
+const ydoc = new Y.Doc();
+const detectionMap = ydoc.getMap('detections');   // block_id:date → Detection[]
+const processedMap = ydoc.getMap('processed');     // block_id:date → timestamp
+
+// Local persistence (replaces localStorage block cache)
+const persistence = new IndexeddbPersistence('burnoff', ydoc);
+
+// P2P mesh — all Burnoff users share one room
+const provider = new WebrtcProvider('burnoff-global', ydoc, {
+    signaling: ['wss://signaling.yjs.dev']
+});
+
 // Initialize map
 const map = new maplibregl.Map({
     container: 'map',
@@ -30,50 +50,97 @@ let selectedDetection = null;
 let detectWorker = null;
 
 // ---------------------------------------------------------------------------
-// Block detection cache (localStorage)
+// Block detection cache (Yjs CRDT — synced across all peers)
 // ---------------------------------------------------------------------------
 
-const CACHE_PREFIX = 'b:';
-
 function getCachedBlockKeys() {
-    const keys = [];
-    try {
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key.startsWith(CACHE_PREFIX)) {
-                keys.push(key.slice(CACHE_PREFIX.length));
-            }
-        }
-    } catch (e) { /* localStorage unavailable */ }
-    return keys;
+    return Array.from(processedMap.keys());
 }
 
 function cacheBlockResult(blockId, date, detections) {
-    try {
-        localStorage.setItem(`${CACHE_PREFIX}${blockId}:${date}`, JSON.stringify(detections));
-    } catch (e) {
-        // Storage full — evict oldest entries and retry once
-        try {
-            const toRemove = [];
-            for (let i = 0; i < localStorage.length; i++) {
-                const k = localStorage.key(i);
-                if (k.startsWith(CACHE_PREFIX)) toRemove.push(k);
-            }
-            // Remove oldest 25%
-            toRemove.sort();
-            const removeCount = Math.max(1, Math.floor(toRemove.length / 4));
-            for (let i = 0; i < removeCount; i++) localStorage.removeItem(toRemove[i]);
-            localStorage.setItem(`${CACHE_PREFIX}${blockId}:${date}`, JSON.stringify(detections));
-        } catch (e2) { /* give up */ }
-    }
+    const key = `${blockId}:${date}`;
+    ydoc.transact(() => {
+        processedMap.set(key, Date.now());
+        if (detections.length > 0) {
+            detectionMap.set(key, detections);
+        }
+    });
 }
 
 function loadCachedBlock(blockId, date) {
-    try {
-        const data = localStorage.getItem(`${CACHE_PREFIX}${blockId}:${date}`);
-        return data ? JSON.parse(data) : null;
-    } catch (e) { return null; }
+    return detectionMap.get(`${blockId}:${date}`) || null;
 }
+
+// Rebuild allRawDetections from the full CRDT map
+function rebuildDetections() {
+    allRawDetections = [];
+    detectionMap.forEach(dets => {
+        if (dets && dets.length > 0) {
+            allRawDetections = allRawDetections.concat(dets);
+        }
+    });
+}
+
+// Debounced detection update — coalesces rapid changes from sync
+let _syncUpdateTimer;
+function scheduleDetectionUpdate() {
+    clearTimeout(_syncUpdateTimer);
+    _syncUpdateTimer = setTimeout(() => {
+        rebuildDetections();
+        ensureDetectionLayer();
+        updateDetectionSource();
+    }, 50);
+}
+
+// Subscribe to CRDT changes (local writes, IndexedDB restore, remote peers)
+detectionMap.observe(() => scheduleDetectionUpdate());
+
+// Migrate existing localStorage cache to Yjs (one-time)
+function migrateFromLocalStorage() {
+    if (localStorage.getItem('burnoff:migrated')) return;
+    const keysToRemove = [];
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key.startsWith('b:')) continue;
+            keysToRemove.push(key);
+            const blockDateKey = key.slice(2);
+            const data = localStorage.getItem(key);
+            if (!data) continue;
+            const dets = JSON.parse(data);
+            ydoc.transact(() => {
+                processedMap.set(blockDateKey, Date.now());
+                if (dets.length > 0) detectionMap.set(blockDateKey, dets);
+            });
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+        localStorage.setItem('burnoff:migrated', '1');
+    } catch (e) { console.warn('Migration failed:', e); }
+}
+
+persistence.once('synced', () => {
+    migrateFromLocalStorage();
+    scheduleDetectionUpdate();
+});
+
+// Peer count indicator
+function updatePeerStatus() {
+    const states = provider.awareness.getStates();
+    const peers = states.size - 1; // exclude self
+    const el = document.getElementById('peer-status');
+    if (!el) return;
+    if (peers > 0) {
+        el.textContent = `${peers} peer${peers !== 1 ? 's' : ''} connected`;
+        el.classList.add('active');
+    } else {
+        el.textContent = 'no peers';
+        el.classList.remove('active');
+    }
+}
+
+provider.awareness.on('change', updatePeerStatus);
+provider.on('synced', updatePeerStatus);
+updatePeerStatus();
 
 // Viewport-keyed detection run tracking for quarter indicators
 const RUNS_KEY = 'burnoff:runs';
@@ -124,22 +191,6 @@ function updateDetectButton() {
     btn.disabled = allDetected;
 }
 
-function loadAllCachedDetections() {
-    try {
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (!key.startsWith(CACHE_PREFIX)) continue;
-            const data = localStorage.getItem(key);
-            if (!data) continue;
-            const dets = JSON.parse(data);
-            if (dets.length > 0) {
-                allRawDetections = allRawDetections.concat(dets);
-            }
-        }
-    } catch (e) {
-        console.warn('Failed to load cached detections:', e);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Quarter picker
@@ -685,6 +736,7 @@ function guessEpsg(bbox) {
 }
 
 function ensureDetectionLayer() {
+    if (!map.isStyleLoaded()) return;
     if (!map.getSource('client-detections')) {
         map.addSource('client-detections', {
             type: 'geojson',
@@ -755,19 +807,10 @@ function startDetection() {
             bar.style.width = msg.pct + '%';
             text.textContent = msg.stage;
         } else if (msg.type === 'blockDetections') {
-            // Cache newly computed block results
+            // Write to CRDT — observer handles allRawDetections + map update
             cacheBlockResult(msg.blockId, msg.date, msg.detections);
-            if (msg.detections.length > 0) {
-                allRawDetections = allRawDetections.concat(msg.detections);
-                updateDetectionSource();
-            }
         } else if (msg.type === 'cachedBlock') {
-            // Load detections from localStorage for this cached block
-            const cached = loadCachedBlock(msg.blockId, msg.date);
-            if (cached && cached.length > 0) {
-                allRawDetections = allRawDetections.concat(cached);
-                updateDetectionSource();
-            }
+            // Already in CRDT from initial load — nothing to do
         } else if (msg.type === 'done') {
             finishDetection(msg.stats);
         } else if (msg.type === 'error') {
@@ -851,12 +894,9 @@ map.on('moveend', () => {
 map.on('load', () => {
     updateMapCentre();
 
-    // Restore cached detections from previous sessions
-    loadAllCachedDetections();
-    if (allRawDetections.length > 0) {
-        ensureDetectionLayer();
-        updateDetectionSource();
-    }
+    // Detections are restored from Yjs IndexedDB + peers via the observer.
+    // Trigger an update in case persistence synced before the map loaded.
+    scheduleDetectionUpdate();
 
     map.addSource('selection-highlight', {
         type: 'geojson',
