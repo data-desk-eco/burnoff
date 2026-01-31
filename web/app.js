@@ -173,8 +173,7 @@ function flushPendingBlocks() {
 function cacheBlockResult(blockId, date, detections) {
     _pendingBlocks.push({ blockId, date, detections });
     if (_pendingBlocks.length >= FLUSH_BATCH_SIZE) {
-        clearTimeout(_flushTimer);
-        flushPendingBlocks();
+        flushNow();
     } else if (!_flushTimer) {
         _flushTimer = setTimeout(() => {
             _flushTimer = null;
@@ -183,8 +182,10 @@ function cacheBlockResult(blockId, date, detections) {
     }
 }
 
-function loadCachedBlock(blockId, date) {
-    return detectionMap.get(`${blockId}:${date}`) || null;
+function flushNow() {
+    clearTimeout(_flushTimer);
+    _flushTimer = null;
+    flushPendingBlocks();
 }
 
 // Rebuild allRawDetections from the full CRDT map
@@ -293,9 +294,6 @@ provider.on('peers', ({ added, removed, webrtcPeers, bcPeers }) => {
 });
 updatePeerStatus();
 
-// Poll peer status every 2s as a fallback — awareness change events can be
-// missed when the WebRTC data channel connects slightly after signaling.
-setInterval(updatePeerStatus, 2000);
 
 // ---------------------------------------------------------------------------
 // Awareness helpers for distributed detection
@@ -337,94 +335,80 @@ function getPeerPartition(jobId) {
 
 // --- Helper worker for assisting a peer's detection ---
 let _helpWorker = null;
-let _helpingJobId = null;   // tracks which job we're helping with
-let _helpingPeerCount = 0;  // tracks partition size so we restart on change
+let _helpingJobId = null;
+let _helpingPeerCount = 0;
+
+function stopHelping() {
+    if (_helpWorker) { _helpWorker.terminate(); _helpWorker = null; }
+    _helpingJobId = null;
+    _helpingPeerCount = 0;
+}
 
 function startHelpingDetection(job, peerIndex, peerCount) {
-    if (_helpWorker) { _helpWorker.terminate(); _helpWorker = null; }
+    stopHelping();
     _helpingJobId = job.id;
     _helpingPeerCount = peerCount;
+    flushNow();
 
-    // Flush any pending results before (re)starting
-    clearTimeout(_flushTimer);
-    _flushTimer = null;
-    flushPendingBlocks();
-
-    const cachedBlockDates = getCachedBlockKeys();
     _helpWorker = new Worker('detect-worker.js');
-
     _helpWorker.onmessage = function(e) {
         const msg = e.data;
         if (msg.type === 'blockDetections') {
             cacheBlockResult(msg.blockId, msg.date, msg.detections);
         } else if (msg.type === 'done') {
-            const s = msg.stats;
-            p2pLog(`help done: ${s.images} img, ${s.rawDetections} detections`, 'p2p-up');
-            _helpWorker = null;
-            _helpingJobId = null;
-            _helpingPeerCount = 0;
+            p2pLog(`help done: ${msg.stats.images} img, ${msg.stats.rawDetections} detections`, 'p2p-up');
+            stopHelping();
         } else if (msg.type === 'error') {
             p2pLog(`help error: ${msg.message}`, 'p2p-info');
-            _helpWorker = null;
-            _helpingJobId = null;
-            _helpingPeerCount = 0;
+            stopHelping();
         }
     };
-
-    _helpWorker.onerror = function() {
-        _helpWorker = null;
-        _helpingJobId = null;
-        _helpingPeerCount = 0;
-    };
+    _helpWorker.onerror = () => stopHelping();
 
     p2pLog(`helping: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
-
     _helpWorker.postMessage({
-        bbox: job.bbox,
-        epsg: job.epsg,
-        startDate: job.startDate,
-        endDate: job.endDate,
-        cachedBlockDates,
-        peerIndex,
-        peerCount
+        bbox: job.bbox, epsg: job.epsg,
+        startDate: job.startDate, endDate: job.endDate,
+        cachedBlockDates: getCachedBlockKeys(),
+        peerIndex, peerCount
     });
 }
 
-// Watch for peers that start detecting — automatically help them
+// Single awareness listener for all distributed detection coordination.
+// Handles both requester-side (peer count changed, restart own worker) and
+// helper-side (idle peer joins/leaves/stops helping another peer's job).
 provider.awareness.on('change', () => {
-    // Don't help if we're running our own detection
-    if (_isDetecting) return;
+    // Requester: restart our own worker if peer count changed
+    if (_isDetecting && _currentJob) {
+        const { peerCount } = getPeerPartition(_currentJob.id);
+        if (peerCount !== _currentPeerCount) {
+            p2pLog(`peers changed ${_currentPeerCount}→${peerCount}, restarting`, 'p2p-info');
+            flushNow();
+            launchDetectWorker(_currentJob);
+        }
+        return;
+    }
 
+    // Helper: look for a peer's job to assist with
     const states = provider.awareness.getStates();
     const myId = provider.awareness.clientID;
-
-    // Find any peer that is detecting
     let activeJob = null;
     states.forEach((state, id) => {
-        if (id === myId) return;
-        if (state.detecting && state.job) activeJob = state.job;
+        if (id !== myId && state.detecting && state.job) activeJob = state.job;
     });
 
     if (activeJob && _helpingJobId !== activeJob.id) {
-        // New job to help with
         const { peerIndex, peerCount } = getPeerPartition(activeJob.id);
-        if (peerCount > 1) {
-            startHelpingDetection(activeJob, peerIndex, peerCount);
-        }
+        if (peerCount > 1) startHelpingDetection(activeJob, peerIndex, peerCount);
     } else if (activeJob && _helpingJobId === activeJob.id && _helpWorker) {
-        // Same job but peer count may have changed (peer joined or left)
         const { peerIndex, peerCount } = getPeerPartition(activeJob.id);
         if (peerCount !== _helpingPeerCount) {
             p2pLog(`peers changed ${_helpingPeerCount}→${peerCount}, restarting help`, 'p2p-info');
             startHelpingDetection(activeJob, peerIndex, peerCount);
         }
     } else if (!activeJob && _helpWorker) {
-        // Requesting peer finished or disconnected — stop helping
-        _helpWorker.terminate();
-        _helpWorker = null;
-        _helpingJobId = null;
-        _helpingPeerCount = 0;
         p2pLog('help stopped — requester done', 'p2p-info');
+        stopHelping();
     }
 });
 
@@ -1058,12 +1042,11 @@ function updateDetectionSource() {
     if (src) src.setData({ type: 'FeatureCollection', features });
 }
 
-// Track the current detection job and peer partition so we can restart on peer changes
+// Track the current detection job and peer partition
 let _currentJob = null;
 let _currentPeerCount = 0;
-let _peerChangeHandler = null;
 
-function launchDetectWorker(job, bar, text) {
+function launchDetectWorker(job) {
     if (detectWorker) { detectWorker.terminate(); detectWorker = null; }
 
     const { peerIndex, peerCount } = getPeerPartition(job.id);
@@ -1072,12 +1055,10 @@ function launchDetectWorker(job, bar, text) {
         p2pLog(`distributed: peer ${peerIndex + 1}/${peerCount}`, 'p2p-info');
     }
 
-    // Include blocks that are already in the CRDT (from us or peers) so the
-    // worker skips them — this is key for restart after peer disconnect
-    const cachedBlockDates = getCachedBlockKeys();
+    const bar = document.getElementById('detect-bar');
+    const text = document.getElementById('detect-text');
 
     detectWorker = new Worker('detect-worker.js');
-
     detectWorker.onmessage = function(e) {
         const msg = e.data;
         if (msg.type === 'progress') {
@@ -1085,8 +1066,6 @@ function launchDetectWorker(job, bar, text) {
             text.textContent = msg.stage;
         } else if (msg.type === 'blockDetections') {
             cacheBlockResult(msg.blockId, msg.date, msg.detections);
-        } else if (msg.type === 'cachedBlock') {
-            // Already in CRDT — nothing to do
         } else if (msg.type === 'done') {
             cleanupDetection();
             finishDetection(msg.stats);
@@ -1100,7 +1079,6 @@ function launchDetectWorker(job, bar, text) {
             setTimeout(resetDetectUI, 3000);
         }
     };
-
     detectWorker.onerror = function(err) {
         cleanupDetection();
         _isDetecting = false;
@@ -1113,13 +1091,10 @@ function launchDetectWorker(job, bar, text) {
     };
 
     detectWorker.postMessage({
-        bbox: job.bbox,
-        epsg: job.epsg,
-        startDate: job.startDate,
-        endDate: job.endDate,
-        cachedBlockDates,
-        peerIndex,
-        peerCount
+        bbox: job.bbox, epsg: job.epsg,
+        startDate: job.startDate, endDate: job.endDate,
+        cachedBlockDates: getCachedBlockKeys(),
+        peerIndex, peerCount
     });
 }
 
@@ -1127,10 +1102,6 @@ function cleanupDetection() {
     clearDetectingState();
     _currentJob = null;
     _currentPeerCount = 0;
-    if (_peerChangeHandler) {
-        provider.awareness.off('change', _peerChangeHandler);
-        _peerChangeHandler = null;
-    }
 }
 
 async function startDetection() {
@@ -1142,25 +1113,17 @@ async function startDetection() {
     if (detectWorker) { detectWorker.terminate(); detectWorker = null; }
     _isDetecting = true;
     _preSessionKeys = new Set(processedMap.keys());
-
-    // Keep existing detections — new results accumulate
     ensureDetectionLayer();
 
-    const btn = document.getElementById('detect-btn');
-    const prog = document.getElementById('detect-progress');
-    const bar = document.getElementById('detect-bar');
-    const text = document.getElementById('detect-text');
-
-    btn.classList.add('hidden');
-    prog.classList.remove('hidden');
-    bar.style.width = '0%';
-    text.textContent = 'Searching...';
+    document.getElementById('detect-btn').classList.add('hidden');
+    document.getElementById('detect-progress').classList.remove('hidden');
+    document.getElementById('detect-bar').style.width = '0%';
+    document.getElementById('detect-text').textContent = 'Searching...';
 
     const bbox = getViewportBbox();
     const epsg = guessEpsg(bbox);
     const dateRange = getSelectedDateRange();
 
-    // Build a job descriptor shared with all peers so they can help
     const job = {
         id: `${provider.awareness.clientID}-${Date.now()}`,
         bbox, epsg,
@@ -1169,30 +1132,14 @@ async function startDetection() {
     };
     _currentJob = job;
 
-    // Broadcast job via awareness — all idle peers auto-join
+    // Broadcast job via awareness — idle peers auto-join via the
+    // unified awareness listener above
     setDetectingState(job);
 
     // Brief delay to let awareness propagate so helpers can join
     await new Promise(r => setTimeout(r, 200));
 
-    // Monitor peer changes — if a helper disconnects, restart with updated
-    // partition so orphaned blocks get picked up.  Already-processed blocks
-    // are in the CRDT and will be skipped via the cache.
-    _peerChangeHandler = () => {
-        if (!_currentJob) return;
-        const { peerCount } = getPeerPartition(_currentJob.id);
-        if (peerCount !== _currentPeerCount) {
-            p2pLog(`peers changed ${_currentPeerCount}→${peerCount}, restarting`, 'p2p-info');
-            // Flush any pending results before restart
-            clearTimeout(_flushTimer);
-            _flushTimer = null;
-            flushPendingBlocks();
-            launchDetectWorker(_currentJob, bar, text);
-        }
-    };
-    provider.awareness.on('change', _peerChangeHandler);
-
-    launchDetectWorker(job, bar, text);
+    launchDetectWorker(job);
 }
 
 function resetDetectUI() {
@@ -1205,10 +1152,7 @@ function resetDetectUI() {
 }
 
 function finishDetection(stats) {
-    // Flush any remaining batched block results before final clustering
-    clearTimeout(_flushTimer);
-    _flushTimer = null;
-    flushPendingBlocks();
+    flushNow();
 
     // Rebuild from CRDT after flush, then cluster once
     rebuildDetections();
