@@ -1,5 +1,5 @@
 CLOUD_RUN_SERVICE := burnoff-signaling
-CLOUD_RUN_REGION  := us-central1
+CLOUD_RUN_REGION  := europe-west2
 
 .PHONY: serve signal deploy help
 
