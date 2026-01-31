@@ -14,8 +14,16 @@ const processedMap = ydoc.getMap('processed');     // block_id:date → timestam
 const persistence = new IndexeddbPersistence('burnoff', ydoc);
 
 // P2P mesh — all Burnoff users share one room
+// Signaling server runs alongside the app (see signal-server.js).
+// In dev the app is on :8000 and signaling on :4444 of the same host.
+// In production, set SIGNALING_URL via a <meta> tag or deploy signal-server.js.
+const _sigMeta = document.querySelector('meta[name="signaling-url"]');
+const _sigUrl = _sigMeta
+    ? _sigMeta.content
+    : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:4444`;
+
 const provider = new WebrtcProvider('burnoff-global', ydoc, {
-    signaling: ['wss://signaling.yjs.dev']
+    signaling: [_sigUrl]
 });
 
 // Immediately set awareness state so signaling announces us to peers right away
@@ -69,49 +77,29 @@ function smoothScrollDebugBar(el) {
     requestAnimationFrame(step);
 }
 
-p2pLog('p2p init — room: burnoff-global', 'p2p-info');
+p2pLog(`p2p init — signaling: ${_sigUrl}`, 'p2p-info');
 
-// ---------------------------------------------------------------------------
-// P2P connection lifecycle logging
-// ---------------------------------------------------------------------------
+// Log signaling connect/disconnect via provider status events
+provider.on('status', ({ connected }) => {
+    p2pLog(`signal: ${connected ? 'connected' : 'disconnected'}`, 'p2p-info');
+});
 
-// Log signaling WebSocket state changes
-for (const sigConn of (provider.signalingConns || [])) {
-    const ws = sigConn.ws;  // lib0 WebsocketClient
-    if (!ws) continue;
-    const origOnOpen = ws.onconnect;
-    ws.onconnect = () => {
-        p2pLog(`signal: connected to ${sigConn.url}`, 'p2p-info');
-        if (origOnOpen) origOnOpen();
-    };
-    const origOnClose = ws.ondisconnect;
-    ws.ondisconnect = () => {
-        p2pLog(`signal: disconnected from ${sigConn.url}`, 'p2p-info');
-        if (origOnClose) origOnClose();
-    };
-}
-
-// Poll internal provider state every 3s — shows exactly where iOS gets stuck
+// Poll internal provider state every 5s for debug bar
 let _lastDebugState = '';
 setInterval(() => {
     const room = provider.room;
-    const sig = (provider.signalingConns || []).map(c => {
-        const ws = c.ws;
-        if (!ws) return 'no-ws';
-        if (ws.connected) return 'ok';
-        if (ws.connecting) return 'connecting';
-        return 'closed';
-    }).join(',');
+    // signalingConns are lib0 WebsocketClients — check .connected on them directly
+    const sig = (provider.signalingConns || []).map(c =>
+        c.connected ? 'ok' : c.connecting ? 'connecting' : 'closed'
+    ).join(',');
     const webrtc = room ? room.webrtcConns.size : '?';
-    const bc = room ? (room.bcConns || new Set()).size : '?';
     const awareness = provider.awareness.getStates().size;
-    const connected = provider.connected;
-    const state = `sig=[${sig}] rtc=${webrtc} bc=${bc} aware=${awareness} conn=${connected}`;
+    const state = `sig=[${sig}] rtc=${webrtc} aware=${awareness}`;
     if (state !== _lastDebugState) {
         p2pLog(`state: ${state}`, 'p2p-info');
         _lastDebugState = state;
     }
-}, 3000);
+}, 5000);
 
 // Initialize map
 const map = new maplibregl.Map({
@@ -275,12 +263,6 @@ let _lastPeerCount = 0;
 function updatePeerStatus() {
     const states = provider.awareness.getStates();
     let peers = states.size - 1; // exclude self
-    // Fallback: iOS Chrome can fail to propagate awareness states while the
-    // WebRTC data channel works fine — use actual connection count instead.
-    if (peers <= 0 && provider.room) {
-        const conns = provider.room.webrtcConns;
-        if (conns && conns.size > 0) peers = conns.size;
-    }
     const el = document.getElementById('peer-status');
     if (!el) return;
     if (peers > 0) {
