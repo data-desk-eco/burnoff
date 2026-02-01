@@ -21,7 +21,7 @@ jobs:
       - name: Prepare dist
         run: |
           mkdir -p dist
-          cp web/index.html web/app.js web/style.css web/detect-worker.js web/crdt.js web/store.js web/rtc.js web/sync.js web/terminals.geojson dist/
+          cp web/index.html web/app.js web/style.css web/detect-worker.js web/crdt.js web/store.js web/rtc.js web/sync.js web/utm.js web/terminals.geojson dist/
 
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3

@@ -4,10 +4,6 @@
 # Debug/test files
 debug.html
 
-# Dependencies
-node_modules/
-package-lock.json
-
 # Local data
 data/
 src/
