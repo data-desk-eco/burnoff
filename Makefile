@@ -1,7 +1,7 @@
 CLOUD_RUN_SERVICE := burnoff-signaling
 CLOUD_RUN_REGION  := europe-west2
 
-.PHONY: serve signal deploy terminals help
+.PHONY: serve signal test deploy terminals help
 
 terminals: web/terminals.geojson
 
@@ -36,7 +36,7 @@ web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
 
 serve: signal terminals
 	@echo "http://localhost:8000  (signaling on :4444)"
-	@npx serve web -l 8000
+	@python3 -m http.server 8000 -d web
 
 signal:
 	@node signal/server.js &
@@ -55,7 +55,11 @@ deploy:
 	@echo ""
 	@echo "Get the exact URL with: gcloud run services describe $(CLOUD_RUN_SERVICE) --region $(CLOUD_RUN_REGION) --format 'value(status.url)'"
 
+test:
+	@node --test test/determinism.test.mjs
+
 help:
 	@echo "make serve    - Dev server on :8000 + signaling on :4444"
 	@echo "make signal   - Signaling server only"
+	@echo "make test     - Run determinism tests"
 	@echo "make deploy   - Deploy signaling server to Cloud Run"
