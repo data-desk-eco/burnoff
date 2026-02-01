@@ -9,6 +9,7 @@ import { SyncManager, validateDetection } from './sync.js';
 
 const MIN_DETECT_ZOOM = 11;
 let allRawDetections = [];
+let terminalFeatures = [];
 
 const detectionMap = new LWWMap();
 const processedMap = new LWWMap();
@@ -98,7 +99,7 @@ const map = new maplibregl.Map({
             id: 'basemap',
             type: 'raster',
             source: 'satellite',
-            paint: { 'raster-saturation': -1 }
+            paint: { 'raster-saturation': -1, 'raster-brightness-max': 0.85 }
         }]
     },
     center: [51.52, 25.92],
@@ -342,18 +343,47 @@ syncManager.onAwarenessChange(() => {
     }
 });
 
+// Block grid is 256px at 20m = ~5120m ≈ 0.046° lat
+const BLOCK_DEG = 0.046;
+
 function getDetectedQuarters() {
     const bounds = map.getBounds();
-    const quarters = new Set();
+    const vw = bounds.getWest(), vs = bounds.getSouth();
+    const ve = bounds.getEast(), vn = bounds.getNorth();
+
+    // Pad viewport by half a block so edge blocks (processed but centered
+    // just outside the viewport) still count toward coverage
+    const PAD = BLOCK_DEG / 2;
+    const pw = vw - PAD, ps = vs - PAD, pe = ve + PAD, pn = vn + PAD;
+
+    // Build a map of quarter -> set of grid cells that have a processed block
+    const quarterCells = new Map();
     processedMap.forEach((value, key) => {
         if (!Array.isArray(value)) return;
         const [lat, lng] = value;
-        if (!bounds.contains([lng, lat])) return;
-        const date = key.split(':')[1];           // "YYYY-MM-DD"
+        if (lat === 0 && lng === 0) return;
+        if (lng < pw || lng > pe || lat < ps || lat > pn) return;
+        const date = key.split(':')[1];
         const y = date.substring(0, 4);
         const q = Math.floor((parseInt(date.substring(5, 7)) - 1) / 3) + 1;
-        quarters.add(`${y}_${q}`);
+        const qKey = `${y}_${q}`;
+        if (!quarterCells.has(qKey)) quarterCells.set(qKey, new Set());
+        const cellR = Math.floor(lat / BLOCK_DEG);
+        const cellC = Math.floor(lng / BLOCK_DEG);
+        quarterCells.get(qKey).add(`${cellR},${cellC}`);
     });
+
+    // How many grid cells does the viewport span?
+    const expectedRows = Math.max(1, Math.ceil((vn - vs) / BLOCK_DEG));
+    const expectedCols = Math.max(1, Math.ceil((ve - vw) / BLOCK_DEG));
+    const expectedCells = expectedRows * expectedCols;
+
+    // A quarter is "detected" if its blocks cover ≥70% of the viewport grid
+    const quarters = new Set();
+    for (const [qKey, cells] of quarterCells) {
+        const coverage = cells.size / expectedCells;
+        if (coverage >= 0.7) quarters.add(qKey);
+    }
     return quarters;
 }
 
@@ -589,6 +619,10 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
 
     document.getElementById('info').classList.add('visible');
     document.getElementById('info-name').textContent = props.name || 'Unknown facility';
+    const sub = document.getElementById('info-subtitle');
+    if (sub) sub.textContent = props.terminal
+        ? `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`
+        : '';
 
     let detections = props.detections || [];
     if (typeof detections === 'string') {
@@ -803,10 +837,11 @@ function downloadFlareCSV() {
         try { detections = JSON.parse(detections); } catch (e) { detections = []; }
     }
 
-    const rows = [['facility', 'lat', 'lon', 'date', 'max_b12', 'pixels']];
+    const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels']];
     for (const det of detections) {
         rows.push([
             `"${(props.name || '').replace(/"/g, '""')}"`,
+            `"${(props.terminal || '').replace(/"/g, '""')}"`,
             det.raw_lat?.toFixed(6) || lat.toFixed(6),
             det.raw_lon?.toFixed(6) || lon.toFixed(6),
             det.date,
@@ -829,7 +864,7 @@ function downloadFlareCSV() {
 // Cross-date clustering (Union-Find, runs on main thread for live updates)
 // ---------------------------------------------------------------------------
 
-const MERGE_DISTANCE_M = 50;
+let MERGE_DISTANCE_M = 135;
 const CLUSTER_AVG_B12_MIN = 0.70;
 
 function haversineM(lat1, lon1, lat2, lon2) {
@@ -840,6 +875,18 @@ function haversineM(lat1, lon1, lat2, lon2) {
     const a = Math.sin(dLat / 2) ** 2 +
               Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const TERMINAL_MATCH_M = 5000;
+
+function findNearestTerminal(lat, lon) {
+    let best = null, bestDist = Infinity;
+    for (const f of terminalFeatures) {
+        const [tLon, tLat] = f.geometry.coordinates;
+        const d = haversineM(lat, lon, tLat, tLon);
+        if (d < bestDist) { bestDist = d; best = f; }
+    }
+    return best && bestDist <= TERMINAL_MATCH_M ? { name: best.properties.name, distance: bestDist } : null;
 }
 
 function crossDateCluster(allDetections) {
@@ -898,11 +945,15 @@ function crossDateCluster(allDetections) {
         let anchor = deduped[0];
         for (const d of deduped) { if (d.max_b12 > anchor.max_b12) anchor = d; }
 
+        const terminal = findNearestTerminal(anchor.flare_lat, anchor.flare_lon);
+        const name = terminal ? terminal.name : `${deduped.length} detection${deduped.length !== 1 ? 's' : ''}`;
+
         features.push({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [anchor.flare_lon, anchor.flare_lat] },
             properties: {
-                name: `${deduped.length} detection${deduped.length !== 1 ? 's' : ''}`,
+                name,
+                terminal: terminal?.name || null,
                 max_b12: anchor.max_b12,
                 detection_count: deduped.length,
                 detections: deduped.map(d => {
@@ -1126,6 +1177,7 @@ map.on('load', () => {
 
     // LNG terminal dots
     fetch('terminals.geojson').then(r => r.json()).then(geojson => {
+        terminalFeatures = geojson.features;
         map.addSource('lng-terminals', { type: 'geojson', data: geojson });
         map.addLayer({
             id: 'lng-terminal-dots',
@@ -1238,6 +1290,27 @@ document.getElementById('open-image-btn').addEventListener('click', () => {
 });
 document.querySelector('.close-btn').addEventListener('click', closeInfo);
 document.getElementById('detect-btn').addEventListener('click', startDetection);
+
+document.getElementById('cluster-range').addEventListener('input', e => {
+    const val = parseInt(e.target.value);
+    MERGE_DISTANCE_M = val;
+    document.getElementById('cluster-value').textContent = `${val} m`;
+    updateDetectionSource();
+    if (currentFeature) {
+        const src = map.getSource('client-detections');
+        if (src) {
+            const fc = src._data || { features: [] };
+            const features = fc.features || [];
+            const [lon, lat] = currentFeature.geometry.coordinates;
+            const match = features.find(f => {
+                const [fLon, fLat] = f.geometry.coordinates;
+                return Math.abs(fLon - lon) < 0.0001 && Math.abs(fLat - lat) < 0.0001;
+            });
+            if (match) showInfo(match, { skipAutoSelect: true });
+            else closeInfo();
+        }
+    }
+});
 
 document.getElementById('collapse-toggle').addEventListener('click', () => {
     document.getElementById('title-panel').classList.toggle('collapsed');
