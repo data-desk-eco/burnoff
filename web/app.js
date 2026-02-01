@@ -271,7 +271,7 @@ function startHelpingDetection(job, peerIndex, peerCount) {
     _helpingPeerCount = peerCount;
     flushNow();
 
-    _helpWorker = new Worker('detect-worker.js');
+    _helpWorker = new Worker('detect.js');
     _helpWorker.onmessage = function(e) {
         const msg = e.data;
         if (msg.type === 'blockDetections') {
@@ -971,7 +971,7 @@ function launchDetectWorker(job) {
     const bar = document.getElementById('detect-bar');
     const text = document.getElementById('detect-text');
 
-    detectWorker = new Worker('detect-worker.js');
+    detectWorker = new Worker('detect.js');
     detectWorker.onmessage = function(e) {
         const msg = e.data;
         if (msg.type === 'progress') {
