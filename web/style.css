@@ -236,6 +236,14 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
 .legend-circle {
     width: 10px; height: 10px; border-radius: 50%;
     margin-right: 10px;
+    border: 1.5px solid;
+    background: transparent;
+}
+.legend-circle-fill {
+    border: none;
+}
+.legend h4.legend-section {
+    margin-top: 14px;
 }
 
 .info-panel {
