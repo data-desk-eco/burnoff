@@ -1,6 +1,6 @@
 import { LWWMap } from './crdt.js';
 import { Store } from './store.js';
-import { PeerMesh } from './rtc.js';
+import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
 
 // ---------------------------------------------------------------------------
@@ -22,13 +22,27 @@ const _sigUrl = _sigMeta
     ? _sigMeta.content
     : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:4444`;
 
+/** Compute geo summary: precision-3 geohash set from processedMap locations. */
+function computeGeoSummary() {
+    const hashes = new Set();
+    processedMap.forEach((value) => {
+        if (!Array.isArray(value)) return;
+        const [lat, lng] = value;
+        if (lat === 0 && lng === 0) return;
+        hashes.add(geohash3(lat, lng));
+    });
+    return hashes;
+}
+
 // P2P mesh
 const mesh = new PeerMesh({
     signalingUrl: _sigUrl,
     room: 'burnoff',
     onPeerConnect: () => {},
     onPeerDisconnect: () => {},
-    onMessage: () => {}
+    onMessage: () => {},
+    maxPeers: 8,
+    getGeoSummary: computeGeoSummary
 });
 
 const syncManager = new SyncManager({
