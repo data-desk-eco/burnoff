@@ -56,7 +56,7 @@ deploy:
 	@echo "Get the exact URL with: gcloud run services describe $(CLOUD_RUN_SERVICE) --region $(CLOUD_RUN_REGION) --format 'value(status.url)'"
 
 test:
-	@node --test test/determinism.test.mjs
+	@node --test test/determinism.test.mjs test/retry-peers.test.mjs
 
 help:
 	@echo "make serve    - Dev server on :8000 + signaling on :4444"

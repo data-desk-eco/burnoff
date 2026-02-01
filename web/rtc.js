@@ -1,4 +1,49 @@
 // ---------------------------------------------------------------------------
+// Geohash + Jaccard helpers for region-aware peer selection
+// ---------------------------------------------------------------------------
+
+const GH_BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+
+/** Compute a precision-3 geohash (~156km cell) from lat/lng. */
+export function geohash3(lat, lng) {
+    let minLat = -90, maxLat = 90;
+    let minLng = -180, maxLng = 180;
+    let hash = '';
+    let isLng = true;
+
+    for (let i = 0; i < 3; i++) {
+        let ch = 0;
+        for (let bit = 4; bit >= 0; bit--) {
+            if (isLng) {
+                const mid = (minLng + maxLng) / 2;
+                if (lng >= mid) { ch |= (1 << bit); minLng = mid; }
+                else { maxLng = mid; }
+            } else {
+                const mid = (minLat + maxLat) / 2;
+                if (lat >= mid) { ch |= (1 << bit); minLat = mid; }
+                else { maxLat = mid; }
+            }
+            isLng = !isLng;
+        }
+        hash += GH_BASE32[ch];
+    }
+    return hash;
+}
+
+/** Jaccard similarity between two Sets. */
+export function jaccardScore(setA, setB) {
+    if (setA.size === 0 && setB.size === 0) return 0.5;
+    if (setA.size === 0 || setB.size === 0) return 0.1;
+    let intersection = 0;
+    const smaller = setA.size <= setB.size ? setA : setB;
+    const larger = setA.size <= setB.size ? setB : setA;
+    for (const v of smaller) {
+        if (larger.has(v)) intersection++;
+    }
+    return intersection / (setA.size + setB.size - intersection);
+}
+
+// ---------------------------------------------------------------------------
 // PeerMesh — WebRTC DataChannel mesh via signaling relay
 // ---------------------------------------------------------------------------
 
@@ -7,7 +52,7 @@ const RECONNECT_MIN = 1000;
 const RECONNECT_MAX = 30000;
 
 export class PeerMesh {
-    constructor({ signalingUrl, room, onPeerConnect, onPeerDisconnect, onMessage }) {
+    constructor({ signalingUrl, room, onPeerConnect, onPeerDisconnect, onMessage, maxPeers, getGeoSummary }) {
         this.signalingUrl = signalingUrl;
         this.room = room;
         this._onPeerConnect = onPeerConnect || (() => {});
@@ -19,6 +64,11 @@ export class PeerMesh {
         this._ws = null;
         this._reconnectDelay = RECONNECT_MIN;
         this._closed = false;
+
+        this._maxPeers = maxPeers || 8;
+        this._getGeoSummary = getGeoSummary || (() => new Set());
+        this._knownPeers = new Map(); // peerId -> { geo: Set, score: number }
+        this._rescoreInterval = null;
     }
 
     get connectedPeerIds() {
@@ -36,16 +86,25 @@ export class PeerMesh {
     connect() {
         this._closed = false;
         this._connectWs();
+        // Periodically rescore known peers and swap if better options exist
+        if (!this._rescoreInterval) {
+            this._rescoreInterval = setInterval(() => this._rescoreAndSwap(), 60000);
+        }
     }
 
     disconnect() {
         this._closed = true;
+        if (this._rescoreInterval) {
+            clearInterval(this._rescoreInterval);
+            this._rescoreInterval = null;
+        }
         if (this._ws) {
             this._ws.close();
             this._ws = null;
         }
         this._peers.forEach((peer, id) => this._closePeer(id));
         this._peers.clear();
+        this._knownPeers.clear();
     }
 
     broadcast(data) {
@@ -76,8 +135,9 @@ export class PeerMesh {
         ws.onopen = () => {
             this._reconnectDelay = RECONNECT_MIN;
             ws.send(JSON.stringify({ type: 'subscribe', topics: [this.room] }));
-            // Announce ourselves
-            this._publish({ kind: 'join', from: this.localPeerId });
+            // Announce ourselves with geo summary
+            const geo = Array.from(this._getGeoSummary());
+            this._publish({ kind: 'join', from: this.localPeerId, geo });
         };
 
         ws.onmessage = (event) => {
@@ -121,18 +181,28 @@ export class PeerMesh {
             const remotePeerId = msg.from;
             if (remotePeerId === this.localPeerId) return;
 
+            // Track remote peer's geo summary
+            const remoteGeo = new Set(msg.geo || []);
+            this._updateKnownPeer(remotePeerId, remoteGeo);
+
             // Respond so the joiner knows about us
-            this._publish({ kind: 'join-ack', from: this.localPeerId, to: remotePeerId });
+            const geo = Array.from(this._getGeoSummary());
+            this._publish({ kind: 'join-ack', from: this.localPeerId, to: remotePeerId, geo });
 
             // Higher peerId creates offer (deterministic, avoids duplicate connections)
             if (this.localPeerId > remotePeerId && !this._peers.has(remotePeerId)) {
-                this._createConnection(remotePeerId, true);
+                this._maybeConnect(remotePeerId);
             }
         } else if (msg.kind === 'join-ack') {
             if (msg.to !== this.localPeerId) return;
             const remotePeerId = msg.from;
+
+            // Track remote peer's geo summary
+            const remoteGeo = new Set(msg.geo || []);
+            this._updateKnownPeer(remotePeerId, remoteGeo);
+
             if (this.localPeerId > remotePeerId && !this._peers.has(remotePeerId)) {
-                this._createConnection(remotePeerId, true);
+                this._maybeConnect(remotePeerId);
             }
         } else if (msg.kind === 'offer') {
             if (msg.to !== this.localPeerId) return;
@@ -256,6 +326,78 @@ export class PeerMesh {
         try {
             await peer.pc.addIceCandidate(candidate);
         } catch (e) { /* ignore */ }
+    }
+
+    // -----------------------------------------------------------------------
+    // Region-aware peer selection
+    // -----------------------------------------------------------------------
+
+    _updateKnownPeer(remotePeerId, geoSet) {
+        const localGeo = this._getGeoSummary();
+        const score = jaccardScore(localGeo, geoSet);
+        this._knownPeers.set(remotePeerId, { geo: geoSet, score });
+    }
+
+    _maybeConnect(remotePeerId) {
+        if (this._peers.has(remotePeerId)) return;
+
+        const connectedCount = this.connectedPeerIds.length;
+
+        if (connectedCount < this._maxPeers) {
+            this._createConnection(remotePeerId, true);
+            return;
+        }
+
+        // At capacity — check if new peer scores better than worst connected
+        const newInfo = this._knownPeers.get(remotePeerId);
+        const newScore = newInfo ? newInfo.score : 0.5;
+
+        let worstId = null, worstScore = Infinity;
+        for (const id of this.connectedPeerIds) {
+            const info = this._knownPeers.get(id);
+            const s = info ? info.score : 0.5;
+            if (s < worstScore) { worstScore = s; worstId = id; }
+        }
+
+        if (worstId !== null && newScore > worstScore) {
+            this._closePeer(worstId);
+            this._createConnection(remotePeerId, true);
+        }
+    }
+
+    _rescoreAndSwap() {
+        if (this._closed) return;
+
+        const localGeo = this._getGeoSummary();
+
+        // Rescore all known peers
+        for (const [id, info] of this._knownPeers) {
+            info.score = jaccardScore(localGeo, info.geo);
+        }
+
+        // Check if any unconnected known peer scores better than worst connected
+        const connectedIds = new Set(this.connectedPeerIds);
+        if (connectedIds.size < this._maxPeers) return; // not at cap
+
+        let worstId = null, worstScore = Infinity;
+        for (const id of connectedIds) {
+            const info = this._knownPeers.get(id);
+            const s = info ? info.score : 0.5;
+            if (s < worstScore) { worstScore = s; worstId = id; }
+        }
+
+        let bestUnconnectedId = null, bestScore = -1;
+        for (const [id, info] of this._knownPeers) {
+            if (connectedIds.has(id)) continue;
+            if (info.score > bestScore) { bestScore = info.score; bestUnconnectedId = id; }
+        }
+
+        if (bestUnconnectedId !== null && worstId !== null && bestScore > worstScore) {
+            this._closePeer(worstId);
+            // Re-announce to trigger connection with the better peer
+            const geo = Array.from(localGeo);
+            this._publish({ kind: 'join', from: this.localPeerId, geo });
+        }
     }
 
     _closePeer(remotePeerId) {

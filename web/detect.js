@@ -94,6 +94,51 @@ function labelConnectedComponents(mask, width, height) {
 }
 
 // ---------------------------------------------------------------------------
+// Fetch with retry + exponential backoff
+// ---------------------------------------------------------------------------
+
+async function fetchWithRetry(url, options, maxRetries = 3) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        let resp;
+        try {
+            resp = await fetch(url, options);
+        } catch (err) {
+            // Network error — retry unless exhausted
+            if (attempt === maxRetries) throw err;
+            const delay = (1000 * Math.pow(2, attempt)) * (1 + Math.random() * 0.5);
+            console.warn(`fetch retry ${attempt + 1}/${maxRetries} after network error, waiting ${Math.round(delay)}ms`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+        }
+
+        if (resp.ok) return resp;
+
+        // Don't retry client errors other than 429
+        if (resp.status !== 429 && resp.status < 500) {
+            throw new Error(`HTTP ${resp.status}`);
+        }
+
+        if (attempt === maxRetries) {
+            throw new Error(`HTTP ${resp.status} after ${maxRetries + 1} attempts`);
+        }
+
+        // Respect Retry-After on 429, capped at 30s
+        let delay;
+        if (resp.status === 429) {
+            const ra = resp.headers.get('Retry-After');
+            const raSec = ra ? parseInt(ra, 10) : NaN;
+            delay = (!isNaN(raSec) && raSec > 0) ? Math.min(raSec, 30) * 1000 : (1000 * Math.pow(2, attempt));
+        } else {
+            delay = 1000 * Math.pow(2, attempt);
+        }
+        // Add 0-50% jitter
+        delay *= (1 + Math.random() * 0.5);
+        console.warn(`fetch retry ${attempt + 1}/${maxRetries} after HTTP ${resp.status}, waiting ${Math.round(delay)}ms`);
+        await new Promise(r => setTimeout(r, delay));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // STAC search
 // ---------------------------------------------------------------------------
 
@@ -119,12 +164,11 @@ async function searchSTAC(bbox, maxCloud, startDate, endDate) {
     let body = payload;
 
     while (url) {
-        const resp = await fetch(url, {
+        const resp = await fetchWithRetry(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         });
-        if (!resp.ok) throw new Error(`STAC search failed: ${resp.status}`);
         const data = await resp.json();
         items = items.concat(data.features || []);
 
