@@ -445,7 +445,7 @@ function initQuarterPicker() {
             btn.textContent = `Q${q}`;
             btn.dataset.year = year;
             btn.dataset.quarter = q;
-            if (year === currentYear && q === currentQuarter) btn.classList.add('active');
+            if (year === currentYear && q <= currentQuarter) btn.classList.add('active');
             btn.addEventListener('click', () => toggleQuarter(btn));
             row.appendChild(btn);
         }
@@ -1284,17 +1284,37 @@ map.on('load', () => {
                 'circle-opacity': 0
             }
         });
+        // Generate X icon via canvas
+        const xSize = 32;
+        const xCanvas = document.createElement('canvas');
+        xCanvas.width = xSize;
+        xCanvas.height = xSize;
+        const xCtx = xCanvas.getContext('2d');
+        const pad = 6;
+        xCtx.strokeStyle = '#ffffff';
+        xCtx.lineWidth = 3;
+        xCtx.lineCap = 'round';
+        xCtx.beginPath();
+        xCtx.moveTo(pad, pad);
+        xCtx.lineTo(xSize - pad, xSize - pad);
+        xCtx.moveTo(xSize - pad, pad);
+        xCtx.lineTo(pad, xSize - pad);
+        xCtx.stroke();
+        const xData = xCtx.getImageData(0, 0, xSize, xSize);
+        map.addImage('x-icon', { width: xSize, height: xSize, data: xData.data });
+
         map.addLayer({
             id: 'lng-terminal-dots',
-            type: 'circle',
+            type: 'symbol',
             source: 'lng-terminals',
+            layout: {
+                'icon-image': 'x-icon',
+                'icon-size': ['interpolate', ['linear'], ['zoom'], 0, 0.4, 6, 0.55, 12, 0.85],
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true
+            },
             paint: {
-                'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 4, 6, 6, 12, 9],
-                'circle-color': '#ffffff',
-                'circle-opacity': 0.55,
-                'circle-stroke-color': '#ffffff',
-                'circle-stroke-width': 1,
-                'circle-stroke-opacity': 0.4
+                'icon-opacity': 1
             }
         });
 
