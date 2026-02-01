@@ -864,8 +864,8 @@ function downloadFlareCSV() {
 // Cross-date clustering (Union-Find, runs on main thread for live updates)
 // ---------------------------------------------------------------------------
 
-let MERGE_DISTANCE_M = 0;
-const CLUSTER_AVG_B12_MIN = 0.70;
+let MERGE_DISTANCE_M = 135;
+let CLUSTER_AVG_B12_MIN = 0.85;
 
 function haversineM(lat1, lon1, lat2, lon2) {
     const R = 6371000;
@@ -887,7 +887,7 @@ function fastDistM(lat1, lon1, lat2, lon2) {
     return R_EARTH * Math.sqrt(dLat * dLat + dLon * dLon);
 }
 
-const TERMINAL_MATCH_M = 5000;
+const TERMINAL_MATCH_M = 7500;
 
 // Pre-built grid index for terminal features, rebuilt when terminals load.
 let _terminalGrid = null;
@@ -935,6 +935,7 @@ function crossDateCluster(allDetections) {
     if (MERGE_DISTANCE_M === 0) {
         const features = [];
         for (const det of allDetections) {
+            if (det.max_b12 < CLUSTER_AVG_B12_MIN) continue;
             const terminal = findNearestTerminal(det.flare_lat, det.flare_lon);
             features.push({
                 type: 'Feature',
@@ -1403,6 +1404,31 @@ document.getElementById('cluster-range').addEventListener('input', e => {
     // Debounce clustering to avoid re-running on every pixel of slider drag
     clearTimeout(_clusterSliderTimer);
     _clusterSliderTimer = setTimeout(() => {
+        updateDetectionSource();
+        if (currentFeature) {
+            const src = map.getSource('client-detections');
+            if (src) {
+                const fc = src._data || { features: [] };
+                const features = fc.features || [];
+                const [lon, lat] = currentFeature.geometry.coordinates;
+                const match = features.find(f => {
+                    const [fLon, fLat] = f.geometry.coordinates;
+                    return Math.abs(fLon - lon) < 0.0001 && Math.abs(fLat - lat) < 0.0001;
+                });
+                if (match) showInfo(match, { skipAutoSelect: true });
+                else closeInfo();
+            }
+        }
+    }, 80);
+});
+
+let _intensitySliderTimer = 0;
+document.getElementById('intensity-range').addEventListener('input', e => {
+    const val = parseFloat(e.target.value);
+    CLUSTER_AVG_B12_MIN = val;
+    document.getElementById('intensity-value').textContent = val === 0 ? 'Off' : val.toFixed(2).replace(/^0\./, '.');
+    clearTimeout(_intensitySliderTimer);
+    _intensitySliderTimer = setTimeout(() => {
         updateDetectionSource();
         if (currentFeature) {
             const src = map.getSource('client-detections');
