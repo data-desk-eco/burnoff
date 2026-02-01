@@ -550,14 +550,13 @@ function renderIntensityChart(detections, onSelectDate) {
     });
 }
 
-function utmToWgs84(utmBounds, epsg) {
+function utmBoundsToWgs84(utmBounds, epsg) {
     if (!epsg) return null;
     const zone = epsg % 100;
     const isNorth = epsg < 32700;
-    const utmProj = `+proj=utm +zone=${zone} ${isNorth ? '' : '+south '}+datum=WGS84 +units=m +no_defs`;
     const [minX, minY, maxX, maxY] = utmBounds;
-    const sw = proj4(utmProj, 'EPSG:4326', [minX, minY]);
-    const ne = proj4(utmProj, 'EPSG:4326', [maxX, maxY]);
+    const sw = self.utmToWgs84(minX, minY, zone, isNorth);
+    const ne = self.utmToWgs84(maxX, maxY, zone, isNorth);
     return [sw[0], sw[1], ne[0], ne[1]];
 }
 
@@ -670,8 +669,7 @@ async function loadImageryForDetection(det) {
 
     const zone = epsg % 100;
     const isNorth = epsg < 32700;
-    const utmProj = `+proj=utm +zone=${zone} ${isNorth ? '' : '+south '}+datum=WGS84 +units=m +no_defs`;
-    const [flareUtmX, flareUtmY] = proj4('EPSG:4326', utmProj, [flareLon, flareLat]);
+    const [flareUtmX, flareUtmY] = self.wgs84ToUtm(flareLon, flareLat, zone, isNorth);
     const utmBounds = [flareUtmX - buffer, flareUtmY - buffer, flareUtmX + buffer, flareUtmY + buffer];
 
     document.querySelectorAll('.event-item').forEach(el => el.classList.remove('loading'));
@@ -697,7 +695,7 @@ async function loadImageryForDetection(det) {
         if (windowWidth <= 0 || windowHeight <= 0) throw new Error('Outside image bounds');
 
         const actualUtmBounds = [imgMinX + x0 * resX, imgMaxY - y1 * resY, imgMinX + x1 * resX, imgMaxY - y0 * resY];
-        const bounds = utmToWgs84(actualUtmBounds, epsg);
+        const bounds = utmBoundsToWgs84(actualUtmBounds, epsg);
         if (!bounds) throw new Error('Could not convert bounds');
 
         const rasters = await image.readRasters({

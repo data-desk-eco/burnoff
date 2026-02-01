@@ -7,7 +7,7 @@
 
 importScripts(
     'https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js',
-    'https://unpkg.com/proj4@2.9.2/dist/proj4.js'
+    'utm.js'
 );
 
 // Detection thresholds (matches detect.py)
@@ -45,11 +45,9 @@ function dnToReflectance(dn) {
     return (dn - 1000) / 10000;
 }
 
-/** Compute UTM proj string from EPSG code. */
-function utmProj(epsg) {
-    const zone = epsg % 100;
-    const isNorth = epsg < 32700;
-    return `+proj=utm +zone=${zone} ${isNorth ? '' : '+south '}+datum=WGS84 +units=m +no_defs`;
+/** Extract UTM zone and hemisphere from EPSG code. */
+function utmParams(epsg) {
+    return { zone: epsg % 100, isNorth: epsg < 32700 };
 }
 
 /** Read a windowed region from an already-opened GeoTIFF image. */
@@ -248,8 +246,8 @@ async function processBlock(opts) {
     const { labels, count } = labelConnectedComponents(mask, w, h);
     if (count === 0) return [];
 
-    // UTM projection for coordinate conversion
-    const projStr = utmProj(itemEpsg);
+    // UTM parameters for coordinate conversion
+    const { zone: _zone, isNorth: _isN } = utmParams(itemEpsg);
     const utmMinX = imgMinX + x0 * resX;
     const utmMinY = imgMaxY - y1 * resY;
     const utmMaxX = imgMinX + x1 * resX;
@@ -310,7 +308,7 @@ async function processBlock(opts) {
         const rowFrac = (peakRow + 0.5) / h;
         const utmX = utmMinX + colFrac * (utmMaxX - utmMinX);
         const utmY = utmMaxY_w - rowFrac * (utmMaxY_w - utmMinY);
-        const [flareLon, flareLat] = proj4(projStr, 'EPSG:4326', [utmX, utmY]);
+        const [flareLon, flareLat] = utmToWgs84(utmX, utmY, _zone, _isN);
 
         detections.push({
             date: imgDate,
@@ -363,9 +361,9 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
     const resY = (imgMaxY - imgMinY) / imgHeight;
 
     // Convert viewport bbox to pixel range
-    const proj = utmProj(itemEpsg);
-    const sw = proj4('EPSG:4326', proj, [viewportBbox[0], viewportBbox[1]]);
-    const ne = proj4('EPSG:4326', proj, [viewportBbox[2], viewportBbox[3]]);
+    const { zone: _z, isNorth: _n } = utmParams(itemEpsg);
+    const sw = wgs84ToUtm(viewportBbox[0], viewportBbox[1], _z, _n);
+    const ne = wgs84ToUtm(viewportBbox[2], viewportBbox[3], _z, _n);
 
     const px0 = Math.max(0, Math.floor((Math.max(sw[0], imgMinX) - imgMinX) / resX));
     const py0 = Math.max(0, Math.floor((imgMaxY - Math.min(ne[1], imgMaxY)) / resY));
@@ -470,7 +468,7 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
             // Block center in UTM → WGS84
             const cx = imgMinX + (bc + 0.5) * BLOCK_SIZE * resX;
             const cy = imgMaxY - (br + 0.5) * BLOCK_SIZE * resY;
-            const [bLng, bLat] = proj4(utmProj(itemEpsg), 'EPSG:4326', [cx, cy]);
+            const [bLng, bLat] = utmToWgs84(cx, cy, _z, _n);
 
             try {
                 const dets = await processBlock({
