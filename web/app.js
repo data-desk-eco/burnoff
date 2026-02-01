@@ -596,8 +596,8 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         item.dataset.date = det.date;
         item.innerHTML = `
             <span class="event-date">${formatDate(det.date)}</span>
-            <span class="event-meta" style="text-align: right; width: 40px;">${det.max_b12?.toFixed(2) || '-'}</span>
-            <span class="event-meta" style="text-align: right; width: 32px;">${det.pixels || '-'}</span>
+            <span class="event-meta event-meta-b12">${det.max_b12?.toFixed(2) || '-'}</span>
+            <span class="event-meta event-meta-px">${det.pixels || '-'}</span>
         `;
         item.onclick = () => selectDetection(det, item);
         list.appendChild(item);
@@ -628,7 +628,7 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
 
     if (detections.length === 0) {
         document.getElementById('intensity-chart').innerHTML = '';
-        list.innerHTML = '<div style="padding: 16px; color: rgba(255,255,255,0.4); text-align: center;">No detections</div>';
+        list.innerHTML = '<div class="events-empty">No detections</div>';
     }
 }
 
