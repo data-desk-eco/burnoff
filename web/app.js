@@ -389,7 +389,13 @@ function initQuarterPicker() {
         row.appendChild(label);
 
         const maxQ = (year === currentYear) ? currentQuarter : 4;
-        for (let q = 1; q <= maxQ; q++) {
+        for (let q = 1; q <= 4; q++) {
+            if (q > maxQ) {
+                const spacer = document.createElement('span');
+                spacer.className = 'quarter-spacer';
+                row.appendChild(spacer);
+                continue;
+            }
             const btn = document.createElement('button');
             btn.className = 'quarter-btn';
             btn.textContent = `Q${q}`;
