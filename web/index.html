@@ -17,7 +17,7 @@
             <h1>Burnoff</h1>
             <span class="collapse-toggle" id="collapse-toggle"><svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,8 6,4 10,8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
         </div>
-        <p>Sentinel-2 flare detection</p>
+        <p><a href="https://github.com/data-desk-eco/burnoff" target="_blank">Sentinel-2 flare detection</a></p>
         <div class="detect-separator"></div>
         <div class="peer-status" id="peer-status"></div>
         <div class="map-loc-section">
@@ -27,9 +27,16 @@
         <div class="cluster-slider">
             <div class="cluster-slider-header">
                 <span class="label-sm">Cluster distance</span>
-                <span class="cluster-slider-value" id="cluster-value">Off</span>
+                <span class="cluster-slider-value" id="cluster-value">135 m</span>
             </div>
-            <input type="range" id="cluster-range" min="0" max="200" step="5" value="0">
+            <input type="range" id="cluster-range" min="0" max="200" step="5" value="135">
+        </div>
+        <div class="intensity-slider">
+            <div class="cluster-slider-header">
+                <span class="label-sm">Minimum intensity</span>
+                <span class="cluster-slider-value" id="intensity-value">.85</span>
+            </div>
+            <input type="range" id="intensity-range" min="0" max="1.5" step="0.05" value="0.85">
         </div>
         <div class="quarter-picker" id="quarter-picker"></div>
         <button id="detect-btn" class="detect-btn">Detect</button>
@@ -55,9 +62,9 @@
     <div class="modal-overlay" id="about-modal">
         <div class="modal-content">
             <h2>🔥 BURNOFF</h2>
-            <p>Detects gas flares and other heat sources using Sentinel-2 shortwave infrared imagery. Flares appear bright in SWIR bands due to thermal emission.</p>
-            <p>Click Detect to download and process Sentinel-2 imagery for the current view. Click any detection to view the satellite imagery and flare analysis.</p>
-            <p>Detection results sync peer-to-peer between all open Burnoff sessions and are saved locally. When you run a detection, peers automatically split the work and share results in real time.</p>
+            <p>Distributed detection of gas flares and other thermal anomalies using Sentinel-2 shortwave infrared imagery.</p>
+            <p>Click <em>Detect</em> to download and process imagery for the current view, sharing the workload — and the results — with connected peers. Click any detection to view the underlying data and flare analysis.</p>
+            <p>All your detections are stored locally and synced with other users peer-to-peer. Together, we'll build up a global map.</p>
             <div class="modal-citations">
                 <h4 class="label-sm">Methods & Data</h4>
                 <p>

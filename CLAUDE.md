@@ -109,7 +109,7 @@ Per-block pipeline (fused into minimal passes):
 Cross-date clustering (main thread, grid-indexed):
   - Anchor-based merge within 50m (no transitive chaining)
   - Minimum 4 distinct dates per cluster
-  - Minimum average B12 per cluster: 0.70
+  - Minimum average B12 per cluster: 0.85 (adjustable via UI slider)
 ```
 
 ## P2P Sync

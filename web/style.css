@@ -79,11 +79,19 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     margin: 5px 0 0 0;
     letter-spacing: 0.05em;
 }
+.title p a {
+    color: inherit;
+    text-decoration: none;
+}
+.title p a:hover {
+    text-decoration: underline;
+}
 .title.collapsed p,
 .title.collapsed .detect-separator,
 .title.collapsed .peer-status,
 .title.collapsed .quarter-picker,
 .title.collapsed .cluster-slider,
+.title.collapsed .intensity-slider,
 .title.collapsed .detect-btn,
 .title.collapsed .detect-progress {
     display: none;
@@ -110,7 +118,7 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
 .peer-status.active { color: var(--accent); }
 .detect-btn {
     width: 100%;
-    height: 24px;
+    height: 29px;
     padding: 0 12px;
     background: transparent;
     border: 1px solid var(--border-light);
@@ -132,7 +140,7 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
 }
 .detect-progress {
     position: relative;
-    height: 24px;
+    height: 29px;
     background: rgba(255,255,255,0.05);
     border: 1px solid var(--border-light);
     overflow: hidden;
@@ -228,7 +236,7 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
 .quarter-spacer {
     flex: 1;
 }
-.cluster-slider {
+.cluster-slider, .intensity-slider {
     margin-bottom: 12px;
 }
 .cluster-slider-header {
@@ -242,7 +250,8 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
 }
-.cluster-slider input[type="range"] {
+.cluster-slider input[type="range"],
+.intensity-slider input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
     width: 100%;
@@ -251,7 +260,8 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     outline: none;
     cursor: pointer;
 }
-.cluster-slider input[type="range"]::-webkit-slider-thumb {
+.cluster-slider input[type="range"]::-webkit-slider-thumb,
+.intensity-slider input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 10px;
@@ -262,10 +272,12 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     cursor: pointer;
     transition: background 0.15s;
 }
-.cluster-slider input[type="range"]::-webkit-slider-thumb:hover {
+.cluster-slider input[type="range"]::-webkit-slider-thumb:hover,
+.intensity-slider input[type="range"]::-webkit-slider-thumb:hover {
     background: var(--text-primary);
 }
-.cluster-slider input[type="range"]::-moz-range-thumb {
+.cluster-slider input[type="range"]::-moz-range-thumb,
+.intensity-slider input[type="range"]::-moz-range-thumb {
     width: 10px;
     height: 10px;
     background: var(--text-muted);
@@ -273,7 +285,8 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     border-radius: 0;
     cursor: pointer;
 }
-.cluster-slider input[type="range"]::-moz-range-track {
+.cluster-slider input[type="range"]::-moz-range-track,
+.intensity-slider input[type="range"]::-moz-range-track {
     height: 1px;
     background: var(--border-light);
     border: none;
@@ -460,7 +473,7 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
 }
 .panel-btn {
     flex: 1;
-    height: 24px;
+    height: 29px;
     padding: 0 12px;
     background: transparent;
     border: 1px solid var(--border-light);
