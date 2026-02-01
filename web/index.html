@@ -20,8 +20,10 @@
         <p>Sentinel-2 flare detection</p>
         <div class="detect-separator"></div>
         <div class="peer-status" id="peer-status"></div>
-        <div class="map-centre" id="map-centre"></div>
-        <div class="quarter-picker" id="quarter-picker"></div>
+        <div class="map-loc-section">
+            <div class="map-centre" id="map-centre"></div>
+            <div class="map-terminal" id="map-terminal"></div>
+        </div>
         <div class="cluster-slider">
             <div class="cluster-slider-header">
                 <span class="label-sm">Cluster distance</span>
@@ -29,6 +31,7 @@
             </div>
             <input type="range" id="cluster-range" min="10" max="200" step="5" value="135">
         </div>
+        <div class="quarter-picker" id="quarter-picker"></div>
         <button id="detect-btn" class="detect-btn">Detect</button>
         <div id="detect-progress" class="detect-progress hidden">
             <div class="detect-progress-bar" id="detect-bar"></div>
