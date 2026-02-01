@@ -864,7 +864,7 @@ function downloadFlareCSV() {
 // Cross-date clustering (Union-Find, runs on main thread for live updates)
 // ---------------------------------------------------------------------------
 
-let MERGE_DISTANCE_M = 135;
+let MERGE_DISTANCE_M = 0;
 const CLUSTER_AVG_B12_MIN = 0.70;
 
 function haversineM(lat1, lon1, lat2, lon2) {
@@ -877,13 +877,52 @@ function haversineM(lat1, lon1, lat2, lon2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Fast equirectangular distance — accurate to <0.1% at distances under 1 km
+// and at latitudes under ~70°. Used in the hot clustering loop to avoid trig.
+const DEG_TO_RAD = Math.PI / 180;
+const R_EARTH = 6371000;
+function fastDistM(lat1, lon1, lat2, lon2) {
+    const dLat = (lat2 - lat1) * DEG_TO_RAD;
+    const dLon = (lon2 - lon1) * DEG_TO_RAD * Math.cos(((lat1 + lat2) * 0.5) * DEG_TO_RAD);
+    return R_EARTH * Math.sqrt(dLat * dLat + dLon * dLon);
+}
+
 const TERMINAL_MATCH_M = 5000;
 
-function findNearestTerminal(lat, lon) {
-    let best = null, bestDist = Infinity;
+// Pre-built grid index for terminal features, rebuilt when terminals load.
+let _terminalGrid = null;
+let _terminalGridCell = 0;
+
+function buildTerminalGrid() {
+    const cell = TERMINAL_MATCH_M / 111320;       // degrees per grid cell
+    _terminalGridCell = cell;
+    const g = new Map();
     for (const f of terminalFeatures) {
+        const [lon, lat] = f.geometry.coordinates;
+        const r = Math.floor(lat / cell), c = Math.floor(lon / cell);
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                const key = (r + dr) * 0x100000 + (c + dc);
+                const bucket = g.get(key);
+                if (bucket) bucket.push(f);
+                else g.set(key, [f]);
+            }
+        }
+    }
+    _terminalGrid = g;
+}
+
+function findNearestTerminal(lat, lon) {
+    if (!_terminalGrid || terminalFeatures.length === 0) return null;
+    const cell = _terminalGridCell;
+    const r = Math.floor(lat / cell), c = Math.floor(lon / cell);
+    const key = r * 0x100000 + c;
+    const bucket = _terminalGrid.get(key);
+    if (!bucket) return null;
+    let best = null, bestDist = Infinity;
+    for (const f of bucket) {
         const [tLon, tLat] = f.geometry.coordinates;
-        const d = haversineM(lat, lon, tLat, tLon);
+        const d = fastDistM(lat, lon, tLat, tLon);
         if (d < bestDist) { bestDist = d; best = f; }
     }
     return best && bestDist <= TERMINAL_MATCH_M ? { name: best.properties.name, distance: bestDist } : null;
@@ -892,11 +931,38 @@ function findNearestTerminal(lat, lon) {
 function crossDateCluster(allDetections) {
     if (allDetections.length === 0) return [];
 
+    // No clustering — emit every detection as its own feature
+    if (MERGE_DISTANCE_M === 0) {
+        const features = [];
+        for (const det of allDetections) {
+            const terminal = findNearestTerminal(det.flare_lat, det.flare_lon);
+            features.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [det.flare_lon, det.flare_lat] },
+                properties: {
+                    name: terminal ? terminal.name : det.date,
+                    terminal: terminal?.name || null,
+                    max_b12: det.max_b12,
+                    detection_count: 1,
+                    detections: [{
+                        date: det.date, max_b12: det.max_b12, pixels: det.pixels,
+                        cog_b12: det.cog_b12, epsg: det.epsg, utm_bounds: det.utm_bounds,
+                        raw_lon: det.flare_lon, raw_lat: det.flare_lat,
+                        b12_corrected: det.max_b12
+                    }]
+                }
+            });
+        }
+        return features;
+    }
+
     const sorted = allDetections.slice().sort((a, b) => b.max_b12 - a.max_b12);
 
     const CELL_DEG = MERGE_DISTANCE_M / 111320;
     const grid = new Map();
     const clusters = [];
+    // Numeric grid key: pack row/col into a single integer (avoids string alloc)
+    const KEY_SHIFT = 0x100000;  // 2^20, enough for ~±500 000 grid rows
 
     for (const det of sorted) {
         const gRow = Math.floor(det.flare_lat / CELL_DEG);
@@ -905,12 +971,12 @@ function crossDateCluster(allDetections) {
 
         for (let dr = -1; dr <= 1; dr++) {
             for (let dc = -1; dc <= 1; dc++) {
-                const key = `${gRow + dr},${gCol + dc}`;
+                const key = (gRow + dr) * KEY_SHIFT + (gCol + dc);
                 const bucket = grid.get(key);
                 if (!bucket) continue;
                 for (const ci of bucket) {
                     const a = clusters[ci].anchor;
-                    const d = haversineM(det.flare_lat, det.flare_lon, a.flare_lat, a.flare_lon);
+                    const d = fastDistM(det.flare_lat, det.flare_lon, a.flare_lat, a.flare_lon);
                     if (d <= MERGE_DISTANCE_M && d < bestDist) {
                         bestDist = d;
                         bestIdx = ci;
@@ -924,7 +990,7 @@ function crossDateCluster(allDetections) {
         } else {
             const ci = clusters.length;
             clusters.push({ anchor: det, members: [det] });
-            const key = `${gRow},${gCol}`;
+            const key = gRow * KEY_SHIFT + gCol;
             const bucket = grid.get(key);
             if (bucket) bucket.push(ci);
             else grid.set(key, [ci]);
@@ -1205,6 +1271,7 @@ map.on('load', () => {
     // LNG terminal dots
     fetch('terminals.geojson').then(r => r.json()).then(geojson => {
         terminalFeatures = geojson.features;
+        buildTerminalGrid();
         map.addSource('lng-terminals', { type: 'geojson', data: geojson });
         map.addLayer({
             id: 'lng-terminal-hitarea',
@@ -1328,25 +1395,30 @@ document.getElementById('open-image-btn').addEventListener('click', () => {
 document.querySelector('.close-btn').addEventListener('click', closeInfo);
 document.getElementById('detect-btn').addEventListener('click', startDetection);
 
+let _clusterSliderTimer = 0;
 document.getElementById('cluster-range').addEventListener('input', e => {
     const val = parseInt(e.target.value);
     MERGE_DISTANCE_M = val;
-    document.getElementById('cluster-value').textContent = `${val} m`;
-    updateDetectionSource();
-    if (currentFeature) {
-        const src = map.getSource('client-detections');
-        if (src) {
-            const fc = src._data || { features: [] };
-            const features = fc.features || [];
-            const [lon, lat] = currentFeature.geometry.coordinates;
-            const match = features.find(f => {
-                const [fLon, fLat] = f.geometry.coordinates;
-                return Math.abs(fLon - lon) < 0.0001 && Math.abs(fLat - lat) < 0.0001;
-            });
-            if (match) showInfo(match, { skipAutoSelect: true });
-            else closeInfo();
+    document.getElementById('cluster-value').textContent = val === 0 ? 'Off' : `${val} m`;
+    // Debounce clustering to avoid re-running on every pixel of slider drag
+    clearTimeout(_clusterSliderTimer);
+    _clusterSliderTimer = setTimeout(() => {
+        updateDetectionSource();
+        if (currentFeature) {
+            const src = map.getSource('client-detections');
+            if (src) {
+                const fc = src._data || { features: [] };
+                const features = fc.features || [];
+                const [lon, lat] = currentFeature.geometry.coordinates;
+                const match = features.find(f => {
+                    const [fLon, fLat] = f.geometry.coordinates;
+                    return Math.abs(fLon - lon) < 0.0001 && Math.abs(fLat - lat) < 0.0001;
+                });
+                if (match) showInfo(match, { skipAutoSelect: true });
+                else closeInfo();
+            }
         }
-    }
+    }, 80);
 });
 
 document.getElementById('collapse-toggle').addEventListener('click', () => {
