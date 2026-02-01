@@ -1154,10 +1154,37 @@ function finishDetection(stats) {
 }
 
 // Map load handler
+const MIN_TERMINAL_LABEL_ZOOM = 12;
+
 function updateMapCentre() {
     const c = map.getCenter();
-    document.getElementById('map-centre').textContent =
-        `LOC: ${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`;
+    const locEl = document.getElementById('map-centre');
+    const termEl = document.getElementById('map-terminal');
+
+    let terminalName = null;
+    if (map.getZoom() >= MIN_TERMINAL_LABEL_ZOOM && terminalFeatures.length > 0) {
+        const bounds = map.getBounds();
+        const names = new Set();
+        for (const f of terminalFeatures) {
+            const [lon, lat] = f.geometry.coordinates;
+            if (bounds.contains([lon, lat])) names.add(f.properties.name);
+        }
+        if (names.size > 0) {
+            const arr = [...names];
+            terminalName = arr.length > 3
+                ? arr.slice(0, 3).join(', ') + ', \u2026'
+                : arr.join(', ');
+        }
+    }
+
+    if (terminalName) {
+        locEl.style.display = 'none';
+        termEl.textContent = terminalName;
+    } else {
+        locEl.style.display = '';
+        locEl.textContent = `${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`;
+        termEl.textContent = '';
+    }
 }
 
 map.on('move', updateMapCentre);
@@ -1180,6 +1207,16 @@ map.on('load', () => {
         terminalFeatures = geojson.features;
         map.addSource('lng-terminals', { type: 'geojson', data: geojson });
         map.addLayer({
+            id: 'lng-terminal-hitarea',
+            type: 'circle',
+            source: 'lng-terminals',
+            paint: {
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 0, 12, 6, 16, 12, 22],
+                'circle-color': 'transparent',
+                'circle-opacity': 0
+            }
+        });
+        map.addLayer({
             id: 'lng-terminal-dots',
             type: 'circle',
             source: 'lng-terminals',
@@ -1195,7 +1232,7 @@ map.on('load', () => {
 
         const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'terminal-popup', offset: 10 });
 
-        map.on('mousemove', 'lng-terminal-dots', e => {
+        map.on('mousemove', 'lng-terminal-hitarea', e => {
             map.getCanvas().style.cursor = 'pointer';
             const f = e.features[0];
             const p = f.properties;
@@ -1204,7 +1241,7 @@ map.on('load', () => {
                 .setHTML(`<strong>${p.name}</strong><br>${p.country} \u00b7 ${p.type}<br>${cap}`)
                 .addTo(map);
         });
-        map.on('mouseleave', 'lng-terminal-dots', () => {
+        map.on('mouseleave', 'lng-terminal-hitarea', () => {
             map.getCanvas().style.cursor = '';
             popup.remove();
         });
