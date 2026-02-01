@@ -214,6 +214,9 @@ html, body { width: 100%; height: 100%; font-family: 'SF Mono', 'Monaco', 'Incon
     color: var(--text-hint);
     background: transparent;
 }
+.quarter-spacer {
+    flex: 1;
+}
 .hidden { display: none !important; }
 
 .legend {
