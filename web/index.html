@@ -22,6 +22,13 @@
         <div class="peer-status" id="peer-status"></div>
         <div class="map-centre" id="map-centre"></div>
         <div class="quarter-picker" id="quarter-picker"></div>
+        <div class="cluster-slider">
+            <div class="cluster-slider-header">
+                <span class="label-sm">Cluster distance</span>
+                <span class="cluster-slider-value" id="cluster-value">135 m</span>
+            </div>
+            <input type="range" id="cluster-range" min="10" max="200" step="5" value="135">
+        </div>
         <button id="detect-btn" class="detect-btn">Detect</button>
         <div id="detect-progress" class="detect-progress hidden">
             <div class="detect-progress-bar" id="detect-bar"></div>
@@ -63,7 +70,10 @@
 
     <div class="panel info-panel custom-scroll" id="info">
         <div class="info-header">
-            <h3 id="info-name">-</h3>
+            <div class="info-header-text">
+                <h3 id="info-name">-</h3>
+                <div class="info-subtitle" id="info-subtitle"></div>
+            </div>
             <span class="close-btn">&times;</span>
         </div>
         <div class="intensity-chart" id="intensity-chart"></div>
