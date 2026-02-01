@@ -23,7 +23,7 @@ hand-rolled using web standards.
  │  IndexedDB           │                 │  IndexedDB           │
  │          │           │                 │          │           │
  │  ┌───────▼────────┐  │                 │  ┌───────▼────────┐  │
- │  │ detect-worker  │  │                 │  │ detect-worker  │  │
+ │  │ detect         │  │                 │  │ detect         │  │
  │  │  (Web Worker)  │  │                 │  │  (Web Worker)  │  │
  │  └───────┬────────┘  │                 │  └───────┬────────┘  │
  └──────────┼───────────┘                 └──────────┼───────────┘
@@ -56,7 +56,7 @@ Tests use `node:test` and `node:assert`.
 ```
 web/
   app.js              Main thread: map, UI, CRDT sync, cross-date clustering
-  detect-worker.js    Web Worker: STAC search, band reads, per-block detection
+  detect.js           Web Worker: STAC search, band reads, per-block detection
   utm.js              UTM <-> WGS84 projection (inline Transverse Mercator)
   crdt.js             LWW-Map CRDT with binary codec
   sync.js             Sync protocol, awareness, validation

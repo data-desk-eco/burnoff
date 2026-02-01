@@ -1,7 +1,7 @@
 /**
  * Determinism test for the Burnoff flare detection pipeline.
  *
- * Extracts the core numeric routines from detect-worker.js and app.js,
+ * Extracts the core numeric routines from detect.js and app.js,
  * then verifies that identical flare pixels produce identical detection
  * results regardless of:
  *   1. Window size (simulating different zoom levels)
@@ -17,7 +17,7 @@ import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
 // ───────────────────────────────────────────────────────────────────────
-// Constants (copied from detect-worker.js)
+// Constants (copied from detect.js)
 // ───────────────────────────────────────────────────────────────────────
 const B12_MIN = 0.3;
 const B11_MIN = 0.2;
@@ -38,7 +38,7 @@ const MERGE_DISTANCE_M = 50;
 const CLUSTER_AVG_B12_MIN = 0.70;
 
 // ───────────────────────────────────────────────────────────────────────
-// Core functions (extracted verbatim from detect-worker.js / app.js)
+// Core functions (extracted verbatim from detect.js / app.js)
 // ───────────────────────────────────────────────────────────────────────
 
 function dnToReflectance(dn) {
