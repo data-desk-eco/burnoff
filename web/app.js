@@ -124,47 +124,23 @@ function getCachedBlockKeys() {
     return Array.from(processedMap.keys());
 }
 
-// --- Batched block result writes ---
-const _pendingBlocks = [];
-let _flushTimer = null;
-const FLUSH_INTERVAL = 200;
-const FLUSH_BATCH_SIZE = 20;
-
-function flushPendingBlocks() {
-    if (_pendingBlocks.length === 0) return;
-    const batch = _pendingBlocks.splice(0);
+// Write block results directly to CRDT + IndexedDB (no batching).
+// iOS WebKit kills pages too fast for batched writes to survive reload.
+function cacheBlockResult(blockId, date, detections, lat, lng) {
+    const key = `${blockId}:${date}`;
+    const loc = [lat || 0, lng || 0];
     const ts = Date.now();
     const peerId = mesh.localPeerId;
-    for (const { blockId, date, detections, lat, lng } of batch) {
-        const key = `${blockId}:${date}`;
-        const loc = [lat || 0, lng || 0];
-        processedMap.set(key, loc, ts, peerId);
-        store.put('proc', key, loc, ts, peerId);
-        syncManager.onLocalWrite('proc', key);
-        if (detections.length > 0) {
-            detectionMap.set(key, detections, ts, peerId);
-            store.put('det', key, detections, ts, peerId);
-            syncManager.onLocalWrite('det', key);
-        }
-    }
-}
 
-function cacheBlockResult(blockId, date, detections, lat, lng) {
-    _pendingBlocks.push({ blockId, date, detections, lat, lng });
-    if (_pendingBlocks.length >= FLUSH_BATCH_SIZE) {
-        flushNow();
-    } else if (!_flushTimer) {
-        _flushTimer = setTimeout(() => {
-            _flushTimer = null;
-            flushPendingBlocks();
-        }, FLUSH_INTERVAL);
-    }
-}
+    processedMap.set(key, loc, ts, peerId);
+    store.put('proc', key, loc, ts, peerId);
+    syncManager.onLocalWrite('proc', key);
 
-function flushNow() {
-    clearTimeout(_flushTimer);
-    _flushTimer = null;
-    flushPendingBlocks();
+    if (detections.length > 0) {
+        detectionMap.set(key, detections, ts, peerId);
+        store.put('det', key, detections, ts, peerId);
+        syncManager.onLocalWrite('det', key);
+    }
 }
 
 // Rebuild allRawDetections from the full CRDT map
@@ -284,7 +260,7 @@ function startHelpingDetection(job, peerIndex, peerCount) {
     stopHelping();
     _helpingJobId = job.id;
     _helpingPeerCount = peerCount;
-    flushNow();
+    store.flush();
 
     _helpWorker = new Worker('detect.js');
     _helpWorker.onmessage = function(e) {
@@ -1189,7 +1165,7 @@ function resetDetectUI() {
 }
 
 function finishDetection(stats) {
-    flushNow();
+    store.flush();
 
     rebuildDetections();
     const features = crossDateCluster(allRawDetections);
