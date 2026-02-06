@@ -75,6 +75,15 @@ export class Store {
         }, FLUSH_INTERVAL);
     }
 
+    /** Flush dirty entries to IndexedDB immediately (cancel any pending timer). */
+    flush() {
+        if (this._flushTimer) {
+            clearTimeout(this._flushTimer);
+            this._flushTimer = null;
+        }
+        this._flush();
+    }
+
     _flush() {
         if (!this._db || this._dirty.size === 0) return;
         const entries = Array.from(this._dirty.entries());
