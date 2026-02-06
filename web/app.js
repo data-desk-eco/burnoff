@@ -64,28 +64,10 @@ const syncManager = new SyncManager({
 // Set initial awareness
 syncManager.setLocalAwareness({ active: true, t: Date.now() });
 
-// Flush all pending data to IndexedDB.
-// Called on beforeunload, visibilitychange (hidden), and pagehide to ensure
-// persistence on iOS WebKit which kills pages aggressively on reload/navigate.
-function flushAllPendingData() {
-    flushPendingBlocks();
-    store.flush();
-}
-
 // Clear awareness on page unload
 window.addEventListener('beforeunload', () => {
-    flushAllPendingData();
     syncManager.setLocalAwareness(null);
     mesh.disconnect();
-});
-
-// iOS WebKit (used by Chrome/Safari on iOS) does not reliably fire
-// beforeunload. visibilitychange and pagehide are the reliable signals.
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden) flushAllPendingData();
-});
-window.addEventListener('pagehide', () => {
-    flushAllPendingData();
 });
 
 // Heartbeat: update timestamp every 15s
