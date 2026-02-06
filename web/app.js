@@ -26,7 +26,8 @@ const _sigUrl = _sigMeta
 /** Compute geo summary: precision-3 geohash set from processedMap locations. */
 function computeGeoSummary() {
     const hashes = new Set();
-    processedMap.forEach((value) => {
+    processedMap.forEach((value, key) => {
+        if (key.startsWith('__')) return;
         if (!Array.isArray(value)) return;
         const [lat, lng] = value;
         if (lat === 0 && lng === 0) return;
@@ -121,7 +122,7 @@ let _preSessionKeys = null;
 // ---------------------------------------------------------------------------
 
 function getCachedBlockKeys() {
-    return Array.from(processedMap.keys());
+    return Array.from(processedMap.keys()).filter(k => !k.startsWith('__'));
 }
 
 // Write block results directly to CRDT + IndexedDB (no batching).
@@ -326,15 +327,39 @@ function getDetectedQuarters() {
     const bounds = map.getBounds();
     const vw = bounds.getWest(), vs = bounds.getSouth();
     const ve = bounds.getEast(), vn = bounds.getNorth();
+    const viewportArea = Math.max(1e-10, (ve - vw) * (vn - vs));
 
-    // Pad viewport by half a block so edge blocks (processed but centered
-    // just outside the viewport) still count toward coverage
+    // --- Phase 1: check for quarter-completion markers ---
+    // These are written only when a detection session finishes normally,
+    // so interrupted sessions (page close / navigate away) won't have them.
+    const markerQuarters = new Set();
+    let hasMarkers = false;
+
+    processedMap.forEach((value, key) => {
+        if (!key.startsWith('__qtr:')) return;
+        hasMarkers = true;
+        if (!Array.isArray(value) || value.length < 4) return;
+        const [ms, mw, mn, me] = value;
+
+        // Marker bbox must cover ≥70% of the current viewport
+        const ow = Math.max(vw, mw), oe = Math.min(ve, me);
+        const os = Math.max(vs, ms), on = Math.min(vn, mn);
+        if (ow >= oe || os >= on) return;
+
+        if ((oe - ow) * (on - os) / viewportArea >= 0.7) {
+            markerQuarters.add(key.split(':')[1]); // "year_quarter"
+        }
+    });
+
+    if (hasMarkers) return markerQuarters;
+
+    // --- Phase 2: fallback for pre-migration data (no markers yet) ---
     const PAD = BLOCK_DEG / 2;
     const pw = vw - PAD, ps = vs - PAD, pe = ve + PAD, pn = vn + PAD;
 
-    // Build a map of quarter -> set of grid cells that have a processed block
     const quarterCells = new Map();
     processedMap.forEach((value, key) => {
+        if (key.startsWith('__')) return;
         if (!Array.isArray(value)) return;
         const [lat, lng] = value;
         if (lat === 0 && lng === 0) return;
@@ -349,16 +374,13 @@ function getDetectedQuarters() {
         quarterCells.get(qKey).add(`${cellR},${cellC}`);
     });
 
-    // How many grid cells does the viewport span?
     const expectedRows = Math.max(1, Math.ceil((vn - vs) / BLOCK_DEG));
     const expectedCols = Math.max(1, Math.ceil((ve - vw) / BLOCK_DEG));
     const expectedCells = expectedRows * expectedCols;
 
-    // A quarter is "detected" if its blocks cover ≥70% of the viewport grid
     const quarters = new Set();
     for (const [qKey, cells] of quarterCells) {
-        const coverage = cells.size / expectedCells;
-        if (coverage >= 0.7) quarters.add(qKey);
+        if (cells.size / expectedCells >= 0.7) quarters.add(qKey);
     }
     return quarters;
 }
@@ -1088,8 +1110,9 @@ function launchDetectWorker(job) {
         } else if (msg.type === 'blockDetections') {
             cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng);
         } else if (msg.type === 'done') {
+            const job = _currentJob;
             cleanupDetection();
-            finishDetection(msg.stats);
+            finishDetection(msg.stats, job);
         } else if (msg.type === 'error') {
             cleanupDetection();
             _isDetecting = false;
@@ -1164,7 +1187,36 @@ function resetDetectUI() {
     bar.style.background = '';
 }
 
-function finishDetection(stats) {
+function writeQuarterCompletionMarkers(job) {
+    if (!job || !job.bbox || !job.startDate || !job.endDate) return;
+    const [west, south, east, north] = job.bbox;
+    const ts = Date.now();
+    const peerId = mesh.localPeerId;
+
+    const sy = parseInt(job.startDate.substring(0, 4));
+    const sm = parseInt(job.startDate.substring(5, 7));
+    const ey = parseInt(job.endDate.substring(0, 4));
+    const em = parseInt(job.endDate.substring(5, 7));
+    const sq = Math.ceil(sm / 3), eq = Math.ceil(em / 3);
+
+    // Round viewport center to 0.5° grid for stable keys across small pans
+    const cLat = (Math.round((south + north) / 2 / 0.5) * 0.5).toFixed(1);
+    const cLng = (Math.round((west + east) / 2 / 0.5) * 0.5).toFixed(1);
+
+    for (let y = sy; y <= ey; y++) {
+        const q0 = y === sy ? sq : 1;
+        const q1 = y === ey ? eq : 4;
+        for (let q = q0; q <= q1; q++) {
+            const key = `__qtr:${y}_${q}:${cLat}_${cLng}`;
+            const val = [south, west, north, east];
+            processedMap.set(key, val, ts, peerId);
+            store.put('proc', key, val, ts, peerId);
+            syncManager.onLocalWrite('proc', key);
+        }
+    }
+}
+
+function finishDetection(stats, job) {
     store.flush();
 
     rebuildDetections();
@@ -1180,6 +1232,7 @@ function finishDetection(stats) {
     _isDetecting = false;
     _preSessionKeys = null;
 
+    writeQuarterCompletionMarkers(job);
     updateQuarterIndicators();
 
     document.getElementById('detect-bar').style.width = '100%';
