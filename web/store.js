@@ -4,14 +4,11 @@
 
 const DB_NAME = 'burnoff-crdt';
 const STORE_NAME = 'entries';
-const FLUSH_INTERVAL = 500;
-
 export class Store {
     constructor(dbName = DB_NAME) {
         this._dbName = dbName;
         this._db = null;
         this._dirty = new Map(); // key -> { prefix, value, ts, peerId }
-        this._flushTimer = null;
     }
 
     async open() {
@@ -64,15 +61,8 @@ export class Store {
         const prefix = mapName === 'det' ? 'd' : 'p';
         const idbKey = `${prefix}:${key}`;
         this._dirty.set(idbKey, { value, ts, peerId });
-        this._scheduleFlush();
-    }
-
-    _scheduleFlush() {
-        if (this._flushTimer) return;
-        this._flushTimer = setTimeout(() => {
-            this._flushTimer = null;
-            this._flush();
-        }, FLUSH_INTERVAL);
+        // Flush immediately — iOS WebKit kills pages too fast for batching
+        this._flush();
     }
 
     _flush() {
