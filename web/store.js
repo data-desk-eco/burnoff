@@ -65,6 +65,8 @@ export class Store {
         this._flush();
     }
 
+    flush() { this._flush(); }
+
     _flush() {
         if (!this._db || this._dirty.size === 0) return;
         const entries = Array.from(this._dirty.entries());
