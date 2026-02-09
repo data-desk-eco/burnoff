@@ -205,7 +205,7 @@ function updatePeerStatus() {
         el.textContent = `${peers} peer${peers !== 1 ? 's' : ''} connected`;
         el.classList.add('active');
     } else {
-        el.textContent = 'no peers';
+        el.textContent = 'No peers';
         el.classList.remove('active');
     }
     if (peers !== _lastPeerCount) _lastPeerCount = peers;

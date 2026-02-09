@@ -565,6 +565,7 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 .modal-citations p {
     font-size: var(--font-sm);
     line-height: 1.5;
+    margin-bottom: 6px;
 }
 .modal-citations a {
     color: var(--accent-hover);
@@ -663,12 +664,12 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
         margin: 16px;
         padding: 20px;
         max-width: calc(100vw - 32px);
-        font-size: var(--font-sm);
-        line-height: 1.55;
+        font-size: var(--font-base);
+        line-height: 1.6;
     }
     .modal-hero { display: none; }
     .modal-title-mobile { display: block; }
     .modal-content h2 { font-size: 20px; margin-bottom: 12px; }
     .modal-content p { margin-bottom: 12px; }
-    .modal-citations { font-size: var(--font-xs); padding-top: 10px; margin-top: 4px; }
+    .modal-citations { font-size: var(--font-sm); padding-top: 10px; margin-top: 4px; }
 }
