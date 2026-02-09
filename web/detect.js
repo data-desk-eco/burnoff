@@ -230,7 +230,7 @@ async function processBlock(opts) {
                 }
                 if (total > 0) {
                     const cloudFrac = cloudPixels / total;
-                    if (cloudFrac > MAX_CLOUD_LOCAL) return { detections: [], cloudFree: false };
+                    if (cloudFrac > MAX_CLOUD_LOCAL) return { detections: [], cloudFree: false, skipped: true };
                     if (cloudFrac > CLOUD_FREE_THRESH) blockCloudFree = false;
                 }
             }
@@ -528,7 +528,7 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
             const [bLng, bLat] = utmToWgs84(cx, cy, _z, _n);
 
             try {
-                const { detections: dets, cloudFree } = await processBlock({
+                const result = await processBlock({
                     b12Image, b11Image, b8aImage, sclImage,
                     windowArr: [x0, y0, x1, y1],
                     imgDate, sunElevation, itemEpsg,
@@ -536,21 +536,25 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
                     blockId, b12Url
                 });
 
-                // Overlap dedup: only keep detections whose peak pixel
-                // falls in this block's canonical area
-                const kept = [];
-                for (const det of dets) {
-                    const canonRow = Math.floor(det._peakImgRow / BLOCK_SIZE);
-                    const canonCol = Math.floor(det._peakImgCol / BLOCK_SIZE);
-                    if (canonRow === br && canonCol === bc) {
-                        delete det._peakImgRow;
-                        delete det._peakImgCol;
-                        kept.push(det);
+                if (result.skipped) {
+                    self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: [], lat: bLat, lng: bLng, skipped: true });
+                } else {
+                    // Overlap dedup: only keep detections whose peak pixel
+                    // falls in this block's canonical area
+                    const kept = [];
+                    for (const det of result.detections) {
+                        const canonRow = Math.floor(det._peakImgRow / BLOCK_SIZE);
+                        const canonCol = Math.floor(det._peakImgCol / BLOCK_SIZE);
+                        if (canonRow === br && canonCol === bc) {
+                            delete det._peakImgRow;
+                            delete det._peakImgCol;
+                            kept.push(det);
+                        }
                     }
-                }
 
-                allDetections.push(...kept);
-                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: kept, lat: bLat, lng: bLng, cloudFree });
+                    allDetections.push(...kept);
+                    self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: kept, lat: bLat, lng: bLng, cloudFree: result.cloudFree });
+                }
             } catch (err) {
                 console.warn(`Block ${blockId} ${imgDate}: ${err.message}`);
                 self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: [], lat: bLat, lng: bLng, cloudFree: false });

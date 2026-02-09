@@ -127,9 +127,12 @@ function getCachedBlockKeys() {
 
 // Write block results directly to CRDT + IndexedDB (no batching).
 // iOS WebKit kills pages too fast for batched writes to survive reload.
+// cloudFree: true (≤30%), false (30-75%), 'skipped' (>75%)
 function cacheBlockResult(blockId, date, detections, lat, lng, cloudFree) {
     const key = `${blockId}:${date}`;
-    const loc = (cloudFree !== false) ? [lat || 0, lng || 0] : null;
+    const loc = cloudFree === true ? [lat || 0, lng || 0]
+              : cloudFree === 'skipped' ? false
+              : null;
     const ts = Date.now();
     const peerId = mesh.localPeerId;
 
@@ -267,7 +270,8 @@ function startHelpingDetection(job, peerIndex, peerCount) {
     _helpWorker.onmessage = function(e) {
         const msg = e.data;
         if (msg.type === 'blockDetections') {
-            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng, msg.cloudFree !== undefined ? msg.cloudFree : true);
+            const cf = msg.skipped ? 'skipped' : msg.cloudFree !== undefined ? msg.cloudFree : true;
+            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng, cf);
         } else if (msg.type === 'done') {
             stopHelping();
         } else if (msg.type === 'error') {
@@ -619,16 +623,15 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     document.getElementById('info-name').textContent = props.name || 'Unknown facility';
     const sub = document.getElementById('info-subtitle');
     if (sub) {
-        if (props.terminal) {
-            let text = `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
-            if (props.persistence != null) {
-                const pct = Math.round(props.persistence * 100);
-                text += `, ${props.observations} observations (${pct}%)`;
-            }
-            if (props.cloud_free_pct != null) {
-                text += `\n${Math.round(props.cloud_free_pct * 100)}% cloud-free`;
-            }
-            sub.textContent = text;
+        if (props.terminal && props.passes) {
+            const pct = Math.round(props.persistence * 100);
+            const cloudThresh = 75;
+            sub.innerHTML =
+                `<span class="sub-label">Passes</span><span class="sub-value">${props.passes}</span>` +
+                `<span class="sub-label">&lt;${cloudThresh}% cloudy</span><span class="sub-value">${props.observations}</span>` +
+                `<span class="sub-label">Detections</span><span class="sub-value">${props.detection_count} (${pct}%)</span>`;
+        } else if (props.terminal) {
+            sub.textContent = `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
         } else {
             sub.textContent = '';
         }
@@ -849,10 +852,10 @@ function downloadFlareCSV() {
         try { detections = JSON.parse(detections); } catch (e) { detections = []; }
     }
 
-    const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'observations', 'cloud_free_pct']];
+    const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'passes', 'observations']];
     const persistStr = props.persistence != null ? props.persistence.toFixed(4) : '';
+    const passStr = props.passes != null ? String(props.passes) : '';
     const obsStr = props.observations != null ? String(props.observations) : '';
-    const cfPctStr = props.cloud_free_pct != null ? props.cloud_free_pct.toFixed(4) : '';
     for (const det of detections) {
         rows.push([
             `"${(props.name || '').replace(/"/g, '""')}"`,
@@ -863,8 +866,8 @@ function downloadFlareCSV() {
             det.max_b12?.toFixed(4) || '',
             det.pixels || '',
             persistStr,
-            obsStr,
-            cfPctStr
+            passStr,
+            obsStr
         ]);
     }
 
@@ -946,32 +949,31 @@ function findNearestTerminal(lat, lon) {
     return best && bestDist <= TERMINAL_MATCH_M ? { name: best.properties.name, distance: bestDist } : null;
 }
 
-/** True when all detections fall within a ≤3-consecutive-month window. */
+/** True when all detections fall within April–August (sunny-month false-positive risk). */
 function isSeasonal(detections) {
-    const months = [...new Set(detections.map(d => new Date(d.date + 'T00:00').getUTCMonth()))];
-    if (months.length <= 1) return true;
-    if (months.length > 3) return false;
-    for (const start of months) {
-        if (months.every(m => ((m - start + 12) % 12) < 3)) return true;
-    }
-    return false;
+    const sunny = new Set([3, 4, 5, 6, 7]); // Apr(3)–Aug(7)
+    const months = new Set(detections.map(d => new Date(d.date + 'T00:00').getUTCMonth()));
+    for (const m of months) { if (!sunny.has(m)) return false; }
+    return true;
 }
 
 function crossDateCluster(allDetections) {
     if (allDetections.length === 0) return [];
 
-    // Per-block date sets for persistence: blockId → Set<date>
+    // Per-block date sets: blockId → Set<date>
+    // passesByBlock: all entries (including >75% skipped)
+    // obsByBlock:    analysed entries (≤75% cloud, i.e. value !== false)
+    const passesByBlock = new Map();
     const obsByBlock = new Map();
-    const clearByBlock = new Map();
     processedMap.forEach((value, key) => {
         if (key.startsWith('__')) return;
         const i = key.lastIndexOf(':');
         const bid = key.substring(0, i), date = key.substring(i + 1);
-        if (!obsByBlock.has(bid)) obsByBlock.set(bid, new Set());
-        obsByBlock.get(bid).add(date);
-        if (value !== null) {
-            if (!clearByBlock.has(bid)) clearByBlock.set(bid, new Set());
-            clearByBlock.get(bid).add(date);
+        if (!passesByBlock.has(bid)) passesByBlock.set(bid, new Set());
+        passesByBlock.get(bid).add(date);
+        if (value !== false) {
+            if (!obsByBlock.has(bid)) obsByBlock.set(bid, new Set());
+            obsByBlock.get(bid).add(date);
         }
     });
 
@@ -1066,18 +1068,18 @@ function crossDateCluster(allDetections) {
             const bid = d.block_id || `${d.mgrs}_${d.block_row}_${d.block_col}`;
             if (bid) bids.add(bid);
         }
+        const passDates = new Set();
         const obsDates = new Set();
-        const clearDates = new Set();
         for (const bid of bids) {
+            const p = passesByBlock.get(bid);
+            if (p) for (const d of p) passDates.add(d);
             const o = obsByBlock.get(bid);
             if (o) for (const d of o) obsDates.add(d);
-            const c = clearByBlock.get(bid);
-            if (c) for (const d of c) clearDates.add(d);
         }
-        for (const d of deduped) obsDates.add(d.date);
+        for (const d of deduped) { passDates.add(d.date); obsDates.add(d.date); }
+        const passes = passDates.size;
         const observations = obsDates.size;
         const persistence = deduped.length / observations;
-        const cloudFreePct = observations > 0 ? clearDates.size / observations : null;
 
         features.push({
             type: 'Feature',
@@ -1089,8 +1091,8 @@ function crossDateCluster(allDetections) {
                 detection_count: deduped.length,
                 seasonal,
                 persistence,
+                passes,
                 observations,
-                cloud_free_pct: cloudFreePct,
                 detections: deduped.map(d => {
                     return {
                         date: d.date, max_b12: d.max_b12, pixels: d.pixels,
@@ -1178,7 +1180,8 @@ function launchDetectWorker(job) {
             bar.style.width = msg.pct + '%';
             text.textContent = msg.stage;
         } else if (msg.type === 'blockDetections') {
-            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng, msg.cloudFree !== undefined ? msg.cloudFree : true);
+            const cf = msg.skipped ? 'skipped' : msg.cloudFree !== undefined ? msg.cloudFree : true;
+            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng, cf);
         } else if (msg.type === 'done') {
             const job = _currentJob;
             cleanupDetection();
