@@ -396,9 +396,15 @@ export function encodeEntries(keys, detMap, procMap) {
             }
         } else {
             // processed: store [lat, lng] packed as 2x i16 (×100, ~1.1 km precision)
-            const [lat, lng] = Array.isArray(entry.value) ? entry.value : [0, 0];
-            view.setInt16(pos, Math.round(lat * 100), true); pos += 2;
-            view.setInt16(pos, Math.round(lng * 100), true); pos += 2;
+            // Cloudy (null) entries use sentinel: i16(32767), i16(0)
+            if (entry.value === null) {
+                view.setInt16(pos, 32767, true); pos += 2;
+                view.setInt16(pos, 0, true); pos += 2;
+            } else {
+                const [lat, lng] = Array.isArray(entry.value) ? entry.value : [0, 0];
+                view.setInt16(pos, Math.round(lat * 100), true); pos += 2;
+                view.setInt16(pos, Math.round(lng * 100), true); pos += 2;
+            }
         }
     }
 
@@ -433,9 +439,9 @@ export function decodeEntries(buf) {
                 pos += 44;
             }
         } else {
-            const lat = view.getInt16(pos, true) / 100; pos += 2;
-            const lng = view.getInt16(pos, true) / 100; pos += 2;
-            value = [lat, lng];
+            const rawLat = view.getInt16(pos, true); pos += 2;
+            const rawLng = view.getInt16(pos, true); pos += 2;
+            value = (rawLat === 32767) ? null : [rawLat / 100, rawLng / 100];
         }
 
         entries.push({ mapName, key, value, ts, peerId });
