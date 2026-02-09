@@ -12,3 +12,11 @@ dist/
 
 # Planning docs
 PLAN-*.md
+IMPLEMENTATION_PLAN.md
+
+# Node
+node_modules/
+package-lock.json
+
+# Misc
+message.txt

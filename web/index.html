@@ -5,19 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="signaling-url" content="wss://burnoff-signaling-352064324632.europe-west2.run.app">
     <title>Burnoff: Sentinel-2 flare detection</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%94%A5%3C/text%3E%3C/svg%3E">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2240%22 fill=%22%23f8765c%22/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400..500;1,14..32,400..500&display=swap" rel="stylesheet">
     <link href="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.css" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="map"></div>
 
-    <div class="panel title" id="title-panel">
+    <div class="panel glass title" id="title-panel">
         <div class="title-header">
-            <h1>Burnoff</h1>
+            <h1><a href="https://github.com/data-desk-eco/burnoff" target="_blank">burnoff</a></h1>
             <span class="collapse-toggle" id="collapse-toggle"><svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,8 6,4 10,8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
         </div>
-        <p><a href="https://github.com/data-desk-eco/burnoff" target="_blank">Sentinel-2 flare detection</a></p>
+        <p>Sentinel-2 flare detection</p>
         <div class="detect-separator"></div>
         <div class="peer-status" id="peer-status"></div>
         <div class="map-loc-section">
@@ -46,12 +49,12 @@
         </div>
     </div>
 
-    <div class="panel legend">
-        <h4 class="label-sm">INTENSITY</h4>
+    <div class="panel glass legend">
+        <h4 class="label-sm">Intensity</h4>
         <div class="legend-item"><div class="legend-circle" style="border-color: #ffff00"></div>1.3+</div>
         <div class="legend-item"><div class="legend-circle" style="border-color: #f8765c"></div>1.1</div>
         <div class="legend-item"><div class="legend-circle" style="border-color: #b63679"></div>0.9</div>
-        <h4 class="label-sm legend-section">INFRASTRUCTURE</h4>
+        <h4 class="label-sm legend-section">Infrastructure</h4>
         <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
     </div>
 
@@ -60,8 +63,13 @@
     </svg></a>
 
     <div class="modal-overlay" id="about-modal">
-        <div class="modal-content">
-            <h2>🔥 BURNOFF</h2>
+        <div class="modal-content glass">
+            <div class="modal-hero">
+                <img src="assets/Gemini_Generated_Image_ghbiroghbiroghbi.png" alt="Gas flare at Louisiana export terminal">
+                <h2 class="modal-hero-title">burnoff</h2>
+                <span class="modal-hero-caption">Photograph: <a href="https://labucketbrigade.org/press-release-in-new-report-local-residents-reveal-underreported-hazardous-accidents-at-two-southwest-louisiana-gas-export-terminals/" target="_blank" rel="noopener">Louisiana Bucket Brigade</a>, 2022</span>
+            </div>
+            <h2 class="modal-title-mobile">burnoff</h2>
             <p>Distributed detection of gas flares and other thermal anomalies using Sentinel-2 shortwave infrared imagery.</p>
             <p>Click <em>Detect</em> to download and process imagery for the current view, sharing the workload — and the results — with connected peers. Click any detection to view the underlying data and flare analysis.</p>
             <p>All your detections are stored locally and synced with other users peer-to-peer. Together, we'll build up a global map.</p>
@@ -78,7 +86,7 @@
         </div>
     </div>
 
-    <div class="panel info-panel custom-scroll" id="info">
+    <div class="panel glass info-panel custom-scroll" id="info">
         <div class="info-header">
             <div class="info-header-text">
                 <h3 id="info-name">-</h3>
@@ -94,7 +102,7 @@
         </div>
         <div class="events-list custom-scroll" id="events-list"></div>
         <div class="panel-actions">
-            <button class="panel-btn" id="open-image-btn">Open Image</button>
+            <button class="panel-btn" id="open-image-btn">Open image</button>
             <button class="panel-btn" id="download-btn">Download CSV</button>
         </div>
     </div>
