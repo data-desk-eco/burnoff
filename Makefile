@@ -27,7 +27,7 @@ web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
 	    )) \
 	  ) \
 	  FROM read_xlsx('data/GEM-GGIT-LNG-Teminals-2025-09.xlsx', sheet='LNG Terminals', header=true, all_varchar=true) \
-	  WHERE Status IN ('operating', 'construction') \
+	  WHERE Status IN ('operating', 'construction', 'idled', 'mothballed') \
 	    AND Latitude IS NOT NULL AND Longitude IS NOT NULL \
 	    AND CAST(Latitude AS DOUBLE) BETWEEN -90 AND 90 \
 	    AND CAST(Longitude AS DOUBLE) BETWEEN -180 AND 180 \
