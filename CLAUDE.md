@@ -95,17 +95,19 @@ Each block is identified by `{mgrs}_{row}_{col}` and cached by `block_id:date`.
 ```
 Per-block pipeline (fused into minimal passes):
 
-  1. STAC search for L2A images in viewport, <30% cloud
-  2. Read B12, B11, B8A, SCL bands (windowed, 10px overlap)
-  3. Cloud check via SCL (skip blocks >30% cloud, excluding bright pixels)
-  4. Pre-pass: B12 DN -> reflectance, collect background for median
-  5. Fused pass: B11/B8A DN -> reflectance + brightness + contrast + thermal -> mask
+  1. STAC search for L2A images in viewport (no scene-level cloud filter)
+  2. Read SCL band first for cloud check
+  3. Cloud check via SCL: skip blocks >75% cloud; mark blocks >30% as not cloud-free
+     (for persistence metric — blocks between 30-75% are still processed)
+  4. Read B12, B11, B8A bands (windowed, 10px overlap)
+  5. Pre-pass: B12 DN -> reflectance, collect background for median
+  6. Fused pass: B11/B8A DN -> reflectance + brightness + contrast + thermal -> mask
      - Brightness:  B12 > 0.3 AND B11 > 0.2
      - Contrast:    B12 > median(background) * 3.0, floor 0.15
      - Thermal:     NHISWNIR = (B11 - B8A) / (B11 + B8A) > 0 OR saturation
-  6. Connected components (BFS, 4-connectivity)
-  7. Cluster filters: size, peak, peakedness, single-pixel, warm-region halo
-  8. Overlap dedup: canonical block via floor(pixel / 256)
+  7. Connected components (BFS, 4-connectivity)
+  8. Cluster filters: size, peak, peakedness, single-pixel, warm-region halo
+  9. Overlap dedup: canonical block via floor(pixel / 256)
 
 Cross-date clustering (main thread, grid-indexed):
   - Anchor-based merge, configurable radius (0-200m, default 135m)
@@ -113,13 +115,15 @@ Cross-date clustering (main thread, grid-indexed):
   - Minimum average B12 per cluster: 0.85 (adjustable via UI slider)
   - Seasonal false-positive flag: clusters with all detections in <=3
     consecutive months are marked (catches sun glint off flat surfaces)
+  - Persistence metric: detection_count / cloud_free_passes per cluster
 ```
 
 ## P2P Sync
 
 Two LWW-Maps in a shared CRDT document:
 - `detections`: `block_id:date` -> detection array
-- `processed`: `block_id:date` -> timestamp (cache marker)
+- `processed`: `block_id:date` -> `[lat, lng]` (cloud-free) or `null` (cloudy)
+  Binary codec: 4 bytes (2x i16), cloudy sentinel `i16(32767), i16(0)`
 
 Persisted locally via IndexedDB, synced via WebRTC DataChannels +
 custom binary sync protocol (state vectors, diffs, live updates).

@@ -127,9 +127,9 @@ function getCachedBlockKeys() {
 
 // Write block results directly to CRDT + IndexedDB (no batching).
 // iOS WebKit kills pages too fast for batched writes to survive reload.
-function cacheBlockResult(blockId, date, detections, lat, lng) {
+function cacheBlockResult(blockId, date, detections, lat, lng, cloudFree) {
     const key = `${blockId}:${date}`;
-    const loc = [lat || 0, lng || 0];
+    const loc = (cloudFree !== false) ? [lat || 0, lng || 0] : null;
     const ts = Date.now();
     const peerId = mesh.localPeerId;
 
@@ -267,7 +267,7 @@ function startHelpingDetection(job, peerIndex, peerCount) {
     _helpWorker.onmessage = function(e) {
         const msg = e.data;
         if (msg.type === 'blockDetections') {
-            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng);
+            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng, msg.cloudFree !== undefined ? msg.cloudFree : true);
         } else if (msg.type === 'done') {
             stopHelping();
         } else if (msg.type === 'error') {
@@ -618,9 +618,18 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     document.getElementById('info').classList.add('visible');
     document.getElementById('info-name').textContent = props.name || 'Unknown facility';
     const sub = document.getElementById('info-subtitle');
-    if (sub) sub.textContent = props.terminal
-        ? `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`
-        : '';
+    if (sub) {
+        if (props.terminal) {
+            let text = `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
+            if (props.persistence != null && props.cloud_free_passes >= props.detection_count) {
+                const pct = Math.round(props.persistence * 100);
+                text += `, ${props.cloud_free_passes} cloud-free passes (${pct}%)`;
+            }
+            sub.textContent = text;
+        } else {
+            sub.textContent = '';
+        }
+    }
     const warn = document.getElementById('info-warning');
     if (warn) warn.textContent = props.seasonal ? 'Seasonal pattern, may be false positive' : '';
 
@@ -837,7 +846,9 @@ function downloadFlareCSV() {
         try { detections = JSON.parse(detections); } catch (e) { detections = []; }
     }
 
-    const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels']];
+    const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'cloud_free_passes']];
+    const persistStr = props.persistence != null ? props.persistence.toFixed(4) : '';
+    const cfStr = props.cloud_free_passes != null ? String(props.cloud_free_passes) : '';
     for (const det of detections) {
         rows.push([
             `"${(props.name || '').replace(/"/g, '""')}"`,
@@ -846,7 +857,9 @@ function downloadFlareCSV() {
             det.raw_lon?.toFixed(6) || lon.toFixed(6),
             det.date,
             det.max_b12?.toFixed(4) || '',
-            det.pixels || ''
+            det.pixels || '',
+            persistStr,
+            cfStr
         ]);
     }
 
@@ -942,6 +955,17 @@ function isSeasonal(detections) {
 function crossDateCluster(allDetections) {
     if (allDetections.length === 0) return [];
 
+    // Build per-block index of cloud-free dates for persistence computation
+    const blockCFDates = new Map();
+    processedMap.forEach((value, key) => {
+        if (key.startsWith('__') || value === null) return;
+        const i = key.lastIndexOf(':');
+        const bid = key.substring(0, i);
+        const date = key.substring(i + 1);
+        if (!blockCFDates.has(bid)) blockCFDates.set(bid, new Set());
+        blockCFDates.get(bid).add(date);
+    });
+
     // No clustering — emit every detection as its own feature
     if (MERGE_DISTANCE_M === 0) {
         const features = [];
@@ -1027,6 +1051,20 @@ function crossDateCluster(allDetections) {
         const name = terminal ? terminal.name : `${deduped.length} detection${deduped.length !== 1 ? 's' : ''}`;
         const seasonal = isSeasonal(deduped);
 
+        // Persistence: fraction of cloud-free passes with a detection
+        const bids = new Set();
+        for (const d of deduped) {
+            const bid = d.block_id || `${d.mgrs}_${d.block_row}_${d.block_col}`;
+            if (bid) bids.add(bid);
+        }
+        const cfDates = new Set();
+        for (const bid of bids) {
+            const s = blockCFDates.get(bid);
+            if (s) for (const d of s) cfDates.add(d);
+        }
+        const cloudFreePasses = cfDates.size;
+        const persistence = cloudFreePasses >= deduped.length ? deduped.length / cloudFreePasses : null;
+
         features.push({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [anchor.flare_lon, anchor.flare_lat] },
@@ -1036,6 +1074,8 @@ function crossDateCluster(allDetections) {
                 max_b12: anchor.max_b12,
                 detection_count: deduped.length,
                 seasonal,
+                persistence,
+                cloud_free_passes: cloudFreePasses,
                 detections: deduped.map(d => {
                     return {
                         date: d.date, max_b12: d.max_b12, pixels: d.pixels,
@@ -1123,7 +1163,7 @@ function launchDetectWorker(job) {
             bar.style.width = msg.pct + '%';
             text.textContent = msg.stage;
         } else if (msg.type === 'blockDetections') {
-            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng);
+            cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng, msg.cloudFree !== undefined ? msg.cloudFree : true);
         } else if (msg.type === 'done') {
             const job = _currentJob;
             cleanupDetection();

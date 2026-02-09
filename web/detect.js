@@ -23,8 +23,8 @@ const LARGE_PIXELS = 30;
 const LARGE_B12_MIN = 0.70;
 const WARM_FRACTION = 0.5;
 const WARM_MAX_PIXELS = 100;
-const MAX_CLOUD_LOCAL = 0.3;
-const B12_DN_BRIGHT = B12_MIN * 10000 + 1000;
+const MAX_CLOUD_LOCAL = 0.75;
+const CLOUD_FREE_THRESH = 0.3;
 
 // Block processing constants
 const BLOCK_SIZE = 256;      // pixels (5.12 km at 20m)
@@ -142,7 +142,7 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 // STAC search
 // ---------------------------------------------------------------------------
 
-async function searchSTAC(bbox, maxCloud, startDate, endDate) {
+async function searchSTAC(bbox, startDate, endDate) {
     if (!startDate || !endDate) {
         const now = new Date();
         const sixMonthsAgo = new Date(now);
@@ -155,8 +155,7 @@ async function searchSTAC(bbox, maxCloud, startDate, endDate) {
         collections: ['sentinel-2-l2a'],
         bbox,
         datetime: `${startDate}T00:00:00Z/${endDate}T23:59:59Z`,
-        limit: 100,
-        query: { 'eo:cloud_cover': { lt: maxCloud } }
+        limit: 100
     };
 
     let items = [];
@@ -214,30 +213,35 @@ async function processBlock(opts) {
 
     const [x0, y0, x1, y1] = windowArr;
     const w = x1 - x0, h = y1 - y0;
-    if (w <= 0 || h <= 0) return [];
+    if (w <= 0 || h <= 0) return { detections: [], cloudFree: false };
 
-    // 1. Read B12, B11
-    const b12Raw = await readWindow(b12Image, windowArr);
-    if (!b12Raw) return [];
-    const b11Raw = await readWindow(b11Image, windowArr);
-    if (!b11Raw) return [];
-
-    // 2. Cloud check via SCL, excluding bright SWIR pixels
+    // 1. Cloud check via SCL (read first to avoid downloading other bands)
+    //    Two thresholds: CLOUD_FREE_THRESH (30%) for persistence denominator,
+    //    MAX_CLOUD_LOCAL (50%) for skipping detection entirely.
+    let blockCloudFree = true;
     if (sclImage) {
         try {
             const sclData = await readWindow(sclImage, windowArr);
             if (sclData) {
-                let cloudPixels = 0, countable = 0;
-                for (let i = 0; i < sclData.data.length; i++) {
-                    if (b12Raw.data[i] >= B12_DN_BRIGHT) continue;
-                    countable++;
+                let cloudPixels = 0, total = sclData.data.length;
+                for (let i = 0; i < total; i++) {
                     const v = sclData.data[i];
                     if (v === 3 || v === 8 || v === 9 || v === 10) cloudPixels++;
                 }
-                if (countable > 0 && cloudPixels / countable > MAX_CLOUD_LOCAL) return [];
+                if (total > 0) {
+                    const cloudFrac = cloudPixels / total;
+                    if (cloudFrac > MAX_CLOUD_LOCAL) return { detections: [], cloudFree: false };
+                    if (cloudFrac > CLOUD_FREE_THRESH) blockCloudFree = false;
+                }
             }
         } catch (e) { /* skip */ }
     }
+
+    // 2. Read B12, B11
+    const b12Raw = await readWindow(b12Image, windowArr);
+    if (!b12Raw) return { detections: [], cloudFree: false };
+    const b11Raw = await readWindow(b11Image, windowArr);
+    if (!b11Raw) return { detections: [], cloudFree: false };
 
     let b8aRaw = null;
     if (b8aImage) {
@@ -254,7 +258,7 @@ async function processBlock(opts) {
         b12[i] = v;
         if (v < B12_MIN) bgPixels.push(v);
     }
-    if (bgPixels.length < 10) return [];
+    if (bgPixels.length < 10) return { detections: [], cloudFree: blockCloudFree };
     bgPixels.sort((a, b) => a - b);
     const medianBg = bgPixels[Math.floor(bgPixels.length / 2)];
     const contrastThresh = Math.max(medianBg, BACKGROUND_FLOOR) * CONTRAST_RATIO;
@@ -284,11 +288,17 @@ async function processBlock(opts) {
         mask[i] = 1;
         anyMask = true;
     }
-    if (!anyMask) return [];
+    if (!anyMask) return { detections: [], cloudFree: blockCloudFree };
 
     // 6. Connected components
     const { labels, count } = labelConnectedComponents(mask, w, h);
     if (count === 0) return [];
+
+    // Parse blockId for codec fields
+    const _blockParts = blockId.split('_');
+    const _mgrs = _blockParts[0];
+    const _bRow = parseInt(_blockParts[1]);
+    const _bCol = parseInt(_blockParts[2]);
 
     // UTM parameters for coordinate conversion
     const { zone: _zone, isNorth: _isN } = utmParams(itemEpsg);
@@ -366,12 +376,15 @@ async function processBlock(opts) {
             sun_elevation: sunElevation,
             utm_bounds: [utmMinX, utmMinY, utmMaxX, utmMaxY_w],
             block_id: blockId,
+            mgrs: _mgrs,
+            block_row: _bRow,
+            block_col: _bCol,
             _peakImgRow: y0 + peakRow,
             _peakImgCol: x0 + peakCol
         });
     }
 
-    return detections;
+    return { detections, cloudFree: blockCloudFree };
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +528,7 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
             const [bLng, bLat] = utmToWgs84(cx, cy, _z, _n);
 
             try {
-                const dets = await processBlock({
+                const { detections: dets, cloudFree } = await processBlock({
                     b12Image, b11Image, b8aImage, sclImage,
                     windowArr: [x0, y0, x1, y1],
                     imgDate, sunElevation, itemEpsg,
@@ -537,10 +550,10 @@ async function processImageBlocks(item, viewportBbox, epsg, cachedBlockDates, on
                 }
 
                 allDetections.push(...kept);
-                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: kept, lat: bLat, lng: bLng });
+                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: kept, lat: bLat, lng: bLng, cloudFree });
             } catch (err) {
                 console.warn(`Block ${blockId} ${imgDate}: ${err.message}`);
-                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: [], lat: bLat, lng: bLng });
+                self.postMessage({ type: 'blockDetections', blockId, date: imgDate, detections: [], lat: bLat, lng: bLng, cloudFree: false });
             }
 
             onBlockDone(imgDate, br, bc, false);
@@ -580,7 +593,7 @@ self.onmessage = async function(e) {
 
     try {
         progress('SEARCHING CATALOGUE', 0);
-        const items = await searchSTAC(bbox, 30, startDate, endDate);
+        const items = await searchSTAC(bbox, startDate, endDate);
 
         if (items.length === 0) {
             self.postMessage({ type: 'done', stats: { images: 0, rawDetections: 0 } });
