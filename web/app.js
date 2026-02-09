@@ -621,6 +621,8 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     if (sub) sub.textContent = props.terminal
         ? `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`
         : '';
+    const warn = document.getElementById('info-warning');
+    if (warn) warn.textContent = props.seasonal ? 'Seasonal pattern, may be false positive' : '';
 
     let detections = props.detections || [];
     if (typeof detections === 'string') {
@@ -926,6 +928,17 @@ function findNearestTerminal(lat, lon) {
     return best && bestDist <= TERMINAL_MATCH_M ? { name: best.properties.name, distance: bestDist } : null;
 }
 
+/** True when all detections fall within a ≤3-consecutive-month window. */
+function isSeasonal(detections) {
+    const months = [...new Set(detections.map(d => new Date(d.date + 'T00:00').getUTCMonth()))];
+    if (months.length <= 1) return true;
+    if (months.length > 3) return false;
+    for (const start of months) {
+        if (months.every(m => ((m - start + 12) % 12) < 3)) return true;
+    }
+    return false;
+}
+
 function crossDateCluster(allDetections) {
     if (allDetections.length === 0) return [];
 
@@ -1012,6 +1025,7 @@ function crossDateCluster(allDetections) {
 
         const terminal = findNearestTerminal(anchor.flare_lat, anchor.flare_lon);
         const name = terminal ? terminal.name : `${deduped.length} detection${deduped.length !== 1 ? 's' : ''}`;
+        const seasonal = isSeasonal(deduped);
 
         features.push({
             type: 'Feature',
@@ -1021,6 +1035,7 @@ function crossDateCluster(allDetections) {
                 terminal: terminal?.name || null,
                 max_b12: anchor.max_b12,
                 detection_count: deduped.length,
+                seasonal,
                 detections: deduped.map(d => {
                     return {
                         date: d.date, max_b12: d.max_b12, pixels: d.pixels,

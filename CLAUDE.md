@@ -62,6 +62,7 @@ web/
   sync.js             Sync protocol, awareness, validation
   rtc.js              WebRTC DataChannel mesh (raw RTCPeerConnection)
   store.js            IndexedDB persistence with batched flushes
+  terminals.geojson   LNG terminal locations (Global Energy Monitor)
   index.html          Entry point
   style.css           UI styles
 signal/
@@ -107,9 +108,11 @@ Per-block pipeline (fused into minimal passes):
   8. Overlap dedup: canonical block via floor(pixel / 256)
 
 Cross-date clustering (main thread, grid-indexed):
-  - Anchor-based merge within 50m (no transitive chaining)
+  - Anchor-based merge, configurable radius (0-200m, default 135m)
   - Minimum 4 distinct dates per cluster
   - Minimum average B12 per cluster: 0.85 (adjustable via UI slider)
+  - Seasonal false-positive flag: clusters with all detections in <=3
+    consecutive months are marked (catches sun glint off flat surfaces)
 ```
 
 ## P2P Sync

@@ -39,7 +39,12 @@ Detection pipeline (per 256x256 pixel block):
   2. DN to surface reflectance, background median for contrast threshold
   3. Fused brightness + contrast + thermal filter pass
   4. Connected components, cluster quality filters, warm-region halo rejection
-  5. Cross-date clustering (grid-indexed, anchor-based merge within 50m)
+  5. Cross-date clustering (grid-indexed, anchor-based, configurable radius)
+
+Clusters with detections in only a narrow seasonal window (<=3
+consecutive months) are flagged as potential false positives -- this
+catches sun glint from flat surfaces like warehouse roofs and solar
+arrays.
 
 P2P sync: results are stored in a custom LWW-Map CRDT, persisted
 locally via IndexedDB, and synced across peers via WebRTC
@@ -54,8 +59,9 @@ Project Structure
     crdt.js             LWW-Map CRDT with binary codec
     sync.js             Sync protocol, awareness, validation
     rtc.js              WebRTC DataChannel mesh
-    store.js            IndexedDB persistence with batched flushes
-    utm.js              UTM <-> WGS84 projection (hand-rolled Transverse Mercator)
+    store.js            IndexedDB persistence
+    utm.js              UTM <-> WGS84 projection
+    terminals.geojson   LNG terminal locations (Global Energy Monitor)
     index.html          Entry point
     style.css           UI styles
   signal/

@@ -356,6 +356,12 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     margin-top: 2px;
 }
 .info-subtitle:empty { display: none; }
+.info-warning {
+    font-size: var(--font-xs);
+    color: #e8a838;
+    margin-top: 3px;
+}
+.info-warning:empty { display: none; }
 .close-btn {
     cursor: pointer;
     font-size: 18px;
