@@ -34,7 +34,7 @@ web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
 	) TO 'web/terminals.geojson' (FORMAT CSV, HEADER false, QUOTE '', DELIMITER '');"
 	@echo "web/terminals.geojson: $$(python3 -c "import json; print(len(json.load(open('web/terminals.geojson'))['features']))" 2>/dev/null) features"
 
-serve: signal terminals
+serve: signal
 	@echo "http://localhost:8000  (signaling on :4444)"
 	@python3 -m http.server 8000 -d web
 

@@ -1,22 +1,6 @@
-# OS
 .DS_Store
-
-# Debug/test files
-debug.html
-
-# Local data
-data/
-src/
-web/data
-dist/
-
-# Planning docs
-PLAN-*.md
-IMPLEMENTATION_PLAN.md
-
-# Node
 node_modules/
 package-lock.json
-
-# Misc
-message.txt
+data/
+web/data
+.venv/
