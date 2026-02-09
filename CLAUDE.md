@@ -115,7 +115,8 @@ Cross-date clustering (main thread, grid-indexed):
   - Minimum average B12 per cluster: 0.85 (adjustable via UI slider)
   - Seasonal false-positive flag: clusters with all detections in <=3
     consecutive months are marked (catches sun glint off flat surfaces)
-  - Persistence metric: detection_count / cloud_free_passes per cluster
+  - Persistence metric: detections / observations per cluster
+  - Cloud-free %: fraction of observations with ≤30% cloud (data quality indicator)
 ```
 
 ## P2P Sync
