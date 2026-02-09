@@ -625,11 +625,10 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     if (sub) {
         if (props.terminal && props.passes) {
             const pct = Math.round(props.persistence * 100);
-            const cloudThresh = 75;
+            const cfPct = Math.round(props.observations / props.passes * 100);
             sub.innerHTML =
-                `<span class="sub-label">Passes</span><span class="sub-value">${props.passes}</span>` +
-                `<span class="sub-label">&lt;${cloudThresh}% cloudy</span><span class="sub-value">${props.observations}</span>` +
-                `<span class="sub-label">Detections</span><span class="sub-value">${props.detection_count} (${pct}%)</span>`;
+                `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
+                `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
         } else if (props.terminal) {
             sub.textContent = `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
         } else {
