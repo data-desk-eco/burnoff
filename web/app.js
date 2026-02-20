@@ -799,11 +799,13 @@ function renderIntensityChart(detections, onSelectDate) {
     const isVNF = currentMode === 'vnf';
     const yVal = isVNF ? (d => d.rh_mw || 0) : (d => d.b12_corrected);
     const colorFn = isVNF ? rhColor : b12Color;
-    const yValues = sorted.map(yVal).filter(v => v > 0 && !(isVNF && v >= 999));
-    const dataMin = Math.min(...yValues), dataMax = Math.max(...yValues);
-    const padding = (dataMax - dataMin) * 0.1 || 0.1;
-    const minB12 = Math.max(0, dataMin - padding), maxB12 = dataMax + padding;
-    const b12Range = maxB12 - minB12 || 0.1;
+    // Fixed scales matching color ramps:
+    //   VNF: log scale 0.5–50 MW (matches rhColor log mapping)
+    //   S2:  linear 0.85–1.6 (matches b12Color / magma range)
+    const logMin = Math.log(0.5), logRange = Math.log(50) - logMin;
+    const yNorm = isVNF
+        ? (v => (Math.log(Math.max(0.5, v)) - logMin) / logRange)
+        : (v => (v - 0.85) / 0.75);
 
     let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
     svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
@@ -822,7 +824,8 @@ function renderIntensityChart(detections, onSelectDate) {
         const x = margin.left + ((date - minDate) / dateRange) * innerW;
         const val = yVal(det);
         if (isVNF && val >= 999) return;
-        const y = margin.top + innerH - ((val - minB12) / b12Range) * innerH;
+        const t = Math.max(0, Math.min(1, yNorm(val)));
+        const y = margin.top + innerH - t * innerH;
         svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${colorFn(val)}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
     });
 
