@@ -1,12 +1,13 @@
 # Burnoff
 
-Client-side Sentinel-2 SWIR flare detection with P2P sync.
+Client-side Sentinel-2 SWIR flare detection with P2P sync, plus a
+VIIRS Nightfire (VNF) mode for browsing EOG's satellite flare catalog.
 
 Zero npm dependencies. The only external libraries are MapLibre GL (map
-rendering) and geotiff.js (COG reads), loaded from CDN. Everything
-else — CRDT, WebRTC mesh, sync protocol, IndexedDB persistence, UTM
-projection math, and the signal server's WebSocket framing — is
-hand-rolled using web standards.
+rendering), geotiff.js (COG reads), and DuckDB-WASM (VNF Parquet
+queries), all loaded from CDN. Everything else — CRDT, WebRTC mesh,
+sync protocol, IndexedDB persistence, UTM projection math, and the
+signal server's WebSocket framing — is hand-rolled using web standards.
 
 ## Architecture
 
@@ -29,14 +30,19 @@ hand-rolled using web standards.
  └──────────┼───────────┘                 └──────────┼───────────┘
             │ HTTP range requests                    │
             ▼                                        ▼
-     Element84 STAC API
-     Sentinel-2 L2A COGs
+     Element84 STAC API          DuckDB-WASM
+     Sentinel-2 L2A COGs         VNF Parquet (GCS)
      (B12, B11, B8A, SCL)
 ```
 
-Peers share a single CRDT document. When one peer starts detection,
-idle peers read the job from awareness state, partition blocks by
-hash, and process their share. Results merge via LWW-Map CRDT.
+**S2 mode:** Peers share a single CRDT document. When one peer starts
+detection, idle peers read the job from awareness state, partition blocks
+by hash, and process their share. Results merge via LWW-Map CRDT.
+
+**VNF mode:** DuckDB-WASM queries a pre-built Parquet file (on GCS in
+production, local in dev) containing per-flare daily observations from
+EOG profile CSVs. Each row has `clear`/`detected` booleans for real
+cloud-free persistence metrics.
 
 ## Commands
 
@@ -44,6 +50,8 @@ hash, and process their share. Results merge via LWW-Map CRDT.
 make serve        # Dev server on :8000 + signaling on :4444
 make signal       # Signaling server only
 make test         # Run determinism tests
+make vnf          # Build VNF parquet from EOG profile CSVs
+make vnf-upload   # Upload VNF parquet to GCS
 make deploy       # Deploy signaling to Cloud Run
 ```
 
@@ -56,6 +64,7 @@ Tests use `node:test` and `node:assert`.
 ```
 web/
   app.js              Main thread: map, UI, CRDT sync, cross-date clustering
+  vnf.js              VNF data module: DuckDB-WASM Parquet queries
   detect.js           Web Worker: STAC search, band reads, per-block detection
   utm.js              UTM <-> WGS84 projection (inline Transverse Mercator)
   crdt.js             LWW-Map CRDT with binary codec
@@ -65,6 +74,8 @@ web/
   terminals.geojson   LNG terminal locations (Global Energy Monitor)
   index.html          Entry point
   style.css           UI styles
+scripts/
+  build_vnf.py        Build VNF parquet from EOG profile CSVs + flare index
 signal/
   server.js           WebSocket signaling relay (RFC 6455 over node:http)
   Dockerfile          Cloud Run container for production signaling
@@ -79,12 +90,13 @@ test/
 |---------|---------|-------------|
 | MapLibre GL 5.1 | WebGL map rendering | CDN (`<script>`) |
 | geotiff.js 2.1 | Cloud Optimized GeoTIFF reads | CDN (`<script>` + `importScripts`) |
+| DuckDB-WASM 1.29 | VNF Parquet queries | CDN (`import()`) |
 
 Everything else uses browser/Node.js builtins:
 WebRTC, IndexedDB, Web Workers, Fetch, Canvas, WebSocket,
 TextEncoder/Decoder, Blob, crypto (Node), http (Node).
 
-## Detection Algorithm
+## S2 Detection Algorithm
 
 Sentinel-2 L2A at 20m resolution via Element84 STAC COGs.
 Runs entirely client-side in a Web Worker with windowed reads (geotiff.js).
@@ -118,6 +130,27 @@ Cross-date clustering (main thread, grid-indexed):
   - Persistence metric: detections / observations per cluster
   - Cloud-free %: fraction of observations with ≤30% cloud (data quality indicator)
 ```
+
+## VNF Data Pipeline
+
+EOG profile CSVs (one per flare site, every satellite pass since 2012)
+are aggregated to daily level per flare by `scripts/build_vnf.py` and
+written to a ZSTD-compressed Parquet file (~6 MB, ~1.8M rows).
+
+```
+Profile CSVs → nighttime filter → daily aggregation → parquet
+                                       ↑
+                  terminals.geojson → haversine filter (6 km)
+                  flare index      → metadata enrichment (type, category, country)
+```
+
+Parquet schema: `flare_id, lat, lon, date, clear, detected, rh_mw, temp_k,
+n_passes, type, category, country`. Coordinates are stable per-flare
+averages (from profile passes), not per-pass positions.
+
+The web query groups by `flare_id`, computes `total_dates`, `clear_dates`,
+`detection_dates`, and returns a detection list with `date, rh_mw, temp_k`.
+Persistence = `detection_dates / clear_dates` (real cloud-free denominator).
 
 ## P2P Sync
 

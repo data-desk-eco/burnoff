@@ -41,9 +41,9 @@ async function promptVNFPassword() {
 }
 
 async function getVNFUrl() {
+    if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
     const cached = getVNFSession();
     if (cached) return cached;
-    if (!VNF_BUCKET) return 'vnf.parquet';
     return promptVNFPassword();
 }
 
@@ -570,7 +570,7 @@ async function refreshVNF() {
     try {
         const fc = await queryVNF(bbox, dateRange.startDate, dateRange.endDate);
         _vnfRawFeatures = fc.features;
-        const clustered = clusterVNFFeatures(_vnfRawFeatures, dateRange.startDate, dateRange.endDate);
+        const clustered = enrichVNFFeatures(_vnfRawFeatures);
         const clusteredFc = { type: 'FeatureCollection', features: clustered };
         _vnfFeatures = clusteredFc;
         ensureDetectionLayer();
@@ -610,17 +610,17 @@ function switchMode(mode) {
     if (col2) col2.textContent = mode === 'vnf' ? 'RH' : 'B12';
     if (col3) col3.textContent = mode === 'vnf' ? 'MCM/d' : 'px';
 
-    // Reconfigure sliders for current mode (restore per-mode values)
+    // Reconfigure sliders for current mode
+    const clSlider = document.querySelector('.cluster-slider');
     const clRange = document.getElementById('cluster-range');
-    const clValue = document.getElementById('cluster-value');
     if (mode === 'vnf') {
-        MERGE_DISTANCE_M = VNF_MERGE_DISTANCE_M;
-        clRange.min = '0'; clRange.max = '2000'; clRange.step = '50'; clRange.value = MERGE_DISTANCE_M;
+        clSlider.style.display = 'none';
     } else {
+        clSlider.style.display = '';
         MERGE_DISTANCE_M = S2_MERGE_DISTANCE_M;
         clRange.min = '0'; clRange.max = '200'; clRange.step = '5'; clRange.value = MERGE_DISTANCE_M;
+        document.getElementById('cluster-value').textContent = MERGE_DISTANCE_M === 0 ? 'Off' : `${MERGE_DISTANCE_M} m`;
     }
-    clValue.textContent = MERGE_DISTANCE_M === 0 ? 'Off' : `${MERGE_DISTANCE_M} m`;
 
     const intRange = document.getElementById('intensity-range');
     const intValue = document.getElementById('intensity-value');
@@ -847,6 +847,14 @@ function utmBoundsToWgs84(utmBounds, epsg) {
     return [sw[0], sw[1], ne[0], ne[1]];
 }
 
+function formatMetrics(props) {
+    if (!props.passes || !props.observations) return '';
+    const pct = Math.round(props.persistence * 100);
+    const cfPct = Math.round(props.observations / props.passes * 100);
+    return `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
+        `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
+}
+
 function showInfo(feature, { skipAutoSelect = false } = {}) {
     currentFeature = feature;
     selectedDetection = null;
@@ -862,43 +870,23 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
 
     document.getElementById('info').classList.add('visible');
 
-    if (currentMode === 'vnf') {
-        document.getElementById('info-name').textContent = props.name || `Flare #${props.flare_id}`;
-        const sub = document.getElementById('info-subtitle');
-        if (sub) {
-            if (props.observations) {
-                const pct = Math.round(props.persistence * 100);
-                const obsPct = Math.round(props.observations / props.passes * 100);
-                sub.innerHTML =
-                    `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
-                    `<span class="sub-hi">${props.passes}</span> nights, <span class="sub-hi">${props.observations}</span> observed (${obsPct}%)`;
-            } else {
-                const parts = [];
-                if (props.detection_count) parts.push(`<span class="sub-hi">${props.detection_count}</span> detections`);
-                sub.innerHTML = parts.join(' · ');
-            }
+    const isVnf = currentMode === 'vnf';
+    document.getElementById('info-name').textContent =
+        props.name || (isVnf ? `Flare #${props.flare_id}` : 'Unknown facility');
+
+    const sub = document.getElementById('info-subtitle');
+    if (sub) {
+        if (isVnf || props.terminal) {
+            sub.innerHTML = formatMetrics(props) ||
+                `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
+        } else {
+            sub.textContent = '';
         }
-        const warn = document.getElementById('info-warning');
-        if (warn) warn.textContent = '';
-    } else {
-        document.getElementById('info-name').textContent = props.name || 'Unknown facility';
-        const sub = document.getElementById('info-subtitle');
-        if (sub) {
-            if (props.terminal && props.passes) {
-                const pct = Math.round(props.persistence * 100);
-                const cfPct = Math.round(props.observations / props.passes * 100);
-                sub.innerHTML =
-                    `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
-                    `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
-            } else if (props.terminal) {
-                sub.textContent = `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
-            } else {
-                sub.textContent = '';
-            }
-        }
-        const warn = document.getElementById('info-warning');
-        if (warn) warn.textContent = props.seasonal ? 'Seasonal pattern, may be false positive' : '';
     }
+
+    const warn = document.getElementById('info-warning');
+    if (warn) warn.textContent = (!isVnf && props.seasonal)
+        ? 'Seasonal pattern, may be false positive' : '';
 
     let detections = props.detections || [];
     if (typeof detections === 'string') {
@@ -957,16 +945,16 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     if (items.length > 0) {
         const rowH = items[0].offsetHeight;
         const visibleRows = Math.min(items.length, MAX_VISIBLE_ROWS);
-        list.style.maxHeight = (rowH * visibleRows + 4) + 'px';
+        list.style.maxHeight = (rowH * visibleRows) + 'px';
     }
 
     // In VNF mode, auto-select first item (highlight only, no COG load)
     // In S2 mode, auto-select first L2A item to load COG
     if (firstItem && !skipAutoSelect) selectDetection(firstItem.det, firstItem.item);
 
-    // Hide/show "Open image" button based on mode
-    const openBtn = document.getElementById('open-image-btn');
-    if (openBtn) openBtn.style.display = currentMode === 'vnf' ? 'none' : '';
+    // Hide/show mode-specific buttons (entire actions bar in VNF)
+    const actions = document.querySelector('.panel-actions');
+    if (actions) actions.style.display = isVnf ? 'none' : '';
 
     document.activeElement?.blur();
 
@@ -980,7 +968,63 @@ function selectDetection(det, element) {
     document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
     element.classList.add('active');
     selectedDetection = det;
-    if (currentMode !== 'vnf') loadImageryForDetection(det);
+    if (currentMode === 'vnf') showVNFHeatFootprint(det);
+    else loadImageryForDetection(det);
+}
+
+function showVNFHeatFootprint(det) {
+    // Inline cleanup (no brightness flash — mirrors loadImageryForDetection)
+    if (map.getLayer('cog-border')) map.removeLayer('cog-border');
+    if (map.getSource('cog-border')) map.removeSource('cog-border');
+    if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
+    if (map.getSource('cog-source')) map.removeSource('cog-source');
+
+    if (!det || !currentFeature) return;
+    const [lon, lat] = currentFeature.geometry.coordinates;
+    const rh = det.rh_mw || 0;
+    if (rh <= 0) return;
+
+    // Radius in real-world meters, sqrt-scaled from RH
+    const radiusM = 50 * Math.sqrt(Math.max(rh, 0.5));
+    const dLat = radiusM / 111320;
+    const dLon = radiusM / (111320 * Math.cos(lat * DEG_TO_RAD));
+
+    // Canvas with radial gradient heat signature
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    const t = Math.max(0.15, Math.min(1, Math.log(Math.max(1, rh)) / Math.log(20)));
+    const [r, g, b] = magmaColor(t);
+
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, `rgba(${r},${g},${b},0.85)`);
+    grad.addColorStop(0.3, `rgba(${r},${g},${b},0.5)`);
+    grad.addColorStop(0.7, `rgba(${r},${g},${b},0.15)`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+
+    const coords = [
+        [lon - dLon, lat + dLat], [lon + dLon, lat + dLat],
+        [lon + dLon, lat - dLat], [lon - dLon, lat - dLat]
+    ];
+
+    map.addSource('cog-source', {
+        type: 'image',
+        url: canvas.toDataURL(),
+        coordinates: coords
+    });
+    map.addLayer({
+        id: 'cog-layer',
+        type: 'raster',
+        source: 'cog-source',
+        paint: { 'raster-opacity': 1, 'raster-resampling': 'linear' }
+    }, 'client-detection-circles');
+
+    setCirclesGreyed();
+    map.setPaintProperty('basemap', 'raster-brightness-max', 0.25);
 }
 
 function closeInfo() {
@@ -1124,7 +1168,7 @@ function closeImagery() {
 }
 
 function downloadFlareCSV() {
-    if (!currentFeature) return;
+    if (!currentFeature || currentMode === 'vnf') return;
     const props = currentFeature.properties;
     const [lon, lat] = currentFeature.geometry.coordinates;
 
@@ -1133,59 +1177,32 @@ function downloadFlareCSV() {
         try { detections = JSON.parse(detections); } catch (e) { detections = []; }
     }
 
-    if (currentMode === 'vnf') {
-        const rows = [['flare_id', 'type', 'category', 'country', 'lat', 'lon', 'date', 'rh_mw', 'temp_k', 'nobs']];
-        for (const det of detections) {
-            rows.push([
-                props.flare_id || '',
-                `"${(props.type || '').replace(/"/g, '""')}"`,
-                `"${(props.category || '').replace(/"/g, '""')}"`,
-                `"${(props.country || '').replace(/"/g, '""')}"`,
-                lat.toFixed(6),
-                lon.toFixed(6),
-                det.date,
-                det.rh_mw?.toFixed(4) || '',
-                det.temp_k?.toFixed(1) || '',
-                det.nobs || ''
-            ]);
-        }
-        const csv = rows.map(r => r.join(',')).join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const name = [props.type, props.category].filter(Boolean).join('-') || `flare-${props.flare_id}`;
-        a.download = `${name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-vnf.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-    } else {
-        const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'passes', 'observations']];
-        const persistStr = props.persistence != null ? props.persistence.toFixed(4) : '';
-        const passStr = props.passes != null ? String(props.passes) : '';
-        const obsStr = props.observations != null ? String(props.observations) : '';
-        for (const det of detections) {
-            rows.push([
-                `"${(props.name || '').replace(/"/g, '""')}"`,
-                `"${(props.terminal || '').replace(/"/g, '""')}"`,
-                det.raw_lat?.toFixed(6) || lat.toFixed(6),
-                det.raw_lon?.toFixed(6) || lon.toFixed(6),
-                det.date,
-                det.max_b12?.toFixed(4) || '',
-                det.pixels || '',
-                persistStr,
-                passStr,
-                obsStr
-            ]);
-        }
-        const csv = rows.map(r => r.join(',')).join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${(props.name || 'flare').replace(/[^a-z0-9]/gi, '-').toLowerCase()}-detections.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
+    const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'passes', 'observations']];
+    const persistStr = props.persistence != null ? props.persistence.toFixed(4) : '';
+    const passStr = props.passes != null ? String(props.passes) : '';
+    const obsStr = props.observations != null ? String(props.observations) : '';
+    for (const det of detections) {
+        rows.push([
+            `"${(props.name || '').replace(/"/g, '""')}"`,
+            `"${(props.terminal || '').replace(/"/g, '""')}"`,
+            det.raw_lat?.toFixed(6) || lat.toFixed(6),
+            det.raw_lon?.toFixed(6) || lon.toFixed(6),
+            det.date,
+            det.max_b12?.toFixed(4) || '',
+            det.pixels || '',
+            persistStr,
+            passStr,
+            obsStr
+        ]);
     }
+    const csv = rows.map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(props.name || 'flare').replace(/[^a-z0-9]/gi, '-').toLowerCase()}-detections.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------------
@@ -1194,7 +1211,6 @@ function downloadFlareCSV() {
 
 let MERGE_DISTANCE_M = 135;
 let S2_MERGE_DISTANCE_M = 135;
-let VNF_MERGE_DISTANCE_M = 1400;
 let CLUSTER_AVG_B12_MIN = 0.85;
 let VNF_AVG_RH_MIN = 3;
 const RH_TO_MCM = 0.0315;
@@ -1422,145 +1438,40 @@ function crossDateCluster(allDetections) {
 // VNF spatial clustering (reuses grid-merge pattern from crossDateCluster)
 // ---------------------------------------------------------------------------
 
-function clusterVNFFeatures(features, startDate, endDate) {
-    if (features.length === 0) return [];
-
-    // Total calendar nights in the date range
-    const totalNights = (startDate && endDate)
-        ? Math.max(1, Math.round((new Date(endDate) - new Date(startDate)) / 86400000) + 1)
-        : 0;
-
-    // Region-level observation estimates.
-    // Monthly index entries have pct (detection rate) and nobs (satellite passes
-    // that month). Nightly entries (pct == null) only have positive detections.
-    // For monthly: use nobs directly as observation weight (passes ≈ obs).
-    // For nightly: dates where ANY flare was detected ≈ clear-sky nights.
-    const nightlyRegionDates = new Set();
-    const monthlyRegionNobs = new Map(); // "YYYY-MM" → max nobs across flares
-    for (const f of features) {
-        for (const d of (f.properties.detections || [])) {
-            if (d.pct != null) {
-                const month = d.date.slice(0, 7);
-                const cur = monthlyRegionNobs.get(month) || 0;
-                if (d.nobs > cur) monthlyRegionNobs.set(month, d.nobs);
-            } else {
-                nightlyRegionDates.add(d.date);
-            }
-        }
-    }
-    let regionMonthlyObs = 0;
-    for (const n of monthlyRegionNobs.values()) regionMonthlyObs += n;
-    const regionNightlyObs = nightlyRegionDates.size;
-
-    // Sort by max_rh descending (brightest = anchor)
-    const sorted = features.slice().sort((a, b) => (b.properties.max_rh || 0) - (a.properties.max_rh || 0));
-
-    const CELL_DEG = MERGE_DISTANCE_M / 111320;
-    const grid = new Map();
-    const clusters = [];
-    const KEY_SHIFT = 0x100000;
-
-    for (const feat of sorted) {
-        const [lon, lat] = feat.geometry.coordinates;
-        const gRow = Math.floor(lat / CELL_DEG);
-        const gCol = Math.floor(lon / CELL_DEG);
-        let bestIdx = -1, bestDist = Infinity;
-
-        for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
-                const key = (gRow + dr) * KEY_SHIFT + (gCol + dc);
-                const bucket = grid.get(key);
-                if (!bucket) continue;
-                for (const ci of bucket) {
-                    const [aLon, aLat] = clusters[ci].anchor.geometry.coordinates;
-                    const d = fastDistM(lat, lon, aLat, aLon);
-                    if (d <= MERGE_DISTANCE_M && d < bestDist) {
-                        bestDist = d;
-                        bestIdx = ci;
-                    }
-                }
-            }
-        }
-
-        if (bestIdx >= 0) {
-            clusters[bestIdx].members.push(feat);
-        } else {
-            const ci = clusters.length;
-            clusters.push({ anchor: feat, members: [feat] });
-            const key = gRow * KEY_SHIFT + gCol;
-            const bucket = grid.get(key);
-            if (bucket) bucket.push(ci);
-            else grid.set(key, [ci]);
-        }
-    }
-
+function enrichVNFFeatures(features) {
     const result = [];
-    for (const cluster of clusters) {
-        const anchor = cluster.anchor;
-        const ap = anchor.properties;
-        const [anchorLon, anchorLat] = anchor.geometry.coordinates;
+    for (const feat of features) {
+        const p = feat.properties;
+        const [lon, lat] = feat.geometry.coordinates;
 
-        // Merge detections, dedup by date (keep highest rh_mw per date)
-        const byDate = {};
-        const flareIds = new Set();
-        for (const feat of cluster.members) {
-            flareIds.add(feat.properties.flare_id);
-            for (const d of (feat.properties.detections || [])) {
-                if (!byDate[d.date] || d.rh_mw > byDate[d.date].rh_mw) byDate[d.date] = d;
-            }
-        }
-        const merged = Object.values(byDate);
+        if (VNF_AVG_RH_MIN > 0 && p.avg_rh < VNF_AVG_RH_MIN) continue;
 
-        const observation_count = merged.length;
-        const avg_rh = observation_count > 0 ? merged.reduce((s, d) => s + (d.rh_mw || 0), 0) / observation_count : 0;
-        const max_rh = merged.reduce((m, d) => Math.max(m, d.rh_mw || 0), 0);
+        const terminal = findNearestTerminal(lat, lon);
+        const typeCat = [p.type, p.category].filter(Boolean).join(' \u2014 ');
+        const name = terminal ? terminal.name : typeCat || `Flare #${p.flare_id}`;
 
-        if (VNF_AVG_RH_MIN > 0 && avg_rh < VNF_AVG_RH_MIN) continue;
-
-        const terminal = findNearestTerminal(anchorLat, anchorLon);
-        const typeCat = [ap.type, ap.category].filter(Boolean).join(' \u2014 ');
-        const name = terminal ? terminal.name : typeCat || `Flare #${ap.flare_id}`;
-
-        // Persistence: weighted blend of monthly pct data + nightly region proxy.
-        // Monthly entries have pct (detection_rate from EOG index = detections/passes).
-        // Nightly entries use region-level date counting as clear-sky proxy.
-        let monthlyDet = 0, monthlyObs = 0;
-        const nightlyDates = new Set();
-        for (const d of merged) {
-            if (d.pct != null) {
-                monthlyDet += d.nobs * d.pct;
-                monthlyObs += d.nobs;
-            } else {
-                nightlyDates.add(d.date);
-            }
-        }
-        const nightlyDet = nightlyDates.size;
-
-        const totalDet = monthlyDet + nightlyDet;
-        const totalObs = monthlyObs + regionNightlyObs;
-        const passes = totalNights;
-        const observations = Math.round(totalObs);
-        const persistence = totalObs > 0 ? totalDet / totalObs : 0;
+        const passes = p.total_dates;
+        const detection_count = p.detection_dates;
+        const observations = Math.max(p.clear_dates, detection_count);
+        const persistence = observations > 0 ? detection_count / observations : 0;
 
         result.push({
             type: 'Feature',
-            geometry: { type: 'Point', coordinates: [anchorLon, anchorLat] },
+            geometry: feat.geometry,
             properties: {
                 name,
                 terminal: terminal?.name || null,
-                flare_id: ap.flare_id,
-                type: ap.type || '',
-                category: ap.category || '',
-                country: ap.country || '',
-                observation_count,
-                avg_rh,
-                max_rh,
-                detection_count: Math.round(totalDet),
-                site_count: flareIds.size,
+                flare_id: p.flare_id,
+                type: p.type || '',
+                category: p.category || '',
+                country: p.country || '',
+                avg_rh: p.avg_rh,
+                max_rh: p.max_rh,
+                detection_count,
                 passes,
                 observations,
                 persistence,
-                detections: merged
+                detections: p.detections
             }
         });
     }
@@ -1619,7 +1530,7 @@ function updateDetectionSource() {
 function updateVNFSource() {
     if (!_vnfRawFeatures) return;
     const dateRange = getSelectedDateRange();
-    const clustered = clusterVNFFeatures(_vnfRawFeatures, dateRange?.startDate, dateRange?.endDate);
+    const clustered = enrichVNFFeatures(_vnfRawFeatures);
     const fc = { type: 'FeatureCollection', features: clustered };
     _vnfFeatures = fc;
     const src = map.getSource('client-detections');
@@ -2010,8 +1921,7 @@ function debouncedRecluster() {
 document.getElementById('cluster-range').addEventListener('input', e => {
     const val = parseInt(e.target.value);
     MERGE_DISTANCE_M = val;
-    if (currentMode === 'vnf') VNF_MERGE_DISTANCE_M = val;
-    else S2_MERGE_DISTANCE_M = val;
+    S2_MERGE_DISTANCE_M = val;
     document.getElementById('cluster-value').textContent = val === 0 ? 'Off' : `${val} m`;
     debouncedRecluster();
 });

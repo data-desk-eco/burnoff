@@ -1,7 +1,7 @@
 CLOUD_RUN_SERVICE := burnoff-signaling
 CLOUD_RUN_REGION  := europe-west2
 
-.PHONY: serve signal test deploy terminals vnf vnf-upload help
+.PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy help
 
 terminals: web/terminals.geojson
 
@@ -45,6 +45,8 @@ vnf-upload: web/vnf.parquet
 	gcloud storage cp web/vnf.parquet gs://burnoff-data/vnf-$(VNF_HASH).parquet
 	@echo "Uploaded as vnf-$(VNF_HASH).parquet"
 
+vnf-deploy: vnf vnf-upload
+
 serve: signal
 	@echo "http://localhost:8000  (signaling on :4444)"
 	@python3 -m http.server 8000 -d web
@@ -70,8 +72,10 @@ test:
 	@node --test test/determinism.test.mjs test/retry-peers.test.mjs
 
 help:
-	@echo "make serve    - Dev server on :8000 + signaling on :4444"
-	@echo "make signal   - Signaling server only"
-	@echo "make test     - Run determinism tests"
-	@echo "make vnf      - Build VNF parquet from raw data"
-	@echo "make deploy   - Deploy signaling server to Cloud Run"
+	@echo "make serve      - Dev server on :8000 + signaling on :4444"
+	@echo "make signal     - Signaling server only"
+	@echo "make test       - Run determinism tests"
+	@echo "make vnf        - Build VNF parquet from EOG profile CSVs"
+	@echo "make vnf-upload - Upload VNF parquet to GCS"
+	@echo "make vnf-deploy - Build + upload VNF parquet (one step)"
+	@echo "make deploy     - Deploy signaling server to Cloud Run"
