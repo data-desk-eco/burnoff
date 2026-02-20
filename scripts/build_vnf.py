@@ -26,6 +26,7 @@ db.execute(f"""
         CAST(t_mean AS DOUBLE) AS temp_k,
         CAST(nobs AS INTEGER) AS nobs,
         CAST(ndtct AS INTEGER) AS ndtct,
+        CAST(pct AS DOUBLE) AS pct,
         type,
         category,
         country
@@ -54,6 +55,7 @@ if glob.glob(NIGHTLY_V40):
             AVG(CAST(Temp_primary AS DOUBLE)) AS temp_k,
             COUNT(*) AS nobs,
             COUNT(CASE WHEN CAST(RH_primary AS DOUBLE) > 0 THEN 1 END) AS ndtct,
+            NULL::DOUBLE AS pct,
             FIRST(CAST(Type_iremitter AS VARCHAR)) AS type,
             FIRST(CAST(Category_iremitter AS VARCHAR)) AS category,
             '' AS country
@@ -86,6 +88,7 @@ if glob.glob(NIGHTLY_V30):
             AVG(CAST(Temp_BB AS DOUBLE)) AS temp_k,
             COUNT(*) AS nobs,
             COUNT(CASE WHEN CAST(RH AS DOUBLE) > 0 THEN 1 END) AS ndtct,
+            NULL::DOUBLE AS pct,
             '' AS type,
             '' AS category,
             '' AS country
