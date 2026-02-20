@@ -52,6 +52,7 @@ async function getVNFUrl() {
 // ---------------------------------------------------------------------------
 
 const MIN_DETECT_ZOOM = 11;
+const MIN_VNF_ZOOM = 10;
 let allRawDetections = [];
 let terminalFeatures = [];
 
@@ -553,6 +554,13 @@ updateQuarterIndicators();
 async function refreshVNF() {
     if (currentMode !== 'vnf') return;
     if (!vnfReady()) return;
+    if (map.getZoom() < MIN_VNF_ZOOM) {
+        _vnfRawFeatures = null;
+        _vnfFeatures = null;
+        const src = map.getSource('client-detections');
+        if (src) src.setData({ type: 'FeatureCollection', features: [] });
+        return;
+    }
 
     const bounds = map.getBounds();
     const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
@@ -673,7 +681,7 @@ function updateLegend() {
         `;
     } else {
         legend.innerHTML = `
-            <h4 class="label-sm">Intensity</h4>
+            <h4 class="label-sm">B12 reflectance</h4>
             <div class="legend-item"><div class="legend-circle" style="border-color: #ffff00"></div>1.5+</div>
             <div class="legend-item"><div class="legend-circle" style="border-color: #f8765c"></div>1.15</div>
             <div class="legend-item"><div class="legend-circle" style="border-color: #b63679"></div>0.9</div>
