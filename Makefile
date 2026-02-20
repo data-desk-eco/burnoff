@@ -1,7 +1,7 @@
 CLOUD_RUN_SERVICE := burnoff-signaling
 CLOUD_RUN_REGION  := europe-west2
 
-.PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy help
+.PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy vendor help
 
 terminals: web/terminals.geojson
 
@@ -47,7 +47,13 @@ vnf-upload: web/vnf.parquet
 
 vnf-deploy: vnf vnf-upload
 
-serve: signal
+vendor: web/vendor/.ok
+
+web/vendor/.ok:
+	@bash scripts/vendor.sh
+	@touch web/vendor/.ok
+
+serve: vendor signal
 	@echo "http://localhost:8000  (signaling on :4444)"
 	@python3 -m http.server 8000 -d web
 
@@ -74,6 +80,7 @@ test:
 help:
 	@echo "make serve      - Dev server on :8000 + signaling on :4444"
 	@echo "make signal     - Signaling server only"
+	@echo "make vendor     - Download vendored dependencies (MapLibre, geotiff, DuckDB, Inter)"
 	@echo "make test       - Run determinism tests"
 	@echo "make vnf        - Build VNF parquet from EOG profile CSVs"
 	@echo "make vnf-upload - Upload VNF parquet to GCS"

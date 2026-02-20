@@ -6,7 +6,7 @@
  */
 
 importScripts(
-    'https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js',
+    'vendor/geotiff.js',
     'utm.js'
 );
 
