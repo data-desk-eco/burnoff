@@ -605,10 +605,11 @@ function switchMode(mode) {
     updateLegend();
 
     // Update events header columns
+    const cfg = MODE[mode];
     const col2 = document.getElementById('events-col2');
     const col3 = document.getElementById('events-col3');
-    if (col2) col2.textContent = mode === 'vnf' ? 'RH' : 'B12';
-    if (col3) col3.textContent = mode === 'vnf' ? 'MCM/d' : 'px';
+    if (col2) col2.textContent = cfg.col2;
+    if (col3) col3.textContent = cfg.col3;
 
     // Reconfigure sliders for current mode
     const clSlider = document.querySelector('.cluster-slider');
@@ -624,13 +625,10 @@ function switchMode(mode) {
 
     const intRange = document.getElementById('intensity-range');
     const intValue = document.getElementById('intensity-value');
-    if (mode === 'vnf') {
-        intRange.min = '0'; intRange.max = '10'; intRange.step = '0.5'; intRange.value = VNF_AVG_RH_MIN;
-        intValue.textContent = VNF_AVG_RH_MIN === 0 ? 'Off' : `${VNF_AVG_RH_MIN} MW`;
-    } else {
-        intRange.min = '0'; intRange.max = '1.5'; intRange.step = '0.05'; intRange.value = CLUSTER_AVG_B12_MIN;
-        intValue.textContent = CLUSTER_AVG_B12_MIN === 0 ? 'Off' : CLUSTER_AVG_B12_MIN.toFixed(2).replace(/^0\./, '.');
-    }
+    const flt = cfg.filter;
+    const curIntensity = mode === 'vnf' ? VNF_AVG_RH_MIN : CLUSTER_AVG_B12_MIN;
+    intRange.min = flt.min; intRange.max = flt.max; intRange.step = flt.step; intRange.value = curIntensity;
+    intValue.textContent = cfg.formatFilter(curIntensity);
 
     // Update quarter indicators immediately (un-grey in VNF, mark detected in S2)
     updateQuarterIndicators();
@@ -670,59 +668,19 @@ function switchMode(mode) {
 function updateLegend() {
     const legend = document.querySelector('.legend');
     if (!legend) return;
-    if (currentMode === 'vnf') {
-        legend.innerHTML = `
-            <h4 class="label-sm">Radiant heat (MW)</h4>
-            <div class="legend-item"><div class="legend-circle" style="border-color: #ffff00"></div>20+</div>
-            <div class="legend-item"><div class="legend-circle" style="border-color: #f8765c"></div>7</div>
-            <div class="legend-item"><div class="legend-circle" style="border-color: #b63679"></div>1</div>
-            <h4 class="label-sm legend-section">Infrastructure</h4>
-            <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
-        `;
-    } else {
-        legend.innerHTML = `
-            <h4 class="label-sm">B12 reflectance</h4>
-            <div class="legend-item"><div class="legend-circle" style="border-color: #ffff00"></div>1.5+</div>
-            <div class="legend-item"><div class="legend-circle" style="border-color: #f8765c"></div>1.15</div>
-            <div class="legend-item"><div class="legend-circle" style="border-color: #b63679"></div>0.9</div>
-            <h4 class="label-sm legend-section">Infrastructure</h4>
-            <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
-        `;
-    }
+    legend.innerHTML = buildLegendHTML(modeConf());
 }
 
 function updateCirclePaint() {
     if (!map.getLayer('client-detection-circles')) return;
-    if (currentMode === 'vnf') {
-        map.setPaintProperty('client-detection-circles', 'circle-stroke-color', vnfColorScale);
-        map.setPaintProperty('client-detection-circles', 'circle-radius', vnfCircleRadius);
-    } else {
-        map.setPaintProperty('client-detection-circles', 'circle-stroke-color', b12ColorScale);
-        map.setPaintProperty('client-detection-circles', 'circle-radius', s2CircleRadius);
-    }
+    const isVnf = currentMode === 'vnf';
+    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', isVnf ? vnfColorExpr : s2ColorExpr);
+    map.setPaintProperty('client-detection-circles', 'circle-radius', isVnf ? vnfRadiusExpr : s2RadiusExpr);
 }
 
-// Color scales
-const b12ColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.9],
-    0.9, '#e04090', 1.15, '#ff4530', 1.5, '#ffff00'];
-
-const vnfColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_rh'], 1],
-    1, '#e04090', 7, '#ff4530', 20, '#ffff00'];
-
-// Circle radius expressions
-const s2CircleRadius = ['interpolate', ['exponential', 1.5], ['zoom'],
-    0, ['+', 4, ['*', ['coalesce', ['get', 'max_b12'], 0], 4]],
-    6, ['+', 6, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
-    10, ['+', 10, ['*', ['coalesce', ['get', 'max_b12'], 0], 8]],
-    14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
-];
-
-const vnfCircleRadius = ['interpolate', ['exponential', 1.5], ['zoom'],
-    0, ['+', 4, ['min', 8, ['*', ['ln', ['+', ['coalesce', ['get', 'max_rh'], 1], 1]], 2]]],
-    6, ['+', 6, ['min', 12, ['*', ['ln', ['+', ['coalesce', ['get', 'max_rh'], 1], 1]], 3]]],
-    10, ['+', 8, ['min', 14, ['*', ['ln', ['+', ['coalesce', ['get', 'max_rh'], 1], 1]], 4]]],
-    14, ['+', 10, ['min', 16, ['*', ['ln', ['+', ['coalesce', ['get', 'max_rh'], 1], 1]], 5]]]
-];
+// ---------------------------------------------------------------------------
+// Magma color ramp (8-stop)
+// ---------------------------------------------------------------------------
 
 function magmaColor(t) {
     t = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
@@ -740,18 +698,126 @@ function magmaColor(t) {
     ];
 }
 
-function b12Color(b12) {
-    const t = Math.max(0.15, Math.min(1, (b12 - 0.9) / 0.4));
+function magmaHex(t) {
     const [r, g, b] = magmaColor(t);
+    return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+}
+
+// ---------------------------------------------------------------------------
+// Mode config — single source of truth for color, chart, legend, sliders
+// ---------------------------------------------------------------------------
+
+const RH_TO_MCM = 0.0315;
+
+const MODE = {
+    s2: {
+        label: 'B12 reflectance',
+        prop: 'max_b12',
+        col2: 'B12', col3: 'px',
+        stops: [0.9, 1.15, 1.5],
+        log: false,
+        chartRange: [0.85, 1.6],
+        filter: { min: 0, max: 1.5, step: 0.05, default: 0.85 },
+        formatFilter: v => v === 0 ? 'Off' : v.toFixed(2).replace(/^0\./, '.'),
+        yVal: d => d.b12_corrected,
+        formatVal: d => d.max_b12?.toFixed(2) || '-',
+        formatCount: d => String(d.pixels || '-'),
+        sentinel: null,
+        // Radius: linear in value, zoom-dependent [base, multiplier]
+        radiusZooms: [[0, 4, 4], [6, 6, 6], [10, 10, 8], [14, 12, 10]],
+    },
+    vnf: {
+        label: 'Radiant heat (MW)',
+        prop: 'max_rh',
+        col2: 'RH', col3: 'MCM/d',
+        stops: [1, 7, 20],
+        log: true,
+        chartRange: [0.5, 50],
+        filter: { min: 0, max: 10, step: 0.5, default: 3 },
+        formatFilter: v => v === 0 ? 'Off' : `${v} MW`,
+        yVal: d => d.rh_mw || 0,
+        formatVal: d => d.rh_mw >= 999 ? '-' : (d.rh_mw?.toFixed(1) || '-'),
+        formatCount: d => d.rh_mw >= 999 ? '-' : (d.rh_mw != null ? (d.rh_mw * RH_TO_MCM).toFixed(2) : '-'),
+        sentinel: 999,
+        // Radius: log in value, zoom-dependent [base, multiplier, cap]
+        radiusZooms: [[0, 4, 2, 8], [6, 6, 3, 12], [10, 8, 4, 14], [14, 10, 5, 16]],
+    }
+};
+
+function modeConf() { return MODE[currentMode] || MODE.s2; }
+
+// Normalize value to 0→1 on the mode's color scale (stops[0]→stops[2])
+function scaleT(cfg, val) {
+    const [lo, , hi] = cfg.stops;
+    const raw = cfg.log
+        ? Math.log(Math.max(lo, val) / lo) / Math.log(hi / lo)
+        : (val - lo) / (hi - lo);
+    // Map into [0.3, 1.0] of the magma ramp for visibility
+    return 0.3 + Math.max(0, Math.min(1, raw)) * 0.7;
+}
+
+function scaleColor(cfg, val) {
+    const [r, g, b] = magmaColor(scaleT(cfg, val));
     return `rgb(${r},${g},${b})`;
 }
 
-function rhColor(rh) {
-    // Log scale: 1 MW → 0.15, 20 MW → 1.0
-    const t = Math.max(0.15, Math.min(1, Math.log(Math.max(1, rh)) / Math.log(20)));
-    const [r, g, b] = magmaColor(t);
-    return `rgb(${r},${g},${b})`;
+// Normalize value to 0→1 on the chart y-axis (wider than color stops)
+function chartNorm(cfg, val) {
+    const [lo, hi] = cfg.chartRange;
+    if (cfg.log) return (Math.log(Math.max(lo, val)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo));
+    return (val - lo) / (hi - lo);
 }
+
+// Build MapLibre color interpolation expression from config
+function buildColorExpr(cfg) {
+    const prop = ['coalesce', ['get', cfg.prop], cfg.stops[0]];
+    const expr = cfg.log
+        ? ['interpolate', ['linear'], ['ln', ['+', prop, 1]]]
+        : ['interpolate', ['linear'], prop];
+    for (const stop of cfg.stops) {
+        if (cfg.log) expr.push(Math.log(stop + 1));
+        else expr.push(stop);
+        expr.push(magmaHex(scaleT(cfg, stop)));
+    }
+    return expr;
+}
+
+// Build MapLibre radius expression from config
+function buildRadiusExpr(cfg) {
+    const prop = ['coalesce', ['get', cfg.prop], cfg.log ? 1 : 0];
+    const scaled = cfg.log ? ['ln', ['+', prop, 1]] : prop;
+    const expr = ['interpolate', ['exponential', 1.5], ['zoom']];
+    for (const z of cfg.radiusZooms) {
+        if (cfg.log) {
+            const [zoom, base, mult, cap] = z;
+            expr.push(zoom, ['+', base, ['min', cap, ['*', scaled, mult]]]);
+        } else {
+            const [zoom, base, mult] = z;
+            expr.push(zoom, ['+', base, ['*', scaled, mult]]);
+        }
+    }
+    return expr;
+}
+
+// Build legend HTML from config
+function buildLegendHTML(cfg) {
+    const stops = [...cfg.stops].reverse(); // high to low
+    const items = stops.map((v, i) => {
+        const label = i === 0 ? `${v}+` : String(v);
+        return `<div class="legend-item"><div class="legend-circle" style="border-color: ${magmaHex(scaleT(cfg, v))}"></div>${label}</div>`;
+    }).join('\n            ');
+    return `
+            <h4 class="label-sm">${cfg.label}</h4>
+            ${items}
+            <h4 class="label-sm legend-section">Infrastructure</h4>
+            <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
+        `;}
+
+// Pre-built expressions (regenerated from config)
+const s2ColorExpr = buildColorExpr(MODE.s2);
+const vnfColorExpr = buildColorExpr(MODE.vnf);
+const s2RadiusExpr = buildRadiusExpr(MODE.s2);
+const vnfRadiusExpr = buildRadiusExpr(MODE.vnf);
 
 function formatDate(dateStr) {
     if (!dateStr) return '-';
@@ -773,8 +839,7 @@ function setCirclesGreyed() {
 
 function setCirclesDefault() {
     if (!map.getLayer('client-detection-circles')) return;
-    const colorScale = currentMode === 'vnf' ? vnfColorScale : b12ColorScale;
-    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', colorScale);
+    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', currentMode === 'vnf' ? vnfColorExpr : s2ColorExpr);
     map.setPaintProperty('client-detection-circles', 'circle-stroke-opacity', 1);
 }
 
@@ -796,16 +861,7 @@ function renderIntensityChart(detections, onSelectDate) {
     const maxDate = Math.max(...dates);
     const dateRange = maxDate - minDate || 1;
 
-    const isVNF = currentMode === 'vnf';
-    const yVal = isVNF ? (d => d.rh_mw || 0) : (d => d.b12_corrected);
-    const colorFn = isVNF ? rhColor : b12Color;
-    // Fixed scales matching color ramps:
-    //   VNF: log scale 0.5–50 MW (matches rhColor log mapping)
-    //   S2:  linear 0.85–1.6 (matches b12Color / magma range)
-    const logMin = Math.log(0.5), logRange = Math.log(50) - logMin;
-    const yNorm = isVNF
-        ? (v => (Math.log(Math.max(0.5, v)) - logMin) / logRange)
-        : (v => (v - 0.85) / 0.75);
+    const cfg = modeConf();
 
     let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
     svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
@@ -822,11 +878,11 @@ function renderIntensityChart(detections, onSelectDate) {
     sorted.forEach((det, i) => {
         const date = new Date(det.date);
         const x = margin.left + ((date - minDate) / dateRange) * innerW;
-        const val = yVal(det);
-        if (isVNF && val >= 999) return;
-        const t = Math.max(0, Math.min(1, yNorm(val)));
+        const val = cfg.yVal(det);
+        if (cfg.sentinel && val >= cfg.sentinel) return;
+        const t = Math.max(0, Math.min(1, chartNorm(cfg, val)));
         const y = margin.top + innerH - t * innerH;
-        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${colorFn(val)}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
+        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${scaleColor(cfg, val)}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
     });
 
     svg += '</svg>';
@@ -903,6 +959,7 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     const dateToItem = new Map();
     let firstItem = null;
 
+    const evtCfg = modeConf();
     const isVNF = currentMode === 'vnf';
     sorted.forEach(det => {
         const item = document.createElement('div');
@@ -913,21 +970,11 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         }
         item.className = 'event-item' + (isL1C ? ' l1c-only' : '');
         item.dataset.date = det.date;
-        if (isVNF) {
-            const rhDisplay = det.rh_mw >= 999 ? '-' : (det.rh_mw?.toFixed(1) || '-');
-            const mcmDisplay = det.rh_mw >= 999 ? '-' : (det.rh_mw != null ? (det.rh_mw * RH_TO_MCM).toFixed(2) : '-');
-            item.innerHTML = `
-                <span class="event-date">${formatDate(det.date)}</span>
-                <span class="event-meta event-meta-val">${rhDisplay}</span>
-                <span class="event-meta event-meta-count">${mcmDisplay}</span>
-            `;
-        } else {
-            item.innerHTML = `
-                <span class="event-date">${formatDate(det.date)}</span>
-                <span class="event-meta event-meta-val">${det.max_b12?.toFixed(2) || '-'}</span>
-                <span class="event-meta event-meta-count">${det.pixels || '-'}</span>
-            `;
-        }
+        item.innerHTML = `
+            <span class="event-date">${formatDate(det.date)}</span>
+            <span class="event-meta event-meta-val">${evtCfg.formatVal(det)}</span>
+            <span class="event-meta event-meta-count">${evtCfg.formatCount(det)}</span>
+        `;
         item.onclick = () => selectDetection(det, item);
         list.appendChild(item);
 
@@ -998,8 +1045,7 @@ function showVNFHeatFootprint(det) {
     canvas.width = size; canvas.height = size;
     const ctx = canvas.getContext('2d');
 
-    const t = Math.max(0.15, Math.min(1, Math.log(Math.max(1, rh)) / Math.log(20)));
-    const [r, g, b] = magmaColor(t);
+    const [r, g, b] = magmaColor(scaleT(MODE.vnf, rh));
 
     const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
     grad.addColorStop(0, `rgba(${r},${g},${b},0.85)`);
@@ -1214,9 +1260,8 @@ function downloadFlareCSV() {
 
 let MERGE_DISTANCE_M = 135;
 let S2_MERGE_DISTANCE_M = 135;
-let CLUSTER_AVG_B12_MIN = 0.85;
-let VNF_AVG_RH_MIN = 3;
-const RH_TO_MCM = 0.0315;
+let CLUSTER_AVG_B12_MIN = MODE.s2.filter.default;
+let VNF_AVG_RH_MIN = MODE.vnf.filter.default;
 
 function haversineM(lat1, lon1, lat2, lon2) {
     const R = 6371000;
@@ -1506,8 +1551,8 @@ function ensureDetectionLayer() {
         });
     }
     if (!map.getLayer('client-detection-circles')) {
-        const circleRadius = currentMode === 'vnf' ? vnfCircleRadius : s2CircleRadius;
-        const colorScale = currentMode === 'vnf' ? vnfColorScale : b12ColorScale;
+        const circleRadius = currentMode === 'vnf' ? vnfRadiusExpr : s2RadiusExpr;
+        const colorScale = currentMode === 'vnf' ? vnfColorExpr : s2ColorExpr;
         map.addLayer({
             id: 'client-detection-circles',
             type: 'circle',
@@ -1931,13 +1976,9 @@ document.getElementById('cluster-range').addEventListener('input', e => {
 
 document.getElementById('intensity-range').addEventListener('input', e => {
     const val = parseFloat(e.target.value);
-    if (currentMode === 'vnf') {
-        VNF_AVG_RH_MIN = val;
-        document.getElementById('intensity-value').textContent = val === 0 ? 'Off' : `${val} MW`;
-    } else {
-        CLUSTER_AVG_B12_MIN = val;
-        document.getElementById('intensity-value').textContent = val === 0 ? 'Off' : val.toFixed(2).replace(/^0\./, '.');
-    }
+    if (currentMode === 'vnf') VNF_AVG_RH_MIN = val;
+    else CLUSTER_AVG_B12_MIN = val;
+    document.getElementById('intensity-value').textContent = modeConf().formatFilter(val);
     debouncedRecluster();
 });
 
