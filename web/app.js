@@ -570,7 +570,7 @@ async function refreshVNF() {
     try {
         const fc = await queryVNF(bbox, dateRange.startDate, dateRange.endDate);
         _vnfRawFeatures = fc.features;
-        const clustered = clusterVNFFeatures(_vnfRawFeatures);
+        const clustered = clusterVNFFeatures(_vnfRawFeatures, dateRange.startDate, dateRange.endDate);
         const clusteredFc = { type: 'FeatureCollection', features: clustered };
         _vnfFeatures = clusteredFc;
         ensureDetectionLayer();
@@ -866,12 +866,17 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         document.getElementById('info-name').textContent = props.name || `Flare #${props.flare_id}`;
         const sub = document.getElementById('info-subtitle');
         if (sub) {
-            const parts = [];
-            if (props.detection_count) parts.push(`<span class="sub-hi">${props.detection_count}</span> detections`);
-            if (props.site_count > 1) parts.push(`<span class="sub-hi">${props.site_count}</span> sites`);
-            if (props.avg_rh != null && props.avg_rh < 999) parts.push(`<span class="sub-hi">${(props.avg_rh * RH_TO_MCM).toFixed(2)}</span> MCM/d avg`);
-            if (props.country) parts.push(props.country);
-            sub.innerHTML = parts.join(' \u00b7 ');
+            if (props.observations) {
+                const pct = Math.round(props.persistence * 100);
+                const obsPct = Math.round(props.observations / props.passes * 100);
+                sub.innerHTML =
+                    `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
+                    `<span class="sub-hi">${props.passes}</span> nights, <span class="sub-hi">${props.observations}</span> observed (${obsPct}%)`;
+            } else {
+                const parts = [];
+                if (props.detection_count) parts.push(`<span class="sub-hi">${props.detection_count}</span> detections`);
+                sub.innerHTML = parts.join(' · ');
+            }
         }
         const warn = document.getElementById('info-warning');
         if (warn) warn.textContent = '';
@@ -1417,8 +1422,35 @@ function crossDateCluster(allDetections) {
 // VNF spatial clustering (reuses grid-merge pattern from crossDateCluster)
 // ---------------------------------------------------------------------------
 
-function clusterVNFFeatures(features) {
+function clusterVNFFeatures(features, startDate, endDate) {
     if (features.length === 0) return [];
+
+    // Total calendar nights in the date range
+    const totalNights = (startDate && endDate)
+        ? Math.max(1, Math.round((new Date(endDate) - new Date(startDate)) / 86400000) + 1)
+        : 0;
+
+    // Region-level observation estimates.
+    // Monthly index entries have pct (detection rate) and nobs (satellite passes
+    // that month). Nightly entries (pct == null) only have positive detections.
+    // For monthly: use nobs directly as observation weight (passes ≈ obs).
+    // For nightly: dates where ANY flare was detected ≈ clear-sky nights.
+    const nightlyRegionDates = new Set();
+    const monthlyRegionNobs = new Map(); // "YYYY-MM" → max nobs across flares
+    for (const f of features) {
+        for (const d of (f.properties.detections || [])) {
+            if (d.pct != null) {
+                const month = d.date.slice(0, 7);
+                const cur = monthlyRegionNobs.get(month) || 0;
+                if (d.nobs > cur) monthlyRegionNobs.set(month, d.nobs);
+            } else {
+                nightlyRegionDates.add(d.date);
+            }
+        }
+    }
+    let regionMonthlyObs = 0;
+    for (const n of monthlyRegionNobs.values()) regionMonthlyObs += n;
+    const regionNightlyObs = nightlyRegionDates.size;
 
     // Sort by max_rh descending (brightest = anchor)
     const sorted = features.slice().sort((a, b) => (b.properties.max_rh || 0) - (a.properties.max_rh || 0));
@@ -1489,6 +1521,27 @@ function clusterVNFFeatures(features) {
         const typeCat = [ap.type, ap.category].filter(Boolean).join(' \u2014 ');
         const name = terminal ? terminal.name : typeCat || `Flare #${ap.flare_id}`;
 
+        // Persistence: weighted blend of monthly pct data + nightly region proxy.
+        // Monthly entries have pct (detection_rate from EOG index = detections/passes).
+        // Nightly entries use region-level date counting as clear-sky proxy.
+        let monthlyDet = 0, monthlyObs = 0;
+        const nightlyDates = new Set();
+        for (const d of merged) {
+            if (d.pct != null) {
+                monthlyDet += d.nobs * d.pct;
+                monthlyObs += d.nobs;
+            } else {
+                nightlyDates.add(d.date);
+            }
+        }
+        const nightlyDet = nightlyDates.size;
+
+        const totalDet = monthlyDet + nightlyDet;
+        const totalObs = monthlyObs + regionNightlyObs;
+        const passes = totalNights;
+        const observations = Math.round(totalObs);
+        const persistence = totalObs > 0 ? totalDet / totalObs : 0;
+
         result.push({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [anchorLon, anchorLat] },
@@ -1502,8 +1555,11 @@ function clusterVNFFeatures(features) {
                 observation_count,
                 avg_rh,
                 max_rh,
-                detection_count: merged.length,
+                detection_count: Math.round(totalDet),
                 site_count: flareIds.size,
+                passes,
+                observations,
+                persistence,
                 detections: merged
             }
         });
@@ -1562,7 +1618,8 @@ function updateDetectionSource() {
 
 function updateVNFSource() {
     if (!_vnfRawFeatures) return;
-    const clustered = clusterVNFFeatures(_vnfRawFeatures);
+    const dateRange = getSelectedDateRange();
+    const clustered = clusterVNFFeatures(_vnfRawFeatures, dateRange?.startDate, dateRange?.endDate);
     const fc = { type: 'FeatureCollection', features: clustered };
     _vnfFeatures = fc;
     const src = map.getSource('client-detections');

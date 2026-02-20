@@ -79,7 +79,8 @@ export async function queryVNF(bbox, startDate, endDate) {
                 date := CAST(date AS VARCHAR),
                 rh_mw := rh_mw,
                 temp_k := temp_k,
-                nobs := nobs
+                nobs := nobs,
+                pct := pct
             ) ORDER BY date) AS detections
         FROM '${_parquetUrl}'
         WHERE lat BETWEEN ${south} AND ${north}
@@ -106,7 +107,8 @@ export async function queryVNF(bbox, startDate, endDate) {
                     date: formatDuckDate(obj.date),
                     rh_mw: Number(obj.rh_mw) || 0,
                     temp_k: Number(obj.temp_k) || 0,
-                    nobs: Number(obj.nobs) || 0
+                    nobs: Number(obj.nobs) || 0,
+                    pct: obj.pct != null ? Number(obj.pct) : null
                 });
             }
         }

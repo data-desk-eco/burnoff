@@ -269,7 +269,7 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     flex: 1;
 }
 .cluster-slider, .intensity-slider {
-    margin-bottom: 12px;
+    margin-bottom: 18px;
 }
 .cluster-slider-header {
     display: flex;
