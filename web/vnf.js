@@ -1,5 +1,5 @@
 // VNF (VIIRS Nightfire) data module — queries a Parquet file (local or remote)
-// via DuckDB-WASM loaded from CDN. Zero npm dependencies.
+// via vendored DuckDB-WASM. Zero npm dependencies.
 
 let db = null;
 let conn = null;
@@ -30,14 +30,18 @@ export function resetVNF() {
 }
 
 async function _init(url) {
-    const duckdb = await import('https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm');
-    const bundles = duckdb.getJsDelivrBundles();
-    const bundle = await duckdb.selectBundle(bundles);
+    const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
 
-    const workerBlob = new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' });
+    // Use vendored EH (exception handling) bundle — all modern browsers support it.
+    // Resolve to absolute URLs since the worker runs in a Blob context.
+    const base = new URL('.', import.meta.url).href;
+    const mainModule = base + 'vendor/duckdb/duckdb-eh.wasm';
+    const mainWorker = base + 'vendor/duckdb/duckdb-browser-eh.worker.js';
+
+    const workerBlob = new Blob([`importScripts("${mainWorker}");`], { type: 'text/javascript' });
     const worker = new Worker(URL.createObjectURL(workerBlob));
     db = new duckdb.AsyncDuckDB({ log: () => {} }, worker);
-    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+    await db.instantiate(mainModule);
 
     conn = await db.connect();
 
