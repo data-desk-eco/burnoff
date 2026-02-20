@@ -2,6 +2,50 @@ import { LWWMap } from './crdt.js';
 import { Store } from './store.js';
 import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
+import { initVNF, resetVNF, queryVNF, isReady as vnfReady } from './vnf.js';
+
+// ---------------------------------------------------------------------------
+// Mode state: 'vnf' or 's2'
+// ---------------------------------------------------------------------------
+
+let currentMode = null;
+let _vnfInitStarted = false;
+let _vnfFeatures = null;   // cached VNF FeatureCollection (clustered)
+let _vnfRawFeatures = null; // raw features from last queryVNF
+let _vnfRefreshTimer = null;
+
+const VNF_BUCKET = document.querySelector('meta[name="vnf-bucket"]')?.content || '';
+const VNF_SESSION_KEY = 'vnf_auth';
+
+async function deriveVNFUrl(password) {
+    const data = new TextEncoder().encode(password);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `${VNF_BUCKET}/vnf-${hex.slice(0, 16)}.parquet`;
+}
+
+function getVNFSession() { return localStorage.getItem(VNF_SESSION_KEY); }
+function setVNFSession(url) { localStorage.setItem(VNF_SESSION_KEY, url); }
+
+async function promptVNFPassword() {
+    const pw = prompt('VNF access key:');
+    if (!pw) return null;
+    const url = await deriveVNFUrl(pw);
+    // Verify the file exists with a HEAD request
+    try {
+        const resp = await fetch(url, { method: 'HEAD' });
+        if (!resp.ok) { alert('Invalid key'); return null; }
+    } catch { alert('Invalid key'); return null; }
+    setVNFSession(url);
+    return url;
+}
+
+async function getVNFUrl() {
+    const cached = getVNFSession();
+    if (cached) return cached;
+    if (!VNF_BUCKET) return 'vnf.parquet';
+    return promptVNFPassword();
+}
 
 // ---------------------------------------------------------------------------
 // P2P sync (LWW-Map CRDT)
@@ -163,6 +207,7 @@ let _syncUpdateTimer;
 function scheduleDetectionUpdate() {
     clearTimeout(_syncUpdateTimer);
     _syncUpdateTimer = setTimeout(() => {
+        if (currentMode !== 's2') return;
         rebuildDetections();
         ensureDetectionLayer();
         updateDetectionSource();
@@ -390,6 +435,13 @@ function getDetectedQuarters() {
 }
 
 function updateQuarterIndicators() {
+    if (currentMode === 'vnf') {
+        // No detected-quarter indicators in VNF mode
+        document.querySelectorAll('.quarter-btn').forEach(btn => {
+            btn.classList.remove('detected');
+        });
+        return;
+    }
     const quarters = getDetectedQuarters();
     document.querySelectorAll('.quarter-btn').forEach(btn => {
         btn.classList.toggle('detected', quarters.has(`${btn.dataset.year}_${btn.dataset.quarter}`));
@@ -447,7 +499,7 @@ function initQuarterPicker() {
             btn.textContent = `Q${q}`;
             btn.dataset.year = year;
             btn.dataset.quarter = q;
-            if (year === currentYear && q <= currentQuarter) btn.classList.add('active');
+            if (year >= currentYear - 1) btn.classList.add('active');
             btn.addEventListener('click', () => toggleQuarter(btn));
             row.appendChild(btn);
         }
@@ -461,7 +513,11 @@ function toggleQuarter(btn) {
     const activeCount = document.querySelectorAll('.quarter-btn.active').length;
     if (wasActive && activeCount <= 1) return;
     btn.classList.toggle('active');
-    updateDetectButton();
+    if (currentMode === 'vnf') {
+        scheduleVNFRefresh();
+    } else {
+        updateDetectButton();
+    }
 }
 
 function getSelectedDateRange() {
@@ -490,9 +546,175 @@ function getSelectedDateRange() {
 initQuarterPicker();
 updateQuarterIndicators();
 
-// Color scale for B12 intensity
+// ---------------------------------------------------------------------------
+// VNF mode
+// ---------------------------------------------------------------------------
+
+async function refreshVNF() {
+    if (currentMode !== 'vnf') return;
+    if (!vnfReady()) return;
+
+    const bounds = map.getBounds();
+    const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+    const dateRange = getSelectedDateRange();
+    if (!dateRange) return;
+
+    try {
+        const fc = await queryVNF(bbox, dateRange.startDate, dateRange.endDate);
+        _vnfRawFeatures = fc.features;
+        const clustered = clusterVNFFeatures(_vnfRawFeatures);
+        const clusteredFc = { type: 'FeatureCollection', features: clustered };
+        _vnfFeatures = clusteredFc;
+        ensureDetectionLayer();
+        const src = map.getSource('client-detections');
+        if (src && currentMode === 'vnf') src.setData(clusteredFc);
+    } catch (err) {
+        console.error('VNF query error:', err);
+    }
+}
+
+function scheduleVNFRefresh() {
+    clearTimeout(_vnfRefreshTimer);
+    _vnfRefreshTimer = setTimeout(refreshVNF, 200);
+}
+
+function switchMode(mode) {
+    if (mode === currentMode) return;
+    currentMode = mode;
+
+    // Update toggle buttons
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+
+    const panel = document.getElementById('title-panel');
+    panel.classList.toggle('mode-s2', mode === 's2');
+
+    // Close any open info panel
+    closeInfo();
+
+    // Update legend
+    updateLegend();
+
+    // Update events header columns
+    const col2 = document.getElementById('events-col2');
+    const col3 = document.getElementById('events-col3');
+    if (col2) col2.textContent = mode === 'vnf' ? 'RH' : 'B12';
+    if (col3) col3.textContent = mode === 'vnf' ? 'MCM/d' : 'px';
+
+    // Reconfigure sliders for current mode (restore per-mode values)
+    const clRange = document.getElementById('cluster-range');
+    const clValue = document.getElementById('cluster-value');
+    if (mode === 'vnf') {
+        MERGE_DISTANCE_M = VNF_MERGE_DISTANCE_M;
+        clRange.min = '0'; clRange.max = '2000'; clRange.step = '50'; clRange.value = MERGE_DISTANCE_M;
+    } else {
+        MERGE_DISTANCE_M = S2_MERGE_DISTANCE_M;
+        clRange.min = '0'; clRange.max = '200'; clRange.step = '5'; clRange.value = MERGE_DISTANCE_M;
+    }
+    clValue.textContent = MERGE_DISTANCE_M === 0 ? 'Off' : `${MERGE_DISTANCE_M} m`;
+
+    const intRange = document.getElementById('intensity-range');
+    const intValue = document.getElementById('intensity-value');
+    if (mode === 'vnf') {
+        intRange.min = '0'; intRange.max = '10'; intRange.step = '0.5'; intRange.value = VNF_AVG_RH_MIN;
+        intValue.textContent = VNF_AVG_RH_MIN === 0 ? 'Off' : `${VNF_AVG_RH_MIN} MW`;
+    } else {
+        intRange.min = '0'; intRange.max = '1.5'; intRange.step = '0.05'; intRange.value = CLUSTER_AVG_B12_MIN;
+        intValue.textContent = CLUSTER_AVG_B12_MIN === 0 ? 'Off' : CLUSTER_AVG_B12_MIN.toFixed(2).replace(/^0\./, '.');
+    }
+
+    // Update quarter indicators immediately (un-grey in VNF, mark detected in S2)
+    updateQuarterIndicators();
+
+    if (mode === 'vnf') {
+        // Clear S2 features immediately so they don't linger during VNF load
+        ensureDetectionLayer();
+        const src = map.getSource('client-detections');
+        if (src) src.setData({ type: 'FeatureCollection', features: [] });
+
+        if (!_vnfInitStarted) {
+            getVNFUrl().then(url => {
+                if (!url) { switchMode('s2'); return; }
+                _vnfInitStarted = true;
+                initVNF(url).then(() => {
+                    if (currentMode === 'vnf') refreshVNF();
+                }).catch(err => {
+                    console.error('VNF init error:', err);
+                    _vnfInitStarted = false;
+                    resetVNF();
+                    switchMode('s2');
+                });
+            });
+        } else if (vnfReady()) {
+            refreshVNF();
+        }
+    } else {
+        // Restore S2 features
+        rebuildDetections();
+        ensureDetectionLayer();
+        updateDetectionSource();
+    }
+
+    updateCirclePaint();
+}
+
+function updateLegend() {
+    const legend = document.querySelector('.legend');
+    if (!legend) return;
+    if (currentMode === 'vnf') {
+        legend.innerHTML = `
+            <h4 class="label-sm">Radiant heat (MW)</h4>
+            <div class="legend-item"><div class="legend-circle" style="border-color: #ffff00"></div>20+</div>
+            <div class="legend-item"><div class="legend-circle" style="border-color: #f8765c"></div>7</div>
+            <div class="legend-item"><div class="legend-circle" style="border-color: #b63679"></div>1</div>
+            <h4 class="label-sm legend-section">Infrastructure</h4>
+            <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
+        `;
+    } else {
+        legend.innerHTML = `
+            <h4 class="label-sm">Intensity</h4>
+            <div class="legend-item"><div class="legend-circle" style="border-color: #ffff00"></div>1.5+</div>
+            <div class="legend-item"><div class="legend-circle" style="border-color: #f8765c"></div>1.15</div>
+            <div class="legend-item"><div class="legend-circle" style="border-color: #b63679"></div>0.9</div>
+            <h4 class="label-sm legend-section">Infrastructure</h4>
+            <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
+        `;
+    }
+}
+
+function updateCirclePaint() {
+    if (!map.getLayer('client-detection-circles')) return;
+    if (currentMode === 'vnf') {
+        map.setPaintProperty('client-detection-circles', 'circle-stroke-color', vnfColorScale);
+        map.setPaintProperty('client-detection-circles', 'circle-radius', vnfCircleRadius);
+    } else {
+        map.setPaintProperty('client-detection-circles', 'circle-stroke-color', b12ColorScale);
+        map.setPaintProperty('client-detection-circles', 'circle-radius', s2CircleRadius);
+    }
+}
+
+// Color scales
 const b12ColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_b12'], 0.9],
-    0.9, '#e04090', 1.1, '#ff4530', 1.3, '#ffff00'];
+    0.9, '#e04090', 1.15, '#ff4530', 1.5, '#ffff00'];
+
+const vnfColorScale = ['interpolate', ['linear'], ['coalesce', ['get', 'max_rh'], 1],
+    1, '#e04090', 7, '#ff4530', 20, '#ffff00'];
+
+// Circle radius expressions
+const s2CircleRadius = ['interpolate', ['exponential', 1.5], ['zoom'],
+    0, ['+', 4, ['*', ['coalesce', ['get', 'max_b12'], 0], 4]],
+    6, ['+', 6, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
+    10, ['+', 10, ['*', ['coalesce', ['get', 'max_b12'], 0], 8]],
+    14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
+];
+
+const vnfCircleRadius = ['interpolate', ['exponential', 1.5], ['zoom'],
+    0, ['+', 4, ['min', 8, ['*', ['ln', ['+', ['coalesce', ['get', 'max_rh'], 1], 1]], 2]]],
+    6, ['+', 6, ['min', 12, ['*', ['ln', ['+', ['coalesce', ['get', 'max_rh'], 1], 1]], 3]]],
+    10, ['+', 8, ['min', 14, ['*', ['ln', ['+', ['coalesce', ['get', 'max_rh'], 1], 1]], 4]]],
+    14, ['+', 10, ['min', 16, ['*', ['ln', ['+', ['coalesce', ['get', 'max_rh'], 1], 1]], 5]]]
+];
 
 function magmaColor(t) {
     t = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
@@ -512,6 +734,13 @@ function magmaColor(t) {
 
 function b12Color(b12) {
     const t = Math.max(0.15, Math.min(1, (b12 - 0.9) / 0.4));
+    const [r, g, b] = magmaColor(t);
+    return `rgb(${r},${g},${b})`;
+}
+
+function rhColor(rh) {
+    // Log scale: 1 MW → 0.15, 20 MW → 1.0
+    const t = Math.max(0.15, Math.min(1, Math.log(Math.max(1, rh)) / Math.log(20)));
     const [r, g, b] = magmaColor(t);
     return `rgb(${r},${g},${b})`;
 }
@@ -536,7 +765,8 @@ function setCirclesGreyed() {
 
 function setCirclesDefault() {
     if (!map.getLayer('client-detection-circles')) return;
-    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', b12ColorScale);
+    const colorScale = currentMode === 'vnf' ? vnfColorScale : b12ColorScale;
+    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', colorScale);
     map.setPaintProperty('client-detection-circles', 'circle-stroke-opacity', 1);
 }
 
@@ -558,9 +788,11 @@ function renderIntensityChart(detections, onSelectDate) {
     const maxDate = Math.max(...dates);
     const dateRange = maxDate - minDate || 1;
 
-    const b12Val = d => d.b12_corrected;
-    const b12Values = sorted.map(b12Val).filter(v => v > 0);
-    const dataMin = Math.min(...b12Values), dataMax = Math.max(...b12Values);
+    const isVNF = currentMode === 'vnf';
+    const yVal = isVNF ? (d => d.rh_mw || 0) : (d => d.b12_corrected);
+    const colorFn = isVNF ? rhColor : b12Color;
+    const yValues = sorted.map(yVal).filter(v => v > 0 && !(isVNF && v >= 999));
+    const dataMin = Math.min(...yValues), dataMax = Math.max(...yValues);
     const padding = (dataMax - dataMin) * 0.1 || 0.1;
     const minB12 = Math.max(0, dataMin - padding), maxB12 = dataMax + padding;
     const b12Range = maxB12 - minB12 || 0.1;
@@ -580,9 +812,10 @@ function renderIntensityChart(detections, onSelectDate) {
     sorted.forEach((det, i) => {
         const date = new Date(det.date);
         const x = margin.left + ((date - minDate) / dateRange) * innerW;
-        const b12 = b12Val(det);
-        const y = margin.top + innerH - ((b12 - minB12) / b12Range) * innerH;
-        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${b12Color(b12)}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
+        const val = yVal(det);
+        if (isVNF && val >= 999) return;
+        const y = margin.top + innerH - ((val - minB12) / b12Range) * innerH;
+        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${colorFn(val)}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
     });
 
     svg += '</svg>';
@@ -620,23 +853,39 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     }
 
     document.getElementById('info').classList.add('visible');
-    document.getElementById('info-name').textContent = props.name || 'Unknown facility';
-    const sub = document.getElementById('info-subtitle');
-    if (sub) {
-        if (props.terminal && props.passes) {
-            const pct = Math.round(props.persistence * 100);
-            const cfPct = Math.round(props.observations / props.passes * 100);
-            sub.innerHTML =
-                `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
-                `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
-        } else if (props.terminal) {
-            sub.textContent = `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
-        } else {
-            sub.textContent = '';
+
+    if (currentMode === 'vnf') {
+        document.getElementById('info-name').textContent = props.name || `Flare #${props.flare_id}`;
+        const sub = document.getElementById('info-subtitle');
+        if (sub) {
+            const parts = [];
+            if (props.detection_count) parts.push(`<span class="sub-hi">${props.detection_count}</span> detections`);
+            if (props.site_count > 1) parts.push(`<span class="sub-hi">${props.site_count}</span> sites`);
+            if (props.avg_rh != null && props.avg_rh < 999) parts.push(`<span class="sub-hi">${(props.avg_rh * RH_TO_MCM).toFixed(2)}</span> MCM/d avg`);
+            if (props.country) parts.push(props.country);
+            sub.innerHTML = parts.join(' \u00b7 ');
         }
+        const warn = document.getElementById('info-warning');
+        if (warn) warn.textContent = '';
+    } else {
+        document.getElementById('info-name').textContent = props.name || 'Unknown facility';
+        const sub = document.getElementById('info-subtitle');
+        if (sub) {
+            if (props.terminal && props.passes) {
+                const pct = Math.round(props.persistence * 100);
+                const cfPct = Math.round(props.observations / props.passes * 100);
+                sub.innerHTML =
+                    `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
+                    `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
+            } else if (props.terminal) {
+                sub.textContent = `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
+            } else {
+                sub.textContent = '';
+            }
+        }
+        const warn = document.getElementById('info-warning');
+        if (warn) warn.textContent = props.seasonal ? 'Seasonal pattern, may be false positive' : '';
     }
-    const warn = document.getElementById('info-warning');
-    if (warn) warn.textContent = props.seasonal ? 'Seasonal pattern, may be false positive' : '';
 
     let detections = props.detections || [];
     if (typeof detections === 'string') {
@@ -650,17 +899,31 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     const dateToItem = new Map();
     let firstItem = null;
 
+    const isVNF = currentMode === 'vnf';
     sorted.forEach(det => {
         const item = document.createElement('div');
-        const url = det.cog_b12;
-        const isL1C = !url || typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif');
+        let isL1C = false;
+        if (!isVNF) {
+            const url = det.cog_b12;
+            isL1C = !url || typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif');
+        }
         item.className = 'event-item' + (isL1C ? ' l1c-only' : '');
         item.dataset.date = det.date;
-        item.innerHTML = `
-            <span class="event-date">${formatDate(det.date)}</span>
-            <span class="event-meta event-meta-b12">${det.max_b12?.toFixed(2) || '-'}</span>
-            <span class="event-meta event-meta-px">${det.pixels || '-'}</span>
-        `;
+        if (isVNF) {
+            const rhDisplay = det.rh_mw >= 999 ? '-' : (det.rh_mw?.toFixed(1) || '-');
+            const mcmDisplay = det.rh_mw >= 999 ? '-' : (det.rh_mw != null ? (det.rh_mw * RH_TO_MCM).toFixed(2) : '-');
+            item.innerHTML = `
+                <span class="event-date">${formatDate(det.date)}</span>
+                <span class="event-meta event-meta-val">${rhDisplay}</span>
+                <span class="event-meta event-meta-count">${mcmDisplay}</span>
+            `;
+        } else {
+            item.innerHTML = `
+                <span class="event-date">${formatDate(det.date)}</span>
+                <span class="event-meta event-meta-val">${det.max_b12?.toFixed(2) || '-'}</span>
+                <span class="event-meta event-meta-count">${det.pixels || '-'}</span>
+            `;
+        }
         item.onclick = () => selectDetection(det, item);
         list.appendChild(item);
 
@@ -684,7 +947,13 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         list.style.maxHeight = (rowH * visibleRows + 4) + 'px';
     }
 
+    // In VNF mode, auto-select first item (highlight only, no COG load)
+    // In S2 mode, auto-select first L2A item to load COG
     if (firstItem && !skipAutoSelect) selectDetection(firstItem.det, firstItem.item);
+
+    // Hide/show "Open image" button based on mode
+    const openBtn = document.getElementById('open-image-btn');
+    if (openBtn) openBtn.style.display = currentMode === 'vnf' ? 'none' : '';
 
     document.activeElement?.blur();
 
@@ -698,7 +967,7 @@ function selectDetection(det, element) {
     document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
     element.classList.add('active');
     selectedDetection = det;
-    loadImageryForDetection(det);
+    if (currentMode !== 'vnf') loadImageryForDetection(det);
 }
 
 function closeInfo() {
@@ -851,33 +1120,59 @@ function downloadFlareCSV() {
         try { detections = JSON.parse(detections); } catch (e) { detections = []; }
     }
 
-    const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'passes', 'observations']];
-    const persistStr = props.persistence != null ? props.persistence.toFixed(4) : '';
-    const passStr = props.passes != null ? String(props.passes) : '';
-    const obsStr = props.observations != null ? String(props.observations) : '';
-    for (const det of detections) {
-        rows.push([
-            `"${(props.name || '').replace(/"/g, '""')}"`,
-            `"${(props.terminal || '').replace(/"/g, '""')}"`,
-            det.raw_lat?.toFixed(6) || lat.toFixed(6),
-            det.raw_lon?.toFixed(6) || lon.toFixed(6),
-            det.date,
-            det.max_b12?.toFixed(4) || '',
-            det.pixels || '',
-            persistStr,
-            passStr,
-            obsStr
-        ]);
+    if (currentMode === 'vnf') {
+        const rows = [['flare_id', 'type', 'category', 'country', 'lat', 'lon', 'date', 'rh_mw', 'temp_k', 'nobs']];
+        for (const det of detections) {
+            rows.push([
+                props.flare_id || '',
+                `"${(props.type || '').replace(/"/g, '""')}"`,
+                `"${(props.category || '').replace(/"/g, '""')}"`,
+                `"${(props.country || '').replace(/"/g, '""')}"`,
+                lat.toFixed(6),
+                lon.toFixed(6),
+                det.date,
+                det.rh_mw?.toFixed(4) || '',
+                det.temp_k?.toFixed(1) || '',
+                det.nobs || ''
+            ]);
+        }
+        const csv = rows.map(r => r.join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const name = [props.type, props.category].filter(Boolean).join('-') || `flare-${props.flare_id}`;
+        a.download = `${name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-vnf.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } else {
+        const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'passes', 'observations']];
+        const persistStr = props.persistence != null ? props.persistence.toFixed(4) : '';
+        const passStr = props.passes != null ? String(props.passes) : '';
+        const obsStr = props.observations != null ? String(props.observations) : '';
+        for (const det of detections) {
+            rows.push([
+                `"${(props.name || '').replace(/"/g, '""')}"`,
+                `"${(props.terminal || '').replace(/"/g, '""')}"`,
+                det.raw_lat?.toFixed(6) || lat.toFixed(6),
+                det.raw_lon?.toFixed(6) || lon.toFixed(6),
+                det.date,
+                det.max_b12?.toFixed(4) || '',
+                det.pixels || '',
+                persistStr,
+                passStr,
+                obsStr
+            ]);
+        }
+        const csv = rows.map(r => r.join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(props.name || 'flare').replace(/[^a-z0-9]/gi, '-').toLowerCase()}-detections.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
     }
-
-    const csv = rows.map(r => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${(props.name || 'flare').replace(/[^a-z0-9]/gi, '-').toLowerCase()}-detections.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------------
@@ -885,7 +1180,11 @@ function downloadFlareCSV() {
 // ---------------------------------------------------------------------------
 
 let MERGE_DISTANCE_M = 135;
+let S2_MERGE_DISTANCE_M = 135;
+let VNF_MERGE_DISTANCE_M = 1400;
 let CLUSTER_AVG_B12_MIN = 0.85;
+let VNF_AVG_RH_MIN = 3;
+const RH_TO_MCM = 0.0315;
 
 function haversineM(lat1, lon1, lat2, lon2) {
     const R = 6371000;
@@ -1107,6 +1406,104 @@ function crossDateCluster(allDetections) {
 }
 
 // ---------------------------------------------------------------------------
+// VNF spatial clustering (reuses grid-merge pattern from crossDateCluster)
+// ---------------------------------------------------------------------------
+
+function clusterVNFFeatures(features) {
+    if (features.length === 0) return [];
+
+    // Sort by max_rh descending (brightest = anchor)
+    const sorted = features.slice().sort((a, b) => (b.properties.max_rh || 0) - (a.properties.max_rh || 0));
+
+    const CELL_DEG = MERGE_DISTANCE_M / 111320;
+    const grid = new Map();
+    const clusters = [];
+    const KEY_SHIFT = 0x100000;
+
+    for (const feat of sorted) {
+        const [lon, lat] = feat.geometry.coordinates;
+        const gRow = Math.floor(lat / CELL_DEG);
+        const gCol = Math.floor(lon / CELL_DEG);
+        let bestIdx = -1, bestDist = Infinity;
+
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                const key = (gRow + dr) * KEY_SHIFT + (gCol + dc);
+                const bucket = grid.get(key);
+                if (!bucket) continue;
+                for (const ci of bucket) {
+                    const [aLon, aLat] = clusters[ci].anchor.geometry.coordinates;
+                    const d = fastDistM(lat, lon, aLat, aLon);
+                    if (d <= MERGE_DISTANCE_M && d < bestDist) {
+                        bestDist = d;
+                        bestIdx = ci;
+                    }
+                }
+            }
+        }
+
+        if (bestIdx >= 0) {
+            clusters[bestIdx].members.push(feat);
+        } else {
+            const ci = clusters.length;
+            clusters.push({ anchor: feat, members: [feat] });
+            const key = gRow * KEY_SHIFT + gCol;
+            const bucket = grid.get(key);
+            if (bucket) bucket.push(ci);
+            else grid.set(key, [ci]);
+        }
+    }
+
+    const result = [];
+    for (const cluster of clusters) {
+        const anchor = cluster.anchor;
+        const ap = anchor.properties;
+        const [anchorLon, anchorLat] = anchor.geometry.coordinates;
+
+        // Merge detections, dedup by date (keep highest rh_mw per date)
+        const byDate = {};
+        const flareIds = new Set();
+        for (const feat of cluster.members) {
+            flareIds.add(feat.properties.flare_id);
+            for (const d of (feat.properties.detections || [])) {
+                if (!byDate[d.date] || d.rh_mw > byDate[d.date].rh_mw) byDate[d.date] = d;
+            }
+        }
+        const merged = Object.values(byDate);
+
+        const observation_count = merged.length;
+        const avg_rh = observation_count > 0 ? merged.reduce((s, d) => s + (d.rh_mw || 0), 0) / observation_count : 0;
+        const max_rh = merged.reduce((m, d) => Math.max(m, d.rh_mw || 0), 0);
+
+        if (VNF_AVG_RH_MIN > 0 && avg_rh < VNF_AVG_RH_MIN) continue;
+
+        const terminal = findNearestTerminal(anchorLat, anchorLon);
+        const typeCat = [ap.type, ap.category].filter(Boolean).join(' \u2014 ');
+        const name = terminal ? terminal.name : typeCat || `Flare #${ap.flare_id}`;
+
+        result.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [anchorLon, anchorLat] },
+            properties: {
+                name,
+                terminal: terminal?.name || null,
+                flare_id: ap.flare_id,
+                type: ap.type || '',
+                category: ap.category || '',
+                country: ap.country || '',
+                observation_count,
+                avg_rh,
+                max_rh,
+                detection_count: merged.length,
+                site_count: flareIds.size,
+                detections: merged
+            }
+        });
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // Client-side detection
 // ---------------------------------------------------------------------------
 
@@ -1131,12 +1528,8 @@ function ensureDetectionLayer() {
         });
     }
     if (!map.getLayer('client-detection-circles')) {
-        const circleRadius = ['interpolate', ['exponential', 1.5], ['zoom'],
-            0, ['+', 4, ['*', ['coalesce', ['get', 'max_b12'], 0], 4]],
-            6, ['+', 6, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
-            10, ['+', 10, ['*', ['coalesce', ['get', 'max_b12'], 0], 8]],
-            14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
-        ];
+        const circleRadius = currentMode === 'vnf' ? vnfCircleRadius : s2CircleRadius;
+        const colorScale = currentMode === 'vnf' ? vnfColorScale : b12ColorScale;
         map.addLayer({
             id: 'client-detection-circles',
             type: 'circle',
@@ -1145,7 +1538,7 @@ function ensureDetectionLayer() {
                 'circle-radius': circleRadius,
                 'circle-color': 'transparent',
                 'circle-opacity': 0,
-                'circle-stroke-color': b12ColorScale,
+                'circle-stroke-color': colorScale,
                 'circle-stroke-width': 2,
                 'circle-stroke-opacity': 1
             }
@@ -1157,6 +1550,35 @@ function updateDetectionSource() {
     const features = crossDateCluster(allRawDetections);
     const src = map.getSource('client-detections');
     if (src) src.setData({ type: 'FeatureCollection', features });
+}
+
+function updateVNFSource() {
+    if (!_vnfRawFeatures) return;
+    const clustered = clusterVNFFeatures(_vnfRawFeatures);
+    const fc = { type: 'FeatureCollection', features: clustered };
+    _vnfFeatures = fc;
+    const src = map.getSource('client-detections');
+    if (src) src.setData(fc);
+}
+
+function updateCurrentSource() {
+    if (currentMode === 'vnf') updateVNFSource();
+    else updateDetectionSource();
+}
+
+function reselectCurrentFeature() {
+    if (!currentFeature) return;
+    const src = map.getSource('client-detections');
+    if (!src) return;
+    const fc = src._data || { features: [] };
+    const features = fc.features || [];
+    const [lon, lat] = currentFeature.geometry.coordinates;
+    const match = features.find(f => {
+        const [fLon, fLat] = f.geometry.coordinates;
+        return Math.abs(fLon - lon) < 0.0001 && Math.abs(fLat - lat) < 0.0001;
+    });
+    if (match) showInfo(match, { skipAutoSelect: true });
+    else closeInfo();
 }
 
 // Track the current detection job and peer partition
@@ -1361,7 +1783,11 @@ let _quarterIndicatorTimeout;
 map.on('moveend', () => {
     clearTimeout(_quarterIndicatorTimeout);
     _quarterIndicatorTimeout = setTimeout(updateQuarterIndicators, 300);
-    updateDetectButton();
+    if (currentMode === 'vnf') {
+        scheduleVNFRefresh();
+    } else {
+        updateDetectButton();
+    }
 });
 
 map.on('load', () => {
@@ -1441,20 +1867,13 @@ map.on('load', () => {
         data: { type: 'FeatureCollection', features: [] }
     });
 
-    const circleRadius = ['interpolate', ['exponential', 1.5], ['zoom'],
-        0, ['+', 4, ['*', ['coalesce', ['get', 'max_b12'], 0], 4]],
-        6, ['+', 6, ['*', ['coalesce', ['get', 'max_b12'], 0], 6]],
-        10, ['+', 10, ['*', ['coalesce', ['get', 'max_b12'], 0], 8]],
-        14, ['+', 12, ['*', ['coalesce', ['get', 'max_b12'], 0], 10]]
-    ];
-
     map.addLayer({
         id: 'selection-highlight',
         type: 'circle',
         source: 'selection-highlight',
         layout: { visibility: 'none' },
         paint: {
-            'circle-radius': circleRadius,
+            'circle-radius': ['interpolate', ['exponential', 1.5], ['zoom'], 0, 8, 6, 12, 10, 18, 14, 22],
             'circle-color': 'transparent',
             'circle-opacity': 0,
             'circle-stroke-color': '#ffffff',
@@ -1517,59 +1936,45 @@ document.getElementById('open-image-btn').addEventListener('click', () => {
 document.querySelector('.close-btn').addEventListener('click', closeInfo);
 document.getElementById('detect-btn').addEventListener('click', startDetection);
 
-let _clusterSliderTimer = 0;
+let _sliderTimer = 0;
+function debouncedRecluster() {
+    clearTimeout(_sliderTimer);
+    _sliderTimer = setTimeout(() => { updateCurrentSource(); reselectCurrentFeature(); }, 80);
+}
+
 document.getElementById('cluster-range').addEventListener('input', e => {
     const val = parseInt(e.target.value);
     MERGE_DISTANCE_M = val;
+    if (currentMode === 'vnf') VNF_MERGE_DISTANCE_M = val;
+    else S2_MERGE_DISTANCE_M = val;
     document.getElementById('cluster-value').textContent = val === 0 ? 'Off' : `${val} m`;
-    // Debounce clustering to avoid re-running on every pixel of slider drag
-    clearTimeout(_clusterSliderTimer);
-    _clusterSliderTimer = setTimeout(() => {
-        updateDetectionSource();
-        if (currentFeature) {
-            const src = map.getSource('client-detections');
-            if (src) {
-                const fc = src._data || { features: [] };
-                const features = fc.features || [];
-                const [lon, lat] = currentFeature.geometry.coordinates;
-                const match = features.find(f => {
-                    const [fLon, fLat] = f.geometry.coordinates;
-                    return Math.abs(fLon - lon) < 0.0001 && Math.abs(fLat - lat) < 0.0001;
-                });
-                if (match) showInfo(match, { skipAutoSelect: true });
-                else closeInfo();
-            }
-        }
-    }, 80);
+    debouncedRecluster();
 });
 
-let _intensitySliderTimer = 0;
 document.getElementById('intensity-range').addEventListener('input', e => {
     const val = parseFloat(e.target.value);
-    CLUSTER_AVG_B12_MIN = val;
-    document.getElementById('intensity-value').textContent = val === 0 ? 'Off' : val.toFixed(2).replace(/^0\./, '.');
-    clearTimeout(_intensitySliderTimer);
-    _intensitySliderTimer = setTimeout(() => {
-        updateDetectionSource();
-        if (currentFeature) {
-            const src = map.getSource('client-detections');
-            if (src) {
-                const fc = src._data || { features: [] };
-                const features = fc.features || [];
-                const [lon, lat] = currentFeature.geometry.coordinates;
-                const match = features.find(f => {
-                    const [fLon, fLat] = f.geometry.coordinates;
-                    return Math.abs(fLon - lon) < 0.0001 && Math.abs(fLat - lat) < 0.0001;
-                });
-                if (match) showInfo(match, { skipAutoSelect: true });
-                else closeInfo();
-            }
-        }
-    }, 80);
+    if (currentMode === 'vnf') {
+        VNF_AVG_RH_MIN = val;
+        document.getElementById('intensity-value').textContent = val === 0 ? 'Off' : `${val} MW`;
+    } else {
+        CLUSTER_AVG_B12_MIN = val;
+        document.getElementById('intensity-value').textContent = val === 0 ? 'Off' : val.toFixed(2).replace(/^0\./, '.');
+    }
+    debouncedRecluster();
 });
 
 document.getElementById('collapse-toggle').addEventListener('click', () => {
     document.getElementById('title-panel').classList.toggle('collapsed');
+});
+
+// Mode toggle
+document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchMode(btn.dataset.mode));
+});
+
+// Start in S2 mode
+map.on('load', () => {
+    switchMode('s2');
 });
 
 document.addEventListener('keydown', e => {
@@ -1581,7 +1986,8 @@ document.addEventListener('keydown', e => {
     else if (key === 'ArrowUp' || key === 'k') dir = -1;
     if (!dir) return;
     e.preventDefault();
-    const items = Array.from(document.querySelectorAll('.event-item:not(.l1c-only)'));
+    const sel = currentMode === 'vnf' ? '.event-item' : '.event-item:not(.l1c-only)';
+    const items = Array.from(document.querySelectorAll(sel));
     if (items.length === 0) return;
     const activeIdx = items.findIndex(el => el.classList.contains('active'));
     const nextIdx = Math.max(0, Math.min(items.length - 1, activeIdx + dir));

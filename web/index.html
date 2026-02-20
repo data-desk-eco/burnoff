@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="signaling-url" content="wss://burnoff-signaling-352064324632.europe-west2.run.app">
-    <title>Burnoff: Sentinel-2 flare detection</title>
+    <meta name="vnf-bucket" content="https://storage.googleapis.com/burnoff-data">
+    <title>burnoff</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2240%22 fill=%22%23f8765c%22/%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,6 +22,10 @@
             <span class="collapse-toggle" id="collapse-toggle"><svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,8 6,4 10,8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
         </div>
         <p>Sentinel-2 flare detection</p>
+        <div class="mode-toggle" id="mode-toggle">
+            <button class="mode-btn active" data-mode="s2">S2</button>
+            <button class="mode-btn" data-mode="vnf">VNF</button>
+        </div>
         <div class="detect-separator"></div>
         <div class="peer-status" id="peer-status"></div>
         <div class="map-loc-section">
@@ -42,8 +47,8 @@
             <input type="range" id="intensity-range" min="0" max="1.5" step="0.05" value="0.85">
         </div>
         <div class="quarter-picker" id="quarter-picker"></div>
-        <button id="detect-btn" class="detect-btn">Detect</button>
-        <div id="detect-progress" class="detect-progress hidden">
+        <button id="detect-btn" class="detect-btn s2-only">Detect</button>
+        <div id="detect-progress" class="detect-progress hidden s2-only">
             <div class="detect-progress-bar" id="detect-bar"></div>
             <span class="detect-progress-text" id="detect-text">Searching...</span>
         </div>
@@ -70,7 +75,7 @@
                 <span class="modal-hero-caption">Photograph: <a href="https://labucketbrigade.org/press-release-in-new-report-local-residents-reveal-underreported-hazardous-accidents-at-two-southwest-louisiana-gas-export-terminals/" target="_blank" rel="noopener">Louisiana Bucket Brigade</a>, 2022</span>
             </div>
             <h2 class="modal-title-mobile">burnoff</h2>
-            <p>Distributed detection of gas flares and other thermal anomalies using Sentinel-2 shortwave infrared imagery.</p>
+            <p>Distributed detection of gas flares and other thermal anomalies using Sentinel-2 shortwave infrared imagery, with VIIRS Nightfire for reference.</p>
             <p>Click <em>Detect</em> to download and process imagery for the current view, sharing the workload — and the results — with connected peers. Click any detection to view the underlying data and flare analysis.</p>
             <p>All your detections are stored locally and synced with other users peer-to-peer. Together, we'll build up a global map.</p>
             <div class="modal-citations">
@@ -96,10 +101,10 @@
             <span class="close-btn">&times;</span>
         </div>
         <div class="intensity-chart" id="intensity-chart"></div>
-        <div class="events-header label-sm">
+        <div class="events-header label-sm" id="events-header">
             <span>Date</span>
-            <span class="col-right col-b12">B12</span>
-            <span class="col-right col-px">px</span>
+            <span class="col-right col-val" id="events-col2">B12</span>
+            <span class="col-right col-count" id="events-col3">px</span>
         </div>
         <div class="events-list custom-scroll" id="events-list"></div>
         <div class="panel-actions">
@@ -111,6 +116,6 @@
     <script src="https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js"></script>
     <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js"></script>
     <script src="utm.js"></script>
-    <script type="module" src="app.js?v=5"></script>
+    <script type="module" src="app.js?v=7"></script>
 </body>
 </html>

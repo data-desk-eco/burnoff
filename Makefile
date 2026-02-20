@@ -1,7 +1,7 @@
 CLOUD_RUN_SERVICE := burnoff-signaling
 CLOUD_RUN_REGION  := europe-west2
 
-.PHONY: serve signal test deploy terminals help
+.PHONY: serve signal test deploy terminals vnf vnf-upload help
 
 terminals: web/terminals.geojson
 
@@ -34,6 +34,17 @@ web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
 	) TO 'web/terminals.geojson' (FORMAT CSV, HEADER false, QUOTE '', DELIMITER '');"
 	@echo "web/terminals.geojson: $$(python3 -c "import json; print(len(json.load(open('web/terminals.geojson'))['features']))" 2>/dev/null) features"
 
+vnf: web/vnf.parquet
+
+web/vnf.parquet: scripts/build_vnf.py
+	uv run --with duckdb scripts/build_vnf.py
+
+vnf-upload: web/vnf.parquet
+	@test -f .env || { echo "Missing .env with VNF_PASSWORD"; exit 1; }
+	$(eval VNF_HASH := $(shell python3 -c "import hashlib,os; print(hashlib.sha256(open('.env').read().split('=',1)[1].strip().encode()).hexdigest()[:16])"))
+	gcloud storage cp web/vnf.parquet gs://burnoff-data/vnf-$(VNF_HASH).parquet
+	@echo "Uploaded as vnf-$(VNF_HASH).parquet"
+
 serve: signal
 	@echo "http://localhost:8000  (signaling on :4444)"
 	@python3 -m http.server 8000 -d web
@@ -62,4 +73,5 @@ help:
 	@echo "make serve    - Dev server on :8000 + signaling on :4444"
 	@echo "make signal   - Signaling server only"
 	@echo "make test     - Run determinism tests"
+	@echo "make vnf      - Build VNF parquet from raw data"
 	@echo "make deploy   - Deploy signaling server to Cloud Run"
