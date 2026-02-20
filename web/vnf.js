@@ -69,26 +69,25 @@ export async function queryVNF(bbox, startDate, endDate) {
             flare_id,
             FIRST(lat) AS lat,
             FIRST(lon) AS lon,
-            COUNT(*) AS observation_count,
-            AVG(rh_mw) AS avg_rh,
-            MAX(rh_mw) AS max_rh,
+            COUNT(*) AS total_dates,
+            COUNT(*) FILTER (WHERE clear) AS clear_dates,
+            COUNT(*) FILTER (WHERE detected) AS detection_dates,
+            AVG(rh_mw) FILTER (WHERE detected) AS avg_rh,
+            MAX(rh_mw) FILTER (WHERE detected) AS max_rh,
             FIRST(type) FILTER (WHERE type != '') AS type,
             FIRST(category) FILTER (WHERE category != '') AS category,
             FIRST(country) FILTER (WHERE country != '') AS country,
             LIST(struct_pack(
                 date := CAST(date AS VARCHAR),
                 rh_mw := rh_mw,
-                temp_k := temp_k,
-                nobs := nobs,
-                pct := pct
-            ) ORDER BY date) AS detections
+                temp_k := temp_k
+            ) ORDER BY date) FILTER (WHERE detected) AS detections
         FROM '${_parquetUrl}'
         WHERE lat BETWEEN ${south} AND ${north}
           AND lon BETWEEN ${west} AND ${east}
           AND date BETWEEN '${startDate}' AND '${endDate}'
-          AND rh_mw > 0
-          AND rh_mw < 999
         GROUP BY flare_id
+        HAVING COUNT(*) FILTER (WHERE detected) > 0
         ORDER BY max_rh DESC
     `);
 
@@ -106,9 +105,7 @@ export async function queryVNF(bbox, startDate, endDate) {
                 detections.push({
                     date: formatDuckDate(obj.date),
                     rh_mw: Number(obj.rh_mw) || 0,
-                    temp_k: Number(obj.temp_k) || 0,
-                    nobs: Number(obj.nobs) || 0,
-                    pct: obj.pct != null ? Number(obj.pct) : null
+                    temp_k: Number(obj.temp_k) || 0
                 });
             }
         }
@@ -121,7 +118,9 @@ export async function queryVNF(bbox, startDate, endDate) {
                 type: String(row.type || ''),
                 category: String(row.category || ''),
                 country: String(row.country || ''),
-                observation_count: Number(row.observation_count),
+                total_dates: Number(row.total_dates) || 0,
+                clear_dates: Number(row.clear_dates) || 0,
+                detection_dates: Number(row.detection_dates) || 0,
                 avg_rh: Number(row.avg_rh),
                 max_rh: Number(row.max_rh),
                 detections
