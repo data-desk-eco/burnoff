@@ -2,6 +2,5 @@
 .env
 data/
 web/data
-web/vendor/
 web/vnf.parquet
 .venv/
