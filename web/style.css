@@ -608,11 +608,11 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     line-height: 1.5;
     margin-bottom: 6px;
 }
-.modal-citations a {
+.modal-content a {
     color: var(--accent-hover);
     text-decoration: none;
 }
-.modal-citations a:hover { color: var(--text-primary); }
+.modal-content a:hover { color: var(--text-primary); }
 .modal-dismiss {
     font-size: var(--font-xs);
     color: var(--text-hint);
