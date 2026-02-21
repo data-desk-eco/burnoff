@@ -61,7 +61,6 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 .title h1 {
     font-size: var(--font-base);
     font-weight: 500;
-    font-style: oblique 6deg;
     margin: 0;
 }
 .title h1 a {
@@ -565,7 +564,6 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     left: 32px;
     font-size: 42px;
     font-weight: 500;
-    font-style: oblique 6deg;
     text-transform: none;
     color: #fff;
     text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
@@ -590,7 +588,6 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 .modal-content h2 {
     font-size: 14px;
     font-weight: 500;
-    font-style: oblique 6deg;
     margin: 0 0 16px 0;
     color: var(--text-primary);
 }
