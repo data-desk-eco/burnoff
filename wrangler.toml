@@ -1,0 +1,10 @@
+name = "burnoff-signaling"
+main = "signal/worker.js"
+compatibility_date = "2024-12-01"
+
+[durable_objects]
+bindings = [{ name = "SIGNALING", class_name = "SignalingDO" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SignalingDO"]
