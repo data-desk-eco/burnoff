@@ -13,13 +13,18 @@ Usage: uv run --with duckdb scripts/build_vnf.py
 import os, json, math
 import duckdb
 
-DATA_DIR = os.path.expanduser("~/Research/lng-flaring/data")
+# Try local data dir first, fall back to lng-flaring
+LOCAL_DATA = os.path.join(os.path.dirname(__file__), "..", "data")
+LEGACY_DATA = os.path.expanduser("~/Research/lng-flaring/data")
+DATA_DIR = LOCAL_DATA if os.path.isdir(os.path.join(LOCAL_DATA, "vnf_profiles")) else LEGACY_DATA
 PROFILE_GLOB = os.path.join(DATA_DIR, "vnf_profiles/site_*.csv")
 INDEX_CSV = os.path.join(DATA_DIR, "vnf_raw/multiyear_flare_month_summary_all_run48.csv")
 TERMINALS = os.path.join(os.path.dirname(__file__), "..", "web", "terminals.geojson")
 OUTPUT = os.path.join(os.path.dirname(__file__), "..", "web", "vnf.parquet")
 
 RADIUS_KM = 6
+ACCUMULATIONS = os.path.join(os.path.dirname(__file__), "..", "web", "accumulations.geojson")
+ACCUM_RADIUS_KM = 10
 
 def haversine_km(lat1, lon1, lat2, lon2):
     R = 6371
@@ -39,6 +44,28 @@ term_coords = [(feat["geometry"]["coordinates"][1],
                 feat["geometry"]["coordinates"][0])
                for feat in terminals["features"]]
 print(f"{len(term_coords)} terminals")
+
+# --- 1b. Accumulation centroids (polygon -> centroid) ---
+accum_coords = []
+accum_path = os.path.abspath(ACCUMULATIONS)
+if os.path.exists(accum_path):
+    with open(accum_path) as f:
+        accumulations = json.load(f)
+    for feat in accumulations["features"]:
+        geom = feat["geometry"]
+        name = feat.get("properties", {}).get("name", "")
+        if geom["type"] == "Polygon":
+            ring = geom["coordinates"][0]
+        elif geom["type"] == "MultiPolygon":
+            ring = geom["coordinates"][0][0]
+        else:
+            continue
+        clat = sum(c[1] for c in ring) / len(ring)
+        clon = sum(c[0] for c in ring) / len(ring)
+        accum_coords.append((clat, clon, name))
+    print(f"{len(accum_coords)} accumulations")
+else:
+    print("No accumulations.geojson found, continuing with terminals only")
 
 # --- 2. Load ALL profiles, compute stable avg position per flare ---
 print("Loading profiles...")
@@ -69,18 +96,40 @@ db.execute("""
 flare_count = db.execute("SELECT count(*) FROM flare_pos").fetchone()[0]
 print(f"  {flare_count} flares in profiles")
 
-# --- 3. Terminal-adjacent filter using profile-derived positions ---
+# --- 3. Facility-adjacent filter using profile-derived positions ---
 flares = db.execute("SELECT flare_id, lat, lon FROM flare_pos").fetchall()
-adj = set()
+adj = {}  # flare_id -> (facility_type, facility_name)
 for fid, flat, flon in flares:
+    # Check LNG terminals first
     for tlat, tlon in term_coords:
         if haversine_km(flat, flon, tlat, tlon) <= RADIUS_KM:
-            adj.add(fid)
+            adj[fid] = ("lng", "")
             break
-print(f"  {len(adj)} within {RADIUS_KM} km of a terminal")
+    if fid in adj:
+        continue
+    # Check accumulation centroids — find nearest within radius
+    best_dist = ACCUM_RADIUS_KM + 1
+    best_name = ""
+    for alat, alon, aname in accum_coords:
+        d = haversine_km(flat, flon, alat, alon)
+        if d <= ACCUM_RADIUS_KM and d < best_dist:
+            best_dist = d
+            best_name = aname
+    if best_dist <= ACCUM_RADIUS_KM:
+        adj[fid] = ("upstream", best_name)
+lng_count = sum(1 for ft, _ in adj.values() if ft == "lng")
+ups_count = sum(1 for ft, _ in adj.values() if ft == "upstream")
+print(f"  {lng_count} within {RADIUS_KM} km of a terminal")
+print(f"  {ups_count} within {ACCUM_RADIUS_KM} km of an accumulation")
+print(f"  {len(adj)} total adjacent flares")
 
 adj_list = ",".join(str(x) for x in sorted(adj))
 db.execute(f"CREATE TABLE adj_ids AS SELECT unnest([{adj_list}]) AS flare_id")
+
+# Facility info table for join
+facility_rows = [(fid, ft, fn) for fid, (ft, fn) in adj.items()]
+db.execute("CREATE TABLE facility_info (flare_id INTEGER, facility_type VARCHAR, facility_name VARCHAR)")
+db.executemany("INSERT INTO facility_info VALUES (?, ?, ?)", facility_rows)
 
 # --- 4. Daily aggregation for adjacent flares ---
 print("Aggregating daily...")
@@ -133,10 +182,13 @@ db.execute(f"""
             d.n_passes,
             COALESCE(m.type, '') AS type,
             COALESCE(m.category, '') AS category,
-            COALESCE(m.country, '') AS country
+            COALESCE(m.country, '') AS country,
+            COALESCE(fi.facility_type, '') AS facility_type,
+            COALESCE(fi.facility_name, '') AS facility_name
         FROM daily d
         JOIN flare_pos p ON d.flare_id = p.flare_id
         LEFT JOIN flare_meta m ON d.flare_id = m.flare_id
+        LEFT JOIN facility_info fi ON d.flare_id = fi.flare_id
         ORDER BY p.lat, p.lon, d.date
     ) TO '{os.path.abspath(OUTPUT)}'
       (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000)

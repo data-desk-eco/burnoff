@@ -2,7 +2,7 @@ import { LWWMap } from './crdt.js';
 import { Store } from './store.js';
 import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
-import { initVNF, resetVNF, queryVNF, isReady as vnfReady } from './vnf.js';
+import { initVNF, resetVNF, queryVNF, queryVNFFlare, isReady as vnfReady } from './vnf.js';
 
 // ---------------------------------------------------------------------------
 // Mode state: 'vnf' or 's2'
@@ -13,6 +13,13 @@ let _vnfInitStarted = false;
 let _vnfFeatures = null;   // cached VNF FeatureCollection (clustered)
 let _vnfRawFeatures = null; // raw features from last queryVNF
 let _vnfRefreshTimer = null;
+let _suppressHashUpdate = false; // avoid feedback loop during deep link nav
+
+/** Parse #vnf/{flare_id} from location hash. Returns flare ID or null. */
+function parseFlareHash() {
+    const m = location.hash.match(/^#vnf\/(\d+)$/);
+    return m ? Number(m[1]) : null;
+}
 
 const VNF_BUCKET = document.querySelector('meta[name="vnf-bucket"]')?.content || '';
 const VNF_SESSION_KEY = 'vnf_auth';
@@ -917,6 +924,11 @@ function formatMetrics(props) {
 function showInfo(feature, { skipAutoSelect = false } = {}) {
     currentFeature = feature;
     selectedDetection = null;
+
+    // Update hash for VNF deep links
+    if (!_suppressHashUpdate && currentMode === 'vnf' && feature.properties.flare_id) {
+        history.replaceState(null, '', `#vnf/${feature.properties.flare_id}`);
+    }
     const props = feature.properties;
 
     setCirclesGreyed();
@@ -1083,6 +1095,10 @@ function closeInfo() {
     setCirclesDefault();
     if (map.getLayer('selection-highlight')) {
         map.setLayoutProperty('selection-highlight', 'visibility', 'none');
+    }
+    // Clear deep link hash
+    if (!_suppressHashUpdate && location.hash.startsWith('#vnf/')) {
+        history.replaceState(null, '', location.pathname + location.search);
     }
 }
 
@@ -1495,8 +1511,10 @@ function enrichVNFFeatures(features) {
         if (VNF_AVG_RH_MIN > 0 && p.avg_rh < VNF_AVG_RH_MIN) continue;
 
         const terminal = findNearestTerminal(lat, lon);
+        const facilityName = p.facility_name || '';
+        const facilityType = p.facility_type || '';
         const typeCat = [p.type, p.category].filter(Boolean).join(' \u2014 ');
-        const name = terminal ? terminal.name : typeCat || `Flare #${p.flare_id}`;
+        const name = facilityName || (terminal ? terminal.name : typeCat || `Flare #${p.flare_id}`);
 
         const passes = p.total_dates;
         const detection_count = p.detection_dates;
@@ -1509,6 +1527,8 @@ function enrichVNFFeatures(features) {
             properties: {
                 name,
                 terminal: terminal?.name || null,
+                facility_type: facilityType,
+                facility_name: facilityName,
                 flare_id: p.flare_id,
                 type: p.type || '',
                 category: p.category || '',
@@ -1886,6 +1906,71 @@ map.on('load', () => {
         });
     });
 
+    // Oil/gas field polygons (accumulations)
+    fetch('accumulations.geojson').then(r => {
+        if (!r.ok) return null;
+        return r.json();
+    }).then(geojson => {
+        if (!geojson) return;
+        map.addSource('accumulations', { type: 'geojson', data: geojson });
+        // Insert below terminal layer if it exists, otherwise append
+        const before = map.getLayer('lng-terminal-hitarea') ? 'lng-terminal-hitarea' : undefined;
+        map.addLayer({
+            id: 'accumulations-fill',
+            type: 'fill',
+            source: 'accumulations',
+            minzoom: 8,
+            paint: {
+                'fill-color': ['match', ['get', 'hydrocarbon_type'],
+                    'OIL', '#4CAF50',
+                    'GAS', '#F44336',
+                    'OIL_AND_GAS', '#FF9800',
+                    'GAS_AND_OIL', '#FF9800',
+                    'GAS_AND_CONDENSATE', '#E91E63',
+                    'OIL_AND_CONDENSATE', '#8BC34A',
+                    'GAS_CONDENSATE_AND_OIL', '#FF5722',
+                    'OIL_GAS_AND_CONDENSATE', '#FF5722',
+                    'CONDENSATE', '#9C27B0',
+                    '#888888'],
+                'fill-opacity': 0.15
+            }
+        }, before);
+        map.addLayer({
+            id: 'accumulations-outline',
+            type: 'line',
+            source: 'accumulations',
+            minzoom: 8,
+            paint: {
+                'line-color': ['match', ['get', 'hydrocarbon_type'],
+                    'OIL', '#4CAF50',
+                    'GAS', '#F44336',
+                    'OIL_AND_GAS', '#FF9800',
+                    'GAS_AND_OIL', '#FF9800',
+                    '#888888'],
+                'line-width': 1,
+                'line-opacity': 0.6
+            }
+        }, before);
+        const accPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'terminal-popup', offset: 10 });
+        map.on('mousemove', 'accumulations-fill', e => {
+            map.getCanvas().style.cursor = 'pointer';
+            const p = e.features[0].properties;
+            const type = (p.hydrocarbon_type || '').replace(/_/g, ' ').toLowerCase();
+            const status = (p.status || '').replace(/_/g, ' ').toLowerCase();
+            const area = p.area_sqkm ? `${Math.round(p.area_sqkm)} km\u00b2` : '';
+            const parts = [`<strong>${p.name}</strong>`];
+            if (type) parts.push(type);
+            if (status) parts.push(status);
+            if (area) parts.push(area);
+            if (p.operator) parts.push(p.operator);
+            accPopup.setLngLat(e.lngLat).setHTML(parts.join('<br>')).addTo(map);
+        });
+        map.on('mouseleave', 'accumulations-fill', () => {
+            map.getCanvas().style.cursor = '';
+            accPopup.remove();
+        });
+    });
+
     map.addSource('selection-highlight', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] }
@@ -1991,9 +2076,57 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => switchMode(btn.dataset.mode));
 });
 
-// Start in S2 mode
+// Deep link: navigate to a VNF flare by hash (#vnf/12345)
+async function navigateToFlare(flareId) {
+    _suppressHashUpdate = true;
+
+    // Ensure VNF mode is active and initialized
+    if (currentMode !== 'vnf') switchMode('vnf');
+
+    // Wait for VNF to be ready (initVNF is triggered by switchMode)
+    const deadline = Date.now() + 15000;
+    while (!vnfReady() && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 100));
+    }
+    if (!vnfReady()) { _suppressHashUpdate = false; return; }
+
+    const dateRange = getSelectedDateRange();
+    if (!dateRange) { _suppressHashUpdate = false; return; }
+
+    const fc = await queryVNFFlare(flareId, dateRange.startDate, dateRange.endDate);
+    if (!fc.features.length) { _suppressHashUpdate = false; return; }
+
+    const raw = fc.features[0];
+    const enriched = enrichVNFFeatures([raw]);
+    if (!enriched.length) { _suppressHashUpdate = false; return; }
+
+    const feature = enriched[0];
+    const [lon, lat] = feature.geometry.coordinates;
+    map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 12) });
+
+    // Wait for map to settle, then refresh VNF layer and show info
+    map.once('idle', () => {
+        refreshVNF().then(() => {
+            showInfo(feature);
+            _suppressHashUpdate = false;
+        });
+    });
+}
+
+// Start in S2 mode (or VNF if deep link present)
 map.on('load', () => {
-    switchMode('s2');
+    const flareId = parseFlareHash();
+    if (flareId) {
+        navigateToFlare(flareId);
+    } else {
+        switchMode('s2');
+    }
+});
+
+// Handle back/forward navigation
+window.addEventListener('hashchange', () => {
+    const flareId = parseFlareHash();
+    if (flareId) navigateToFlare(flareId);
 });
 
 document.addEventListener('keydown', e => {
