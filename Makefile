@@ -1,6 +1,3 @@
-CLOUD_RUN_SERVICE := burnoff-signaling
-CLOUD_RUN_REGION  := europe-west2
-
 .PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy accumulations profiles vendor help
 
 terminals: web/terminals.geojson
@@ -72,18 +69,7 @@ signal:
 	@node signal/server.js &
 
 deploy:
-	gcloud run deploy $(CLOUD_RUN_SERVICE) \
-		--source signal/ \
-		--region $(CLOUD_RUN_REGION) \
-		--allow-unauthenticated \
-		--session-affinity \
-		--min-instances 0 \
-		--max-instances 1
-	@echo ""
-	@echo "Add this to web/index.html <head>:"
-	@echo '  <meta name="signaling-url" content="wss://$(CLOUD_RUN_SERVICE)-HASH.$(CLOUD_RUN_REGION).run.app">'
-	@echo ""
-	@echo "Get the exact URL with: gcloud run services describe $(CLOUD_RUN_SERVICE) --region $(CLOUD_RUN_REGION) --format 'value(status.url)'"
+	npx wrangler deploy
 
 test:
 	@node --test test/determinism.test.mjs test/retry-peers.test.mjs
@@ -98,4 +84,4 @@ help:
 	@echo "make vnf-deploy - Build + upload VNF parquet (one step)"
 	@echo "make profiles    - Download VNF profiles for facility-adjacent flares"
 	@echo "make accumulations - Fetch oil/gas field polygons from MapStand"
-	@echo "make deploy     - Deploy signaling server to Cloud Run"
+	@echo "make deploy     - Deploy signaling worker to Cloudflare"
