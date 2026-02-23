@@ -29,7 +29,7 @@ server.on('upgrade', (req, socket, head) => {
         'Sec-WebSocket-Accept: ' + accept + '\r\n\r\n'
     );
 
-    const conn = { socket, subscribed: new Set(), buf: Buffer.alloc(0), alive: true };
+    const conn = { socket, subscribed: new Set(), buf: head.length ? Buffer.from(head) : Buffer.alloc(0), alive: true };
 
     socket.on('data', (chunk) => {
         conn.buf = Buffer.concat([conn.buf, chunk]);
