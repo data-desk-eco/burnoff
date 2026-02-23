@@ -1,7 +1,7 @@
 // Cloudflare Worker + Durable Object signaling relay.
 // Replaces the Node.js WebSocket server with zero infrastructure.
 //
-// Deploy: npx wrangler deploy signal/worker.js
+// Deploy: npx wrangler deploy
 // Config: wrangler.toml at repo root
 
 export default {
@@ -20,12 +20,18 @@ export default {
     },
 };
 
-// Durable Object with WebSocket Hibernation API
+// Durable Object with WebSocket Hibernation API.
+// Subscriptions stored via serializeAttachment/deserializeAttachment
+// so they survive hibernation.
 export class SignalingDO {
-    constructor(state) {
-        this.state = state;
-        // topic -> Set<WebSocket>
-        this.topics = new Map();
+    constructor(ctx, env) {
+        this.ctx = ctx;
+        // Rebuild subscription map from hibernating WebSockets
+        this.sessions = new Map();
+        for (const ws of this.ctx.getWebSockets()) {
+            const att = ws.deserializeAttachment();
+            if (att) this.sessions.set(ws, att);
+        }
     }
 
     async fetch(request) {
@@ -36,42 +42,41 @@ export class SignalingDO {
         const pair = new WebSocketPair();
         const [client, server] = Object.values(pair);
 
-        // Attach empty subscription state
-        this.state.acceptWebSocket(server, []);
+        const att = { topics: [] };
+        this.ctx.acceptWebSocket(server);
+        server.serializeAttachment(att);
+        this.sessions.set(server, att);
 
         return new Response(null, { status: 101, webSocket: client });
     }
 
-    // Called when a hibernated WebSocket receives a message
     async webSocketMessage(ws, message) {
         let msg;
         try { msg = JSON.parse(message); } catch { return; }
 
         if (msg.type === 'subscribe') {
-            for (const topic of (msg.topics || [])) {
-                if (!this.topics.has(topic)) this.topics.set(topic, new Set());
-                this.topics.get(topic).add(ws);
-            }
+            const att = ws.deserializeAttachment() || { topics: [] };
+            const set = new Set(att.topics);
+            for (const t of (msg.topics || [])) set.add(t);
+            att.topics = [...set];
+            ws.serializeAttachment(att);
+            this.sessions.set(ws, att);
         }
 
         if (msg.type === 'unsubscribe') {
-            for (const topic of (msg.topics || [])) {
-                const subs = this.topics.get(topic);
-                if (subs) {
-                    subs.delete(ws);
-                    if (subs.size === 0) this.topics.delete(topic);
-                }
-            }
+            const att = ws.deserializeAttachment() || { topics: [] };
+            const remove = new Set(msg.topics || []);
+            att.topics = att.topics.filter(t => !remove.has(t));
+            ws.serializeAttachment(att);
+            this.sessions.set(ws, att);
         }
 
         if (msg.type === 'publish' && msg.topic) {
-            const subs = this.topics.get(msg.topic);
-            if (subs) {
-                const data = JSON.stringify(msg);
-                for (const peer of subs) {
-                    if (peer !== ws) {
-                        try { peer.send(data); } catch { /* closed */ }
-                    }
+            const data = JSON.stringify(msg);
+            for (const [peer, att] of this.sessions) {
+                if (peer === ws) continue;
+                if (att.topics.includes(msg.topic)) {
+                    try { peer.send(data); } catch { /* closed */ }
                 }
             }
         }
@@ -81,19 +86,13 @@ export class SignalingDO {
         }
     }
 
-    // Called when a WebSocket is closed (including during hibernation)
     async webSocketClose(ws) {
-        this._removeFromTopics(ws);
+        this.sessions.delete(ws);
+        ws.close();
     }
 
     async webSocketError(ws) {
-        this._removeFromTopics(ws);
-    }
-
-    _removeFromTopics(ws) {
-        for (const [topic, subs] of this.topics) {
-            subs.delete(ws);
-            if (subs.size === 0) this.topics.delete(topic);
-        }
+        this.sessions.delete(ws);
+        ws.close();
     }
 }
