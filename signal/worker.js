@@ -6,15 +6,6 @@
 
 export default {
     async fetch(request, env) {
-        const url = new URL(request.url);
-
-        // Health check
-        if (url.pathname === '/' && request.method === 'GET') {
-            return new Response('signaling ok', {
-                headers: { 'Access-Control-Allow-Origin': '*' },
-            });
-        }
-
         // WebSocket upgrade — all connections go to a single Durable Object
         if (request.headers.get('Upgrade') === 'websocket') {
             const id = env.SIGNALING.idFromName('global');
@@ -22,7 +13,10 @@ export default {
             return stub.fetch(request);
         }
 
-        return new Response('Not found', { status: 404 });
+        // Health check
+        return new Response('signaling ok', {
+            headers: { 'Access-Control-Allow-Origin': '*' },
+        });
     },
 };
 
