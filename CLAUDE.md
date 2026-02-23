@@ -52,11 +52,12 @@ make signal       # Signaling server only
 make test         # Run determinism tests
 make vnf          # Build VNF parquet from EOG profile CSVs
 make vnf-upload   # Upload VNF parquet to GCS
-make deploy       # Deploy signaling to Cloud Run
+make deploy       # Deploy signaling worker to Cloudflare
 ```
 
 No `npm install` required. Dev server uses `python3 -m http.server`.
-Signal server uses only `node:http` and `node:crypto` (Node.js builtins).
+Local signaling uses `node:http` and `node:crypto` (Node.js builtins).
+Production signaling is a Cloudflare Worker + Durable Object (`npx wrangler deploy`).
 Tests use `node:test` and `node:assert`.
 
 ## Key Files
@@ -77,11 +78,15 @@ web/
 scripts/
   build_vnf.py        Build VNF parquet from EOG profile CSVs + flare index
 signal/
-  server.js           WebSocket signaling relay (RFC 6455 over node:http)
-  Dockerfile          Cloud Run container for production signaling
+  server.js           WebSocket signaling relay for local dev (RFC 6455 over node:http)
+  worker.js           Cloudflare Worker + Durable Object signaling relay (production)
+  Dockerfile          Legacy Cloud Run container (unused)
+wrangler.toml         Cloudflare Worker config (Durable Object binding + migration)
 test/
-  determinism.test.mjs  Detection + clustering determinism tests (node:test)
-  p2p-test.html         CRDT codec + sync integration tests (browser)
+  determinism.test.mjs       Detection + clustering determinism tests (node:test)
+  signaling-node.test.mjs    Signaling relay tests (node, requires ws package)
+  signaling.test.html        Signaling relay tests (browser)
+  p2p-test.html              CRDT codec + sync integration tests (browser)
 ```
 
 ## External Dependencies
@@ -167,7 +172,18 @@ the cache key. Partition updates are sent to workers live (no restart).
 
 ## Signaling
 
-`signal/server.js` is a stateless WebSocket relay implementing RFC 6455
+WebSocket pub/sub relay for WebRTC signaling. Clients send JSON messages:
+`subscribe`, `unsubscribe`, `publish`, `ping`/`pong`.
+
+**Local dev:** `signal/server.js` — stateless relay implementing RFC 6455
 framing over `node:http` + `node:crypto`. Zero npm dependencies.
-Messages: `subscribe`, `unsubscribe`, `publish`, `ping`/`pong`.
-Dev: `ws://localhost:4444`. Production: set via `<meta name="signaling-url">`.
+Runs on `ws://localhost:4444` via `make signal`.
+
+**Production:** `signal/worker.js` — Cloudflare Worker with a Durable Object
+using the WebSocket Hibernation API. Subscriptions are stored via
+`serializeAttachment`/`deserializeAttachment` so they survive hibernation.
+All connections route to a single global Durable Object (`idFromName('global')`).
+Deploy with `npx wrangler deploy` (config in `wrangler.toml`).
+URL: `wss://burnoff-signaling.louis-6bf.workers.dev`.
+
+The signaling URL is set via `<meta name="signaling-url">` in `index.html`.
