@@ -4,27 +4,46 @@
 Each row in the output = one flare x one date, with booleans for clear-sky
 and detected.  The web query computes real cloud-free counts directly.
 
-Profiles are the primary data source.  The multiyear index is used only for
-metadata enrichment (type, category, country).  Stable per-flare coordinates
-are computed from the profiles themselves (avg of all nighttime passes).
+All flares with profiles are included.  OGIM point features (gas processing
+plants, compressor stations, LNG facilities, refineries, terminals, offshore
+platforms, etc.) are spatially joined to enrich flares near gas industry
+infrastructure.  The multiyear index provides additional metadata (type,
+category, country).
+
+Requires OGIM v2.7 GeoPackage at ~/Tools/firedamp/data/OGIM_v2.7.gpkg
+(or symlinked into data/).
 
 Usage: uv run --with duckdb scripts/build_vnf.py
 """
-import os, json, math
+import os, math, sqlite3
 import duckdb
 
-# Try local data dir first, fall back to lng-flaring
-LOCAL_DATA = os.path.join(os.path.dirname(__file__), "..", "data")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOCAL_DATA = os.path.join(PROJECT_ROOT, "data")
 LEGACY_DATA = os.path.expanduser("~/Research/lng-flaring/data")
 DATA_DIR = LOCAL_DATA if os.path.isdir(os.path.join(LOCAL_DATA, "vnf_profiles")) else LEGACY_DATA
 PROFILE_GLOB = os.path.join(DATA_DIR, "vnf_profiles/site_*.csv")
 INDEX_CSV = os.path.join(DATA_DIR, "vnf_raw/multiyear_flare_month_summary_all_run48.csv")
-TERMINALS = os.path.join(os.path.dirname(__file__), "..", "web", "terminals.geojson")
-OUTPUT = os.path.join(os.path.dirname(__file__), "..", "web", "vnf.parquet")
+OUTPUT = os.path.join(PROJECT_ROOT, "web", "vnf.parquet")
 
-RADIUS_KM = 6
-ACCUMULATIONS = os.path.join(os.path.dirname(__file__), "..", "web", "accumulations.geojson")
-ACCUM_RADIUS_KM = 10
+# OGIM GeoPackage — try local data/ first, then firedamp
+OGIM_GPKG = os.path.join(LOCAL_DATA, "OGIM_v2.7.gpkg")
+if not os.path.exists(OGIM_GPKG):
+    OGIM_GPKG = os.path.expanduser("~/Tools/firedamp/data/OGIM_v2.7.gpkg")
+
+OGIM_RADIUS_KM = 10
+
+# Point feature layers in OGIM (no pipelines, no wells, no fields/basins/blocks)
+OGIM_LAYERS = [
+    "Gathering_and_Processing",
+    "Natural_Gas_Compressor_Stations",
+    "LNG_Facilities",
+    "Crude_Oil_Refineries",
+    "Petroleum_Terminals",
+    "Offshore_Platforms",
+    "Stations_Other",
+    "Tank_Battery",
+]
 
 def haversine_km(lat1, lon1, lat2, lon2):
     R = 6371
@@ -36,36 +55,26 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 db = duckdb.connect()
+db.execute("SET temp_directory='/tmp/duckdb_vnf'")
+db.execute("SET memory_limit='4GB'")
 
-# --- 1. Terminal coordinates ---
-with open(os.path.abspath(TERMINALS)) as f:
-    terminals = json.load(f)
-term_coords = [(feat["geometry"]["coordinates"][1],
-                feat["geometry"]["coordinates"][0])
-               for feat in terminals["features"]]
-print(f"{len(term_coords)} terminals")
-
-# --- 1b. Accumulation centroids (polygon -> centroid) ---
-accum_coords = []
-accum_path = os.path.abspath(ACCUMULATIONS)
-if os.path.exists(accum_path):
-    with open(accum_path) as f:
-        accumulations = json.load(f)
-    for feat in accumulations["features"]:
-        geom = feat["geometry"]
-        name = feat.get("properties", {}).get("name", "")
-        if geom["type"] == "Polygon":
-            ring = geom["coordinates"][0]
-        elif geom["type"] == "MultiPolygon":
-            ring = geom["coordinates"][0][0]
-        else:
-            continue
-        clat = sum(c[1] for c in ring) / len(ring)
-        clon = sum(c[0] for c in ring) / len(ring)
-        accum_coords.append((clat, clon, name))
-    print(f"{len(accum_coords)} accumulations")
+# --- 1. Load OGIM point features ---
+print("Loading OGIM facilities...")
+if not os.path.exists(OGIM_GPKG):
+    print(f"  Warning: {OGIM_GPKG} not found, no facility enrichment")
+    ogim_facilities = []
 else:
-    print("No accumulations.geojson found, continuing with terminals only")
+    ogim_facilities = []
+    con = sqlite3.connect(OGIM_GPKG)
+    for layer in OGIM_LAYERS:
+        rows = con.execute(f"""
+            SELECT LATITUDE, LONGITUDE, FAC_TYPE, FAC_NAME
+            FROM "{layer}"
+            WHERE LATITUDE IS NOT NULL AND LONGITUDE IS NOT NULL
+        """).fetchall()
+        ogim_facilities.extend(rows)
+    con.close()
+    print(f"  {len(ogim_facilities)} point features across {len(OGIM_LAYERS)} layers")
 
 # --- 2. Load ALL profiles, compute stable avg position per flare ---
 print("Loading profiles...")
@@ -96,42 +105,46 @@ db.execute("""
 flare_count = db.execute("SELECT count(*) FROM flare_pos").fetchone()[0]
 print(f"  {flare_count} flares in profiles")
 
-# --- 3. Facility-adjacent filter using profile-derived positions ---
+# --- 3. OGIM spatial join — nearest facility within radius ---
+print(f"Joining with OGIM ({OGIM_RADIUS_KM} km radius)...")
 flares = db.execute("SELECT flare_id, lat, lon FROM flare_pos").fetchall()
-adj = {}  # flare_id -> (facility_type, facility_name)
-for fid, flat, flon in flares:
-    # Check LNG terminals first
-    for tlat, tlon in term_coords:
-        if haversine_km(flat, flon, tlat, tlon) <= RADIUS_KM:
-            adj[fid] = ("lng", "")
-            break
-    if fid in adj:
-        continue
-    # Check accumulation centroids — find nearest within radius
-    best_dist = ACCUM_RADIUS_KM + 1
-    best_name = ""
-    for alat, alon, aname in accum_coords:
-        d = haversine_km(flat, flon, alat, alon)
-        if d <= ACCUM_RADIUS_KM and d < best_dist:
-            best_dist = d
-            best_name = aname
-    if best_dist <= ACCUM_RADIUS_KM:
-        adj[fid] = ("upstream", best_name)
-lng_count = sum(1 for ft, _ in adj.values() if ft == "lng")
-ups_count = sum(1 for ft, _ in adj.values() if ft == "upstream")
-print(f"  {lng_count} within {RADIUS_KM} km of a terminal")
-print(f"  {ups_count} within {ACCUM_RADIUS_KM} km of an accumulation")
-print(f"  {len(adj)} total adjacent flares")
+facility_rows = []  # (flare_id, facility_type, facility_name)
+matched = 0
 
-adj_list = ",".join(str(x) for x in sorted(adj))
-db.execute(f"CREATE TABLE adj_ids AS SELECT unnest([{adj_list}]) AS flare_id")
+if ogim_facilities:
+    # Build a rough spatial index: bin facilities into 1-degree cells
+    from collections import defaultdict
+    grid = defaultdict(list)
+    for flat, flon, ftype, fname in ogim_facilities:
+        key = (int(flat), int(flon))
+        grid[key].append((flat, flon, ftype or '', fname or ''))
 
-# Facility info table for join
-facility_rows = [(fid, ft, fn) for fid, (ft, fn) in adj.items()]
+    # For each flare, check nearby cells
+    search_deg = math.ceil(OGIM_RADIUS_KM / 111)  # ~111 km per degree
+    for fid, flat, flon in flares:
+        best_dist = OGIM_RADIUS_KM + 1
+        best_type = ''
+        best_name = ''
+        clat, clon = int(flat), int(flon)
+        for dlat in range(-search_deg, search_deg + 1):
+            for dlon in range(-search_deg, search_deg + 1):
+                for olat, olon, otype, oname in grid.get((clat + dlat, clon + dlon), []):
+                    d = haversine_km(flat, flon, olat, olon)
+                    if d < best_dist:
+                        best_dist = d
+                        best_type = otype
+                        best_name = oname
+        if best_dist <= OGIM_RADIUS_KM:
+            facility_rows.append((fid, best_type, best_name))
+            matched += 1
+
+print(f"  {matched}/{flare_count} flares within {OGIM_RADIUS_KM} km of an OGIM facility")
+
 db.execute("CREATE TABLE facility_info (flare_id INTEGER, facility_type VARCHAR, facility_name VARCHAR)")
-db.executemany("INSERT INTO facility_info VALUES (?, ?, ?)", facility_rows)
+if facility_rows:
+    db.executemany("INSERT INTO facility_info VALUES (?, ?, ?)", facility_rows)
 
-# --- 4. Daily aggregation for adjacent flares ---
+# --- 4. Daily aggregation (all flares) ---
 print("Aggregating daily...")
 db.execute("""
     CREATE TABLE daily AS
@@ -147,7 +160,6 @@ db.execute("""
         ) AS temp_k,
         COUNT(*) AS n_passes
     FROM passes
-    WHERE flare_id IN (SELECT flare_id FROM adj_ids)
     GROUP BY flare_id, date
 """)
 count = db.execute("SELECT count(*) FROM daily").fetchone()[0]
@@ -189,7 +201,7 @@ db.execute(f"""
         JOIN flare_pos p ON d.flare_id = p.flare_id
         LEFT JOIN flare_meta m ON d.flare_id = m.flare_id
         LEFT JOIN facility_info fi ON d.flare_id = fi.flare_id
-        ORDER BY p.lat, p.lon, d.date
+        ORDER BY d.flare_id, d.date
     ) TO '{os.path.abspath(OUTPUT)}'
       (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000)
 """)

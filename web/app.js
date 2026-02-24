@@ -59,7 +59,7 @@ async function getVNFUrl() {
 // ---------------------------------------------------------------------------
 
 const MIN_DETECT_ZOOM = 11;
-const MIN_VNF_ZOOM = 10;
+const MIN_VNF_ZOOM = 6;
 let allRawDetections = [];
 let terminalFeatures = [];
 
@@ -818,6 +818,7 @@ function buildLegendHTML(cfg) {
             ${items}
             <h4 class="label-sm legend-section">Infrastructure</h4>
             <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
+            <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><rect x="1" y="1" width="8" height="8" fill="none" stroke="#6dd" stroke-width="1.2"/></svg>Licenses</div>
         `;}
 
 // Pre-built expressions (regenerated from config)
@@ -1906,68 +1907,73 @@ map.on('load', () => {
         });
     });
 
-    // Oil/gas field polygons (accumulations)
-    fetch('accumulations.geojson').then(r => {
+    // Oil/gas licenses & concessions
+    fetch('concessions.geojson').then(r => {
         if (!r.ok) return null;
         return r.json();
     }).then(geojson => {
         if (!geojson) return;
-        map.addSource('accumulations', { type: 'geojson', data: geojson });
+        map.addSource('licenses', { type: 'geojson', data: geojson });
         // Insert below terminal layer if it exists, otherwise append
         const before = map.getLayer('lng-terminal-hitarea') ? 'lng-terminal-hitarea' : undefined;
         map.addLayer({
-            id: 'accumulations-fill',
+            id: 'licenses-fill',
             type: 'fill',
-            source: 'accumulations',
-            minzoom: 8,
+            source: 'licenses',
+            minzoom: 5,
             paint: {
-                'fill-color': ['match', ['get', 'hydrocarbon_type'],
-                    'OIL', '#4CAF50',
-                    'GAS', '#F44336',
-                    'OIL_AND_GAS', '#FF9800',
-                    'GAS_AND_OIL', '#FF9800',
-                    'GAS_AND_CONDENSATE', '#E91E63',
-                    'OIL_AND_CONDENSATE', '#8BC34A',
-                    'GAS_CONDENSATE_AND_OIL', '#FF5722',
-                    'OIL_GAS_AND_CONDENSATE', '#FF5722',
-                    'CONDENSATE', '#9C27B0',
-                    '#888888'],
-                'fill-opacity': 0.15
+                'fill-color': '#6dd',
+                'fill-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.03, 10, 0.1]
             }
         }, before);
         map.addLayer({
-            id: 'accumulations-outline',
+            id: 'licenses-outline',
             type: 'line',
-            source: 'accumulations',
-            minzoom: 8,
+            source: 'licenses',
+            minzoom: 5,
             paint: {
-                'line-color': ['match', ['get', 'hydrocarbon_type'],
-                    'OIL', '#4CAF50',
-                    'GAS', '#F44336',
-                    'OIL_AND_GAS', '#FF9800',
-                    'GAS_AND_OIL', '#FF9800',
-                    '#888888'],
-                'line-width': 1,
-                'line-opacity': 0.6
+                'line-color': '#6dd',
+                'line-width': ['interpolate', ['linear'], ['zoom'], 5, 0.3, 10, 1],
+                'line-opacity': ['interpolate', ['linear'], ['zoom'], 5, 0.3, 10, 0.6]
             }
         }, before);
-        const accPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'terminal-popup', offset: 10 });
-        map.on('mousemove', 'accumulations-fill', e => {
+        map.addLayer({
+            id: 'licenses-labels',
+            type: 'symbol',
+            source: 'licenses',
+            minzoom: 9,
+            layout: {
+                'text-field': ['get', 'name'],
+                'text-size': ['interpolate', ['linear'], ['zoom'], 9, 9, 14, 13],
+                'text-anchor': 'center',
+                'text-max-width': 8,
+                'text-allow-overlap': false
+            },
+            paint: {
+                'text-color': '#aee',
+                'text-halo-color': 'rgba(0,0,0,0.8)',
+                'text-halo-width': 1,
+                'text-opacity': ['interpolate', ['linear'], ['zoom'], 9, 0.5, 12, 0.9]
+            }
+        });
+        const licPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'terminal-popup', offset: 10 });
+        map.on('mousemove', 'licenses-fill', e => {
             map.getCanvas().style.cursor = 'pointer';
             const p = e.features[0].properties;
-            const type = (p.hydrocarbon_type || '').replace(/_/g, ' ').toLowerCase();
+            const type = (p.type || '').replace(/_/g, ' ').toLowerCase();
             const status = (p.status || '').replace(/_/g, ' ').toLowerCase();
-            const area = p.area_sqkm ? `${Math.round(p.area_sqkm)} km\u00b2` : '';
+            const area = p.area_sqkm ? `${Math.round(+p.area_sqkm)} km\u00b2` : '';
             const parts = [`<strong>${p.name}</strong>`];
+            if (p.country) parts.push(p.country);
             if (type) parts.push(type);
             if (status) parts.push(status);
             if (area) parts.push(area);
             if (p.operator) parts.push(p.operator);
-            accPopup.setLngLat(e.lngLat).setHTML(parts.join('<br>')).addTo(map);
+            licPopup.setLngLat(e.lngLat).setHTML(parts.join('<br>')).addTo(map);
         });
-        map.on('mouseleave', 'accumulations-fill', () => {
+        map.on('mouseleave', 'licenses-fill', () => {
             map.getCanvas().style.cursor = '';
-            accPopup.remove();
+            licPopup.remove();
         });
     });
 
