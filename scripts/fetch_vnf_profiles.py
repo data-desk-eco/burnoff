@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Fetch VNF multiyear profiles for facility-adjacent flares from EOG Nightfire.
+"""Fetch VNF multiyear profiles from EOG Nightfire.
 
-Discovers all flare IDs by scraping the EOG profiles directory listing, peeks at
-each profile (Range request for first ~512 bytes) to get lat/lon, filters by
-proximity to LNG terminals and oil/gas accumulations, then downloads full profiles
-for matches.  The multiyear index is optional metadata enrichment only.
+By default downloads ALL profiles.  Use --near-facilities to filter by
+proximity to LNG terminals and oil/gas accumulations (the old behavior).
 
 Requires EOG_EMAIL and EOG_PASSWORD in .env.
 
@@ -56,18 +54,6 @@ def load_dotenv():
             value = value.strip().strip("'\"")
             if key and key not in os.environ:
                 os.environ[key] = value
-
-
-# -- Haversine ----------------------------------------------------------------
-
-def haversine_km(lat1, lon1, lat2, lon2):
-    R = 6371
-    dLat = math.radians(lat2 - lat1)
-    dLon = math.radians(lon2 - lon1)
-    a = (math.sin(dLat / 2) ** 2 +
-         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
-         math.sin(dLon / 2) ** 2)
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 # -- EOG Authentication -------------------------------------------------------
@@ -163,6 +149,18 @@ def scrape_flare_ids(html):
     return ids
 
 
+# -- Haversine ----------------------------------------------------------------
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371
+    dLat = math.radians(lat2 - lat1)
+    dLon = math.radians(lon2 - lon1)
+    a = (math.sin(dLat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dLon / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 # -- Location discovery -------------------------------------------------------
 
 def load_known_locations(index_csv_path):
@@ -216,7 +214,6 @@ def peek_profile_location(session, flare_id):
     url = f"{PROFILES_URL}/site_{flare_id}_multiyear_vnf_series.csv"
     try:
         resp = session.get(url, headers={"Range": "bytes=0-511"}, timeout=30)
-        # Accept both 206 (partial) and 200 (server ignores Range)
         if resp.status_code not in (200, 206):
             return None
         text = resp.text
@@ -264,12 +261,10 @@ def peek_batch(session, flare_ids, known_locs):
     return locs
 
 
-# -- Facility loading ---------------------------------------------------------
+# -- Facility loading & filtering ---------------------------------------------
 
 def load_terminal_coords():
-    """Load terminal (lat, lon) from terminals.geojson."""
     if not os.path.exists(TERMINALS_GEOJSON):
-        print(f"Warning: {TERMINALS_GEOJSON} not found", file=sys.stderr)
         return []
     with open(TERMINALS_GEOJSON) as f:
         data = json.load(f)
@@ -279,9 +274,7 @@ def load_terminal_coords():
 
 
 def load_accumulation_coords():
-    """Load accumulation centroids from accumulations.geojson."""
     if not os.path.exists(ACCUMULATIONS_GEOJSON):
-        print(f"Warning: {ACCUMULATIONS_GEOJSON} not found", file=sys.stderr)
         return []
     with open(ACCUMULATIONS_GEOJSON) as f:
         data = json.load(f)
@@ -300,10 +293,8 @@ def load_accumulation_coords():
     return coords
 
 
-# -- Facility filtering -------------------------------------------------------
-
 def filter_facility_adjacent(locs, term_coords, accum_coords, r_term, r_accum):
-    """Return set of flare IDs within r_term km of a terminal or r_accum km of an accumulation."""
+    """Return set of flare IDs within radius of a terminal or accumulation."""
     adjacent = set()
     for fid, (flat, flon) in locs.items():
         for tlat, tlon in term_coords:
@@ -359,7 +350,7 @@ def fetch_index(session):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fetch VNF profiles for facility-adjacent flares"
+        description="Fetch VNF profiles from EOG Nightfire (all by default)"
     )
     parser.add_argument(
         "--max-age", type=int, default=0, metavar="DAYS",
@@ -370,12 +361,16 @@ def main():
         help="Also download the multiyear index ZIP for metadata enrichment",
     )
     parser.add_argument(
+        "--near-facilities", action="store_true",
+        help="Only download profiles near LNG terminals / accumulations",
+    )
+    parser.add_argument(
         "--radius-terminal", type=float, default=6,
-        help="Radius in km for terminal matching (default: 6)",
+        help="Radius in km for terminal matching (default: 6, requires --near-facilities)",
     )
     parser.add_argument(
         "--radius-accum", type=float, default=10,
-        help="Radius in km for accumulation matching (default: 10)",
+        help="Radius in km for accumulation matching (default: 10, requires --near-facilities)",
     )
     args = parser.parse_args()
 
@@ -400,42 +395,35 @@ def main():
     all_ids = scrape_flare_ids(listing_html)
     print(f"  {len(all_ids)} flares in directory listing")
 
-    # 4. Build known locations from index + existing profiles
-    index_csv = os.path.join(INDEX_DIR, INDEX_CSV_NAME)
-    known_locs = load_known_locations(index_csv)
-    if known_locs:
-        print(f"  {len(known_locs)} locations from index")
-    profile_locs = load_profile_locations(PROFILES_DIR)
-    if profile_locs:
-        print(f"  {len(profile_locs)} locations from existing profiles")
-    # Merge: profile locations override index
-    for fid, loc in profile_locs.items():
-        known_locs[fid] = loc
+    # 4. Optionally filter to facility-adjacent flares
+    if args.near_facilities:
+        index_csv = os.path.join(INDEX_DIR, INDEX_CSV_NAME)
+        known_locs = load_known_locations(index_csv)
+        if known_locs:
+            print(f"  {len(known_locs)} locations from index")
+        profile_locs = load_profile_locations(PROFILES_DIR)
+        if profile_locs:
+            print(f"  {len(profile_locs)} locations from existing profiles")
+        for fid, loc in profile_locs.items():
+            known_locs[fid] = loc
+        known_locs = peek_batch(session, all_ids, known_locs)
 
-    # 5. Peek at unknown flares via Range requests
-    known_locs = peek_batch(session, all_ids, known_locs)
-    located = sum(1 for fid in all_ids if fid in known_locs)
-    print(f"  {located}/{len(all_ids)} flares with known locations")
+        term_coords = load_terminal_coords()
+        accum_coords = load_accumulation_coords()
+        print(f"  {len(term_coords)} terminals, {len(accum_coords)} accumulations")
+        if not term_coords and not accum_coords:
+            print("Error: No facility coordinates available", file=sys.stderr)
+            sys.exit(1)
+        adjacent = filter_facility_adjacent(
+            {fid: known_locs[fid] for fid in all_ids if fid in known_locs},
+            term_coords, accum_coords,
+            args.radius_terminal, args.radius_accum,
+        )
+        print(f"  {len(adjacent)} flares near facilities")
+        all_ids = adjacent
 
-    # 6. Load facility coordinates
-    term_coords = load_terminal_coords()
-    accum_coords = load_accumulation_coords()
-    print(f"  {len(term_coords)} terminals, {len(accum_coords)} accumulations")
-
-    if not term_coords and not accum_coords:
-        print("Error: No facility coordinates available", file=sys.stderr)
-        sys.exit(1)
-
-    # 7. Filter by proximity
-    adjacent = filter_facility_adjacent(
-        {fid: known_locs[fid] for fid in all_ids if fid in known_locs},
-        term_coords, accum_coords,
-        args.radius_terminal, args.radius_accum,
-    )
-    print(f"  {len(adjacent)} flares near facilities")
-
-    # 8. Skip fresh profiles if --max-age
-    to_download = sorted(adjacent)
+    # 5. Skip fresh profiles if --max-age
+    to_download = sorted(all_ids)
     if args.max_age > 0:
         cutoff = time.time() - args.max_age * 86400
         fresh = set()
@@ -451,7 +439,7 @@ def main():
         print("All profiles up to date.")
         return
 
-    # 9. Download
+    # 6. Download
     print(f"Downloading {len(to_download)} profiles...")
     ok = 0
     fail = 0
