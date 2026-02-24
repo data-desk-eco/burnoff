@@ -41,7 +41,7 @@ web/vnf.parquet: scripts/build_vnf.py
 
 vnf-upload: web/vnf.parquet
 	@test -f .env || { echo "Missing .env with VNF_PASSWORD"; exit 1; }
-	$(eval VNF_HASH := $(shell python3 -c "import hashlib,os; print(hashlib.sha256(open('.env').read().split('=',1)[1].strip().encode()).hexdigest()[:16])"))
+	$(eval VNF_HASH := $(shell python3 -c "import hashlib; f=open('.env'); pw=[l.split('=',1)[1].strip() for l in f if l.startswith('VNF_PASSWORD=')][0]; print(hashlib.sha256(pw.encode()).hexdigest()[:16])"))
 	gcloud storage cp web/vnf.parquet gs://burnoff-data/vnf-$(VNF_HASH).parquet
 	@echo "Uploaded as vnf-$(VNF_HASH).parquet"
 
