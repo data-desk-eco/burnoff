@@ -22,6 +22,7 @@ function parseFlareHash() {
 }
 
 const VNF_BUCKET = document.querySelector('meta[name="vnf-bucket"]')?.content || '';
+const VNF_VERSION = document.querySelector('meta[name="vnf-version"]')?.content || '';
 const VNF_SESSION_KEY = 'vnf_auth';
 
 async function deriveVNFUrl(password) {
@@ -47,11 +48,17 @@ async function promptVNFPassword() {
     return url;
 }
 
+function cacheBust(url) {
+    if (!VNF_VERSION || VNF_VERSION === 'dev') return url;
+    return url + (url.includes('?') ? '&' : '?') + 'v=' + VNF_VERSION;
+}
+
 async function getVNFUrl() {
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
     const cached = getVNFSession();
-    if (cached) return cached;
-    return promptVNFPassword();
+    if (cached) return cacheBust(cached);
+    const url = await promptVNFPassword();
+    return url ? cacheBust(url) : null;
 }
 
 // ---------------------------------------------------------------------------

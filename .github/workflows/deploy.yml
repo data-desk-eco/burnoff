@@ -24,6 +24,7 @@ jobs:
           cp web/index.html web/app.js web/style.css web/detect.js web/crdt.js web/store.js web/rtc.js web/sync.js web/utm.js web/vnf.js web/terminals.geojson web/concessions.geojson web/blocks.geojson dist/
           cp -r web/assets/* dist/assets/
           cp -r web/vendor dist/vendor
+          sed -i "s/vnf-version\" content=\"dev\"/vnf-version\" content=\"${GITHUB_SHA::8}\"/" dist/index.html
 
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
