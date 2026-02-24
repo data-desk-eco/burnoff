@@ -21,7 +21,7 @@ jobs:
       - name: Prepare dist
         run: |
           mkdir -p dist/assets
-          cp web/index.html web/app.js web/style.css web/detect.js web/crdt.js web/store.js web/rtc.js web/sync.js web/utm.js web/vnf.js web/terminals.geojson web/accumulations.geojson dist/
+          cp web/index.html web/app.js web/style.css web/detect.js web/crdt.js web/store.js web/rtc.js web/sync.js web/utm.js web/vnf.js web/terminals.geojson web/concessions.geojson web/blocks.geojson dist/
           cp -r web/assets/* dist/assets/
           cp -r web/vendor dist/vendor
 
