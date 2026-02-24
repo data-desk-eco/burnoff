@@ -10,6 +10,7 @@ import { initVNF, resetVNF, queryVNF, queryVNFFlare, isReady as vnfReady } from 
 
 let currentMode = null;
 let _vnfInitStarted = false;
+let _vnfNightlyMode = false; // true = show raw nightly detections
 let _vnfFeatures = null;   // cached VNF FeatureCollection (clustered)
 let _vnfRawFeatures = null; // raw features from last queryVNF
 let _vnfRefreshTimer = null;
@@ -59,6 +60,7 @@ async function promptVNFPassword() {
 }
 
 async function getVNFUrl() {
+    if (_vnfNightlyMode) return 'vnf_nightly.parquet';
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
     const cached = getVNFSession();
     if (cached) return cached;
@@ -769,6 +771,14 @@ function switchMode(mode) {
             refreshVNF();
         }
     } else {
+        // Reset nightly toggle when leaving VNF mode
+        if (_vnfNightlyMode) {
+            _vnfNightlyMode = false;
+            _vnfInitStarted = false;
+            resetVNF();
+            const cb = document.getElementById('vnf-nightly-toggle');
+            if (cb) cb.checked = false;
+        }
         // Restore S2 features
         rebuildDetections();
         ensureDetectionLayer();
@@ -1918,12 +1928,21 @@ function updateMapCentre() {
         }
     }
 
+    // Google Earth camera distance from visible map extent.
+    // GE field of view is 35°, so visible_height = 2 * d * tan(17.5°).
+    const bounds = map.getBounds();
+    const visibleM = (bounds.getNorth() - bounds.getSouth()) * 111320;
+    const geD = Math.round(visibleM / (2 * Math.tan(17.5 * Math.PI / 180)));
+    const geH = map.getBearing().toFixed(1);
+    const geT = map.getPitch().toFixed(1);
+    const geUrl = `https://earth.google.com/web/@${c.lat.toFixed(6)},${c.lng.toFixed(6)},0a,${geD}d,35y,${geH}h,${geT}t,0r`;
+
     if (terminalName) {
         locEl.style.display = 'none';
-        termEl.textContent = terminalName;
+        termEl.innerHTML = `<a href="${geUrl}" target="_blank" rel="noopener">${terminalName}</a>`;
     } else {
         locEl.style.display = '';
-        locEl.textContent = `${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`;
+        locEl.innerHTML = `<a href="${geUrl}" target="_blank" rel="noopener">${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}</a>`;
         termEl.textContent = '';
     }
 }
@@ -2186,6 +2205,24 @@ document.getElementById('collapse-toggle').addEventListener('click', () => {
 // Mode toggle
 document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => switchMode(btn.dataset.mode));
+});
+
+// VNF nightly toggle — swap between profile parquet and raw nightly detections
+document.getElementById('vnf-nightly-toggle')?.addEventListener('change', async (e) => {
+    _vnfNightlyMode = e.target.checked;
+    _vnfInitStarted = false;
+    resetVNF();
+    const url = await getVNFUrl();
+    if (!url) return;
+    _vnfInitStarted = true;
+    try {
+        await initVNF(url);
+        if (currentMode === 'vnf') refreshVNF();
+    } catch (err) {
+        console.error('VNF nightly init error:', err);
+        _vnfInitStarted = false;
+        resetVNF();
+    }
 });
 
 // Deep link: navigate to a VNF flare by hash (#vnf/12345)
