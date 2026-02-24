@@ -23,42 +23,46 @@ function parseFlareHash() {
 
 const VNF_BUCKET = document.querySelector('meta[name="vnf-bucket"]')?.content || '';
 const VNF_VERSION = document.querySelector('meta[name="vnf-version"]')?.content || '';
-const VNF_SESSION_KEY = 'vnf_auth';
+const VNF_SESSION_KEY = 'vnf_url';
 
 async function deriveVNFUrl(password) {
     const data = new TextEncoder().encode(password);
     const hash = await crypto.subtle.digest('SHA-256', data);
     const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-    return `${VNF_BUCKET}/vnf-${hex.slice(0, 16)}.parquet`;
+    const base = `${VNF_BUCKET}/vnf-${hex.slice(0, 16)}.parquet`;
+    return VNF_VERSION && VNF_VERSION !== 'dev' ? `${base}?v=${VNF_VERSION}` : base;
 }
 
-function getVNFSession() { return localStorage.getItem(VNF_SESSION_KEY); }
+function getVNFSession() {
+    const url = localStorage.getItem(VNF_SESSION_KEY);
+    // Invalidate cached URL if version changed (forces re-download)
+    if (url && VNF_VERSION && VNF_VERSION !== 'dev' && !url.includes('v=' + VNF_VERSION)) {
+        localStorage.removeItem(VNF_SESSION_KEY);
+        return null;
+    }
+    return url;
+}
 function setVNFSession(url) { localStorage.setItem(VNF_SESSION_KEY, url); }
 
 async function promptVNFPassword() {
     const pw = prompt('VNF access key:');
     if (!pw) return null;
     const url = await deriveVNFUrl(pw);
-    // Verify the file exists with a HEAD request
+    // Verify the file exists with a HEAD request (strip query for check)
+    const bare = url.split('?')[0];
     try {
-        const resp = await fetch(url, { method: 'HEAD' });
+        const resp = await fetch(bare, { method: 'HEAD' });
         if (!resp.ok) { alert('Invalid key'); return null; }
     } catch { alert('Invalid key'); return null; }
     setVNFSession(url);
     return url;
 }
 
-function cacheBust(url) {
-    if (!VNF_VERSION || VNF_VERSION === 'dev') return url;
-    return url + (url.includes('?') ? '&' : '?') + 'v=' + VNF_VERSION;
-}
-
 async function getVNFUrl() {
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
     const cached = getVNFSession();
-    if (cached) return cacheBust(cached);
-    const url = await promptVNFPassword();
-    return url ? cacheBust(url) : null;
+    if (cached) return cached;
+    return promptVNFPassword();
 }
 
 // ---------------------------------------------------------------------------
