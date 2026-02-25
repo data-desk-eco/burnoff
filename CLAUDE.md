@@ -53,6 +53,7 @@ make test         # Run determinism tests
 make vnf          # Build VNF parquet from EOG profile CSVs
 make vnf-upload   # Upload VNF parquet to GCS
 make deploy       # Deploy signaling worker to Cloudflare
+git push          # Deploy static site via GitHub Pages (auto on push to main)
 ```
 
 No `npm install` required. Dev server uses `python3 -m http.server`.

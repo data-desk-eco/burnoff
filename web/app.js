@@ -2032,7 +2032,8 @@ map.on('load', () => {
         });
     });
 
-    // Oil/gas licenses & concessions
+    // Oil/gas licenses & concessions (gated behind ?layer=licenses URL param)
+    if (new URLSearchParams(location.search).get('layer') === 'licenses')
     fetch('concessions.geojson').then(r => {
         if (!r.ok) return null;
         return r.json();
