@@ -10,7 +10,6 @@ import { initVNF, resetVNF, queryVNF, queryVNFFlare, isReady as vnfReady } from 
 
 let currentMode = null;
 let _vnfInitStarted = false;
-let _vnfNightlyMode = false; // true = show raw nightly detections
 let _vnfFeatures = null;   // cached VNF FeatureCollection (clustered)
 let _vnfRawFeatures = null; // raw features from last queryVNF
 let _vnfRefreshTimer = null;
@@ -60,7 +59,6 @@ async function promptVNFPassword() {
 }
 
 async function getVNFUrl() {
-    if (_vnfNightlyMode) return 'vnf_nightly.parquet';
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
     const cached = getVNFSession();
     if (cached) return cached;
@@ -771,14 +769,6 @@ function switchMode(mode) {
             refreshVNF();
         }
     } else {
-        // Reset nightly toggle when leaving VNF mode
-        if (_vnfNightlyMode) {
-            _vnfNightlyMode = false;
-            _vnfInitStarted = false;
-            resetVNF();
-            const cb = document.getElementById('vnf-nightly-toggle');
-            if (cb) cb.checked = false;
-        }
         // Restore S2 features
         rebuildDetections();
         ensureDetectionLayer();
@@ -2206,24 +2196,6 @@ document.getElementById('collapse-toggle').addEventListener('click', () => {
 // Mode toggle
 document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => switchMode(btn.dataset.mode));
-});
-
-// VNF nightly toggle — swap between profile parquet and raw nightly detections
-document.getElementById('vnf-nightly-toggle')?.addEventListener('change', async (e) => {
-    _vnfNightlyMode = e.target.checked;
-    _vnfInitStarted = false;
-    resetVNF();
-    const url = await getVNFUrl();
-    if (!url) return;
-    _vnfInitStarted = true;
-    try {
-        await initVNF(url);
-        if (currentMode === 'vnf') refreshVNF();
-    } catch (err) {
-        console.error('VNF nightly init error:', err);
-        _vnfInitStarted = false;
-        resetVNF();
-    }
 });
 
 // Deep link: navigate to a VNF flare by hash (#vnf/12345)
