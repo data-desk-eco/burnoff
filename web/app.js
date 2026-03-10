@@ -936,7 +936,7 @@ function buildLegendHTML(cfg) {
             <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
             ${new URLSearchParams(location.search).get('layer') === 'licenses' ? '<div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><rect x="1" y="1" width="8" height="8" fill="none" stroke="#6dd" stroke-width="1.2"/></svg>Licenses</div>' : ''}
             <label class="legend-item ogim-toggle-row" style="cursor:pointer">
-                <input type="checkbox" id="ogim-toggle" style="margin-right: 8px; accent-color: #fc8;"${_ogimVisible ? ' checked' : ''}>
+                <input type="checkbox" id="ogim-toggle" style="width: 10px; height: 10px; margin-right: 10px; flex-shrink: 0; accent-color: #fc8;"${_ogimVisible ? ' checked' : ''}>
                 <span>OGIM infrastructure</span>
             </label>
             <div id="ogim-legend-items" style="display:${_ogimVisible ? '' : 'none'}">
