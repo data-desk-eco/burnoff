@@ -356,6 +356,14 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 .legend h4.legend-section {
     margin-top: 14px;
 }
+.ogim-toggle-row { cursor: pointer; }
+.ogim-toggle-row input[type="checkbox"] {
+    width: 10px; height: 10px;
+    margin-right: 10px;
+    flex-shrink: 0;
+    accent-color: #fc8;
+}
+.ogim-sub-items .legend-item { padding-left: 18px; }
 
 /* --- Info panel (image list) --- */
 

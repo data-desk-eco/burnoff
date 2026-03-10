@@ -935,14 +935,14 @@ function buildLegendHTML(cfg) {
             <h4 class="label-sm legend-section">Infrastructure</h4>
             <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
             ${new URLSearchParams(location.search).get('layer') === 'licenses' ? '<div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><rect x="1" y="1" width="8" height="8" fill="none" stroke="#6dd" stroke-width="1.2"/></svg>Licenses</div>' : ''}
-            <label class="legend-item ogim-toggle-row" style="cursor:pointer">
-                <input type="checkbox" id="ogim-toggle" style="width: 10px; height: 10px; margin-right: 10px; flex-shrink: 0; accent-color: #fc8;"${_ogimVisible ? ' checked' : ''}>
+            <label class="legend-item ogim-toggle-row">
+                <input type="checkbox" id="ogim-toggle"${_ogimVisible ? ' checked' : ''}>
                 <span>OGIM infrastructure</span>
             </label>
-            <div id="ogim-legend-items" style="display:${_ogimVisible ? '' : 'none'}">
-                <div class="legend-item" style="padding-left:18px"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="0" y1="5" x2="10" y2="5" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/></svg>Pipelines</div>
-                <div class="legend-item" style="padding-left:18px"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><polygon points="5,1 9,5 5,9 1,5" fill="rgba(255,200,100,0.8)"/></svg>Facilities</div>
-                <div class="legend-item" style="padding-left:18px"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="2" y1="2" x2="8" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="2" x2="2" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>Wells</div>
+            <div class="ogim-sub-items" id="ogim-legend-items" style="display:${_ogimVisible ? '' : 'none'}">
+                <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="0" y1="5" x2="10" y2="5" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/></svg>Pipelines</div>
+                <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><polygon points="5,1 9,5 5,9 1,5" fill="rgba(255,200,100,0.8)"/></svg>Facilities</div>
+                <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="2" y1="2" x2="8" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="2" x2="2" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>Wells</div>
             </div>
         `;}
 
