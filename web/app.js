@@ -21,6 +21,16 @@ function parseFlareHash() {
     return m ? Number(m[1]) : null;
 }
 
+// ---------------------------------------------------------------------------
+// PMTiles protocol — must be registered before map creation
+// ---------------------------------------------------------------------------
+
+const _pmtilesProtocol = new pmtiles.Protocol();
+maplibregl.addProtocol('pmtiles', _pmtilesProtocol.tile);
+
+const OGIM_BUCKET = document.querySelector('meta[name="ogim-bucket"]')?.content;
+const OGIM_URL = OGIM_BUCKET ? `${OGIM_BUCKET}/ogim.pmtiles` : 'data/ogim.pmtiles';
+
 const VNF_BUCKET = document.querySelector('meta[name="vnf-bucket"]')?.content || '';
 const VNF_VERSION = document.querySelector('meta[name="vnf-version"]')?.content || '';
 const VNF_SESSION_KEY = 'vnf_url';
@@ -925,6 +935,15 @@ function buildLegendHTML(cfg) {
             <h4 class="label-sm legend-section">Infrastructure</h4>
             <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
             ${new URLSearchParams(location.search).get('layer') === 'licenses' ? '<div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><rect x="1" y="1" width="8" height="8" fill="none" stroke="#6dd" stroke-width="1.2"/></svg>Licenses</div>' : ''}
+            <label class="legend-item ogim-toggle-row" style="cursor:pointer">
+                <input type="checkbox" id="ogim-toggle" style="margin-right: 8px; accent-color: #fc8;"${_ogimVisible ? ' checked' : ''}>
+                <span>OGIM infrastructure</span>
+            </label>
+            <div id="ogim-legend-items" style="display:${_ogimVisible ? '' : 'none'}">
+                <div class="legend-item" style="padding-left:18px"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="0" y1="5" x2="10" y2="5" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/></svg>Pipelines</div>
+                <div class="legend-item" style="padding-left:18px"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><polygon points="5,1 9,5 5,9 1,5" fill="rgba(255,200,100,0.8)"/></svg>Facilities</div>
+                <div class="legend-item" style="padding-left:18px"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="2" y1="2" x2="8" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="2" x2="2" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>Wells</div>
+            </div>
         `;}
 
 // Pre-built expressions (regenerated from config)
@@ -2022,6 +2041,99 @@ map.on('load', () => {
         });
     });
 
+    // OGIM infrastructure overlay (PMTiles vector tiles)
+    try {
+        // Canvas icons for wells and facilities
+        const ogimCanvas = document.createElement('canvas');
+        const ogimCtxOpts = { willReadFrequently: true };
+
+        // × icon for wells
+        const ws = 16;
+        ogimCanvas.width = ws; ogimCanvas.height = ws;
+        const wctx = ogimCanvas.getContext('2d', ogimCtxOpts);
+        wctx.clearRect(0, 0, ws, ws);
+        wctx.strokeStyle = 'white';
+        wctx.lineWidth = 2;
+        wctx.lineCap = 'round';
+        const wp = 4;
+        wctx.beginPath();
+        wctx.moveTo(wp, wp); wctx.lineTo(ws - wp, ws - wp);
+        wctx.moveTo(ws - wp, wp); wctx.lineTo(wp, ws - wp);
+        wctx.stroke();
+        map.addImage('ogim-well-x', { width: ws, height: ws, data: wctx.getImageData(0, 0, ws, ws).data });
+
+        // ◆ icon for facilities
+        const fs = 16;
+        ogimCanvas.width = fs; ogimCanvas.height = fs;
+        const fctx = ogimCanvas.getContext('2d');
+        fctx.clearRect(0, 0, fs, fs);
+        fctx.fillStyle = 'rgba(255, 200, 100, 0.8)';
+        const mid = fs / 2, fr = 5;
+        fctx.beginPath();
+        fctx.moveTo(mid, mid - fr);
+        fctx.lineTo(mid + fr, mid);
+        fctx.lineTo(mid, mid + fr);
+        fctx.lineTo(mid - fr, mid);
+        fctx.closePath();
+        fctx.fill();
+        map.addImage('ogim-facility-diamond', { width: fs, height: fs, data: fctx.getImageData(0, 0, fs, fs).data });
+
+        map.addSource('ogim', {
+            type: 'vector',
+            url: `pmtiles://${OGIM_URL}`,
+            maxzoom: 14
+        });
+
+        const ogimBefore = map.getLayer('lng-terminal-hitarea') ? 'lng-terminal-hitarea' : undefined;
+
+        map.addLayer({
+            id: 'ogim-pipelines',
+            type: 'line',
+            source: 'ogim',
+            'source-layer': 'pipelines',
+            minzoom: 6,
+            layout: { visibility: 'none' },
+            paint: {
+                'line-color': 'rgba(255, 255, 255, 0.3)',
+                'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 14, 2]
+            }
+        }, ogimBefore);
+
+        map.addLayer({
+            id: 'ogim-facilities',
+            type: 'symbol',
+            source: 'ogim',
+            'source-layer': 'facilities',
+            minzoom: 6,
+            layout: {
+                visibility: 'none',
+                'icon-image': 'ogim-facility-diamond',
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+                'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.4, 12, 0.7, 16, 1]
+            },
+            paint: { 'icon-opacity': 0.8 }
+        }, ogimBefore);
+
+        map.addLayer({
+            id: 'ogim-wells',
+            type: 'symbol',
+            source: 'ogim',
+            'source-layer': 'wells',
+            minzoom: 8,
+            layout: {
+                visibility: 'none',
+                'icon-image': 'ogim-well-x',
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+                'icon-size': ['interpolate', ['linear'], ['zoom'], 8, 0.4, 12, 0.6, 16, 0.8]
+            },
+            paint: { 'icon-opacity': 0.6 }
+        }, ogimBefore);
+    } catch (e) {
+        console.warn('OGIM layers not available:', e.message);
+    }
+
     // Oil/gas licenses & concessions (gated behind ?layer=licenses URL param)
     if (new URLSearchParams(location.search).get('layer') === 'licenses')
     fetch('concessions.geojson').then(r => {
@@ -2191,6 +2303,19 @@ document.getElementById('intensity-range').addEventListener('input', e => {
 
 document.getElementById('collapse-toggle').addEventListener('click', () => {
     document.getElementById('title-panel').classList.toggle('collapsed');
+});
+
+// OGIM infrastructure toggle (delegated — legend is rebuilt on mode switch)
+let _ogimVisible = false;
+document.querySelector('.legend').addEventListener('change', e => {
+    if (e.target.id !== 'ogim-toggle') return;
+    _ogimVisible = e.target.checked;
+    const vis = _ogimVisible ? 'visible' : 'none';
+    for (const id of ['ogim-pipelines', 'ogim-facilities', 'ogim-wells']) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis);
+    }
+    const items = document.getElementById('ogim-legend-items');
+    if (items) items.style.display = _ogimVisible ? '' : 'none';
 });
 
 // Mode toggle
