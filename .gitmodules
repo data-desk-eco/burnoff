@@ -1,0 +1,3 @@
+[submodule "web/vendor/s2-flares"]
+	path = web/vendor/s2-flares
+	url = /Users/louis/Tools/s2-flares
