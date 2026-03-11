@@ -67,8 +67,8 @@ Tests use `node:test` and `node:assert`.
 web/
   app.js              Main thread: map, UI, CRDT sync, cross-date clustering
   vnf.js              VNF data module: DuckDB-WASM Parquet queries
-  detect.js           Web Worker: STAC search, band reads, per-block detection
-  utm.js              UTM <-> WGS84 projection (inline Transverse Mercator)
+  detect-worker.js    Module Web Worker: delegates to s2-flares for detection
+  vendor/s2-flares/   Shared detection library (git submodule)
   crdt.js             LWW-Map CRDT with binary codec
   sync.js             Sync protocol, awareness, validation
   rtc.js              WebRTC DataChannel mesh (raw RTCPeerConnection)
@@ -95,7 +95,7 @@ test/
 | Library | Purpose | Loaded from |
 |---------|---------|-------------|
 | MapLibre GL 5.1 | WebGL map rendering | CDN (`<script>`) |
-| geotiff.js 2.1 | Cloud Optimized GeoTIFF reads | CDN (`<script>` + `importScripts`) |
+| geotiff.js 2.1 | Cloud Optimized GeoTIFF reads | Vendored in s2-flares submodule |
 | DuckDB-WASM 1.29 | VNF Parquet queries | CDN (`import()`) |
 
 Everything else uses browser/Node.js builtins:
