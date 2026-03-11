@@ -3,6 +3,7 @@ import { Store } from './store.js';
 import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, isReady as vnfReady } from './vnf.js';
+import { clusterDetections, isSeasonal } from './vendor/s2-flares/cluster.js';
 
 // ---------------------------------------------------------------------------
 // Mode state: 'vnf' or 's2'
@@ -1405,18 +1406,8 @@ let S2_MERGE_DISTANCE_M = 135;
 let CLUSTER_AVG_B12_MIN = MODE.s2.filter.default;
 let VNF_AVG_RH_MIN = MODE.vnf.filter.default;
 
-function haversineM(lat1, lon1, lat2, lon2) {
-    const R = 6371000;
-    const toRad = Math.PI / 180;
-    const dLat = (lat2 - lat1) * toRad;
-    const dLon = (lon2 - lon1) * toRad;
-    const a = Math.sin(dLat / 2) ** 2 +
-              Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 // Fast equirectangular distance — accurate to <0.1% at distances under 1 km
-// and at latitudes under ~70°. Used in the hot clustering loop to avoid trig.
+// and at latitudes under ~70°. Used in terminal grid lookup.
 const DEG_TO_RAD = Math.PI / 180;
 const R_EARTH = 6371000;
 function fastDistM(lat1, lon1, lat2, lon2) {
@@ -1466,18 +1457,10 @@ function findNearestTerminal(lat, lon) {
     return best && bestDist <= TERMINAL_MATCH_M ? { name: best.properties.name, distance: bestDist } : null;
 }
 
-/** True when all detections fall within April–August (sunny-month false-positive risk). */
-function isSeasonal(detections) {
-    const sunny = new Set([3, 4, 5, 6, 7]); // Apr(3)–Aug(7)
-    const months = new Set(detections.map(d => new Date(d.date + 'T00:00').getUTCMonth()));
-    for (const m of months) { if (!sunny.has(m)) return false; }
-    return true;
-}
-
 function crossDateCluster(allDetections) {
     if (allDetections.length === 0) return [];
 
-    // Per-block date sets: blockId → Set<date>
+    // Per-block date sets for burnoff-specific persistence calculation
     // passesByBlock: all entries (including >75% skipped)
     // obsByBlock:    analysed entries (≤75% cloud, i.e. value !== false)
     const passesByBlock = new Map();
@@ -1494,130 +1477,83 @@ function crossDateCluster(allDetections) {
         }
     });
 
-    // No clustering — emit every detection as its own feature
-    if (MERGE_DISTANCE_M === 0) {
-        const features = [];
-        for (const det of allDetections) {
-            if (det.max_b12 < CLUSTER_AVG_B12_MIN) continue;
-            const terminal = findNearestTerminal(det.flare_lat, det.flare_lon);
-            features.push({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [det.flare_lon, det.flare_lat] },
-                properties: {
-                    name: terminal ? terminal.name : det.date,
-                    terminal: terminal?.name || null,
-                    max_b12: det.max_b12,
-                    detection_count: 1,
-                    detections: [{
-                        date: det.date, max_b12: det.max_b12, pixels: det.pixels,
-                        cog_b12: det.cog_b12, epsg: det.epsg, utm_bounds: det.utm_bounds,
-                        raw_lon: det.flare_lon, raw_lat: det.flare_lat,
-                        b12_corrected: det.max_b12
-                    }]
-                }
-            });
-        }
-        return features;
-    }
+    // Delegate spatial clustering to s2-flares
+    const clusters = clusterDetections(allDetections, {
+        mergeDistance: MERGE_DISTANCE_M,
+        minDates: MERGE_DISTANCE_M === 0 ? 1 : 4,
+        minAvgB12: CLUSTER_AVG_B12_MIN,
+    });
 
-    const sorted = allDetections.slice().sort((a, b) => b.max_b12 - a.max_b12);
+    // Wrap s2-flares cluster results into GeoJSON Features with burnoff-specific
+    // persistence, terminal naming, and detection detail fields.
+    const features = [];
+    for (const cl of clusters) {
+        const terminal = findNearestTerminal(cl.lat, cl.lon);
+        const name = MERGE_DISTANCE_M === 0
+            ? (terminal ? terminal.name : (cl.detections[0]?.date || ''))
+            : (terminal ? terminal.name : `${cl.detection_count} detection${cl.detection_count !== 1 ? 's' : ''}`);
 
-    const CELL_DEG = MERGE_DISTANCE_M / 111320;
-    const grid = new Map();
-    const clusters = [];
-    // Numeric grid key: pack row/col into a single integer (avoids string alloc)
-    const KEY_SHIFT = 0x100000;  // 2^20, enough for ~±500 000 grid rows
-
-    for (const det of sorted) {
-        const gRow = Math.floor(det.flare_lat / CELL_DEG);
-        const gCol = Math.floor(det.flare_lon / CELL_DEG);
-        let bestIdx = -1, bestDist = Infinity;
-
-        for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
-                const key = (gRow + dr) * KEY_SHIFT + (gCol + dc);
-                const bucket = grid.get(key);
-                if (!bucket) continue;
-                for (const ci of bucket) {
-                    const a = clusters[ci].anchor;
-                    const d = fastDistM(det.flare_lat, det.flare_lon, a.flare_lat, a.flare_lon);
-                    if (d <= MERGE_DISTANCE_M && d < bestDist) {
-                        bestDist = d;
-                        bestIdx = ci;
-                    }
+        // Burnoff persistence: detections / block-level observations
+        let passes = null, observations = null, persistence = cl.persistence;
+        if (MERGE_DISTANCE_M > 0) {
+            // Collect block IDs from the original detections that belong to this cluster
+            const clusterDets = cl.detections;
+            const bids = new Set();
+            for (const d of clusterDets) {
+                // Find original detection with matching date/lon/lat to get block metadata
+                const orig = allDetections.find(o =>
+                    o.date === d.date &&
+                    (o.flare_lon ?? o.lon) === d.lon &&
+                    (o.flare_lat ?? o.lat) === d.lat
+                );
+                if (orig) {
+                    const bid = orig.block_id || `${orig.mgrs}_${orig.block_row}_${orig.block_col}`;
+                    if (bid) bids.add(bid);
                 }
             }
+            const passDates = new Set();
+            const obsDates = new Set();
+            for (const bid of bids) {
+                const p = passesByBlock.get(bid);
+                if (p) for (const d of p) passDates.add(d);
+                const o = obsByBlock.get(bid);
+                if (o) for (const d of o) obsDates.add(d);
+            }
+            for (const d of clusterDets) { passDates.add(d.date); obsDates.add(d.date); }
+            passes = passDates.size;
+            observations = obsDates.size;
+            persistence = observations > 0 ? clusterDets.length / observations : null;
         }
 
-        if (bestIdx >= 0) {
-            clusters[bestIdx].members.push(det);
-        } else {
-            const ci = clusters.length;
-            clusters.push({ anchor: det, members: [det] });
-            const key = gRow * KEY_SHIFT + gCol;
-            const bucket = grid.get(key);
-            if (bucket) bucket.push(ci);
-            else grid.set(key, [ci]);
-        }
-    }
-
-    const features = [];
-    for (const cluster of clusters) {
-        const members = cluster.members;
-        const byDate = {};
-        for (const d of members) {
-            if (!byDate[d.date] || d.max_b12 > byDate[d.date].max_b12) byDate[d.date] = d;
-        }
-        const deduped = Object.values(byDate);
-        if (deduped.length < 4) continue;
-        const avgClusterB12 = deduped.reduce((s, d) => s + d.max_b12, 0) / deduped.length;
-        if (avgClusterB12 < CLUSTER_AVG_B12_MIN) continue;
-        let anchor = deduped[0];
-        for (const d of deduped) { if (d.max_b12 > anchor.max_b12) anchor = d; }
-
-        const terminal = findNearestTerminal(anchor.flare_lat, anchor.flare_lon);
-        const name = terminal ? terminal.name : `${deduped.length} detection${deduped.length !== 1 ? 's' : ''}`;
-        const seasonal = isSeasonal(deduped);
-
-        // Persistence: detections / observations (all processed passes)
-        const bids = new Set();
-        for (const d of deduped) {
-            const bid = d.block_id || `${d.mgrs}_${d.block_row}_${d.block_col}`;
-            if (bid) bids.add(bid);
-        }
-        const passDates = new Set();
-        const obsDates = new Set();
-        for (const bid of bids) {
-            const p = passesByBlock.get(bid);
-            if (p) for (const d of p) passDates.add(d);
-            const o = obsByBlock.get(bid);
-            if (o) for (const d of o) obsDates.add(d);
-        }
-        for (const d of deduped) { passDates.add(d.date); obsDates.add(d.date); }
-        const passes = passDates.size;
-        const observations = obsDates.size;
-        const persistence = deduped.length / observations;
+        // Map cluster detections back to burnoff's detail format, pulling extra
+        // fields (cog_b12, epsg, utm_bounds) from the original detection records
+        const detailDets = cl.detections.map(d => {
+            const orig = allDetections.find(o =>
+                o.date === d.date &&
+                (o.flare_lon ?? o.lon) === d.lon &&
+                (o.flare_lat ?? o.lat) === d.lat
+            );
+            return {
+                date: d.date, max_b12: d.max_b12, pixels: d.pixels,
+                cog_b12: orig?.cog_b12, epsg: orig?.epsg, utm_bounds: orig?.utm_bounds,
+                raw_lon: d.lon, raw_lat: d.lat,
+                b12_corrected: d.max_b12
+            };
+        });
 
         features.push({
             type: 'Feature',
-            geometry: { type: 'Point', coordinates: [anchor.flare_lon, anchor.flare_lat] },
+            geometry: { type: 'Point', coordinates: [cl.lon, cl.lat] },
             properties: {
                 name,
                 terminal: terminal?.name || null,
-                max_b12: anchor.max_b12,
-                detection_count: deduped.length,
-                seasonal,
+                max_b12: cl.max_b12,
+                detection_count: cl.detection_count,
+                seasonal: cl.seasonal,
                 persistence,
                 passes,
                 observations,
-                detections: deduped.map(d => {
-                    return {
-                        date: d.date, max_b12: d.max_b12, pixels: d.pixels,
-                        cog_b12: d.cog_b12, epsg: d.epsg, utm_bounds: d.utm_bounds,
-                        raw_lon: d.flare_lon, raw_lat: d.flare_lat,
-                        b12_corrected: d.max_b12
-                    };
-                })
+                detections: detailDets
             }
         });
     }
