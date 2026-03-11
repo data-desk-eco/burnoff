@@ -4,6 +4,7 @@ import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, isReady as vnfReady } from './vnf.js';
 import { clusterDetections, isSeasonal } from './vendor/s2-flares/cluster.js';
+import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/geo.js';
 
 // ---------------------------------------------------------------------------
 // Mode state: 'vnf' or 's2'
@@ -1035,8 +1036,8 @@ function utmBoundsToWgs84(utmBounds, epsg) {
     const zone = epsg % 100;
     const isNorth = epsg < 32700;
     const [minX, minY, maxX, maxY] = utmBounds;
-    const sw = self.utmToWgs84(minX, minY, zone, isNorth);
-    const ne = self.utmToWgs84(maxX, maxY, zone, isNorth);
+    const sw = utmToWgs84(minX, minY, zone, isNorth);
+    const ne = utmToWgs84(maxX, maxY, zone, isNorth);
     return [sw[0], sw[1], ne[0], ne[1]];
 }
 
@@ -1249,7 +1250,7 @@ async function loadImageryForDetection(det) {
 
     const zone = epsg % 100;
     const isNorth = epsg < 32700;
-    const [flareUtmX, flareUtmY] = self.wgs84ToUtm(flareLon, flareLat, zone, isNorth);
+    const [flareUtmX, flareUtmY] = wgs84ToUtm(flareLon, flareLat, zone, isNorth);
     const utmBounds = [flareUtmX - buffer, flareUtmY - buffer, flareUtmX + buffer, flareUtmY + buffer];
 
     document.querySelectorAll('.event-item').forEach(el => el.classList.remove('loading'));
