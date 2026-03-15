@@ -129,12 +129,6 @@ const syncManager = new SyncManager({
     mesh
 });
 
-// Expose internals for debugging (remove later)
-window._burnoff = { mesh, syncManager, detectionMap, processedMap, store,
-    get mode() { return currentMode; },
-    update() { rebuildDetections(); ensureDetectionLayer(); updateDetectionSource(); }
-};
-
 // Init: load from IndexedDB, then connect mesh
 (async () => {
     await store.open();
