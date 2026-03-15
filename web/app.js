@@ -1626,7 +1626,10 @@ function guessEpsg(bbox) {
 }
 
 function ensureDetectionLayer() {
-    if (!map.isStyleLoaded()) return;
+    if (!map.isStyleLoaded()) {
+        map.once('styledata', () => scheduleDetectionUpdate());
+        return;
+    }
     if (!map.getSource('client-detections')) {
         map.addSource('client-detections', {
             type: 'geojson',
