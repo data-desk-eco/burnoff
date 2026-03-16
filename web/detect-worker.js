@@ -6,10 +6,10 @@
  * message posting.
  */
 
-import { searchSTAC } from './vendor/s2-flares/stac.js';
-import { openCOG, readWindow, enumerateBlocks } from './vendor/s2-flares/cog.js';
-import { detectBlock, BLOCK_SIZE, BLOCK_OVERLAP } from './vendor/s2-flares/detect.js';
-import { utmToWgs84, utmParams } from './vendor/s2-flares/geo.js';
+import { searchSTAC } from './vendor/s2-flares/lib/stac.js';
+import { openCOG, readWindow, enumerateBlocks } from './vendor/s2-flares/lib/cog.js';
+import { detectBlock, BLOCK_SIZE, BLOCK_OVERLAP } from './vendor/s2-flares/lib/detect.js';
+import { utmToWgs84, utmParams } from './vendor/s2-flares/lib/geo.js';
 
 // Concurrency limits
 const IMG_CONCURRENCY = 2;
@@ -62,7 +62,7 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
     // Open auxiliary bands
     let b11Image = null, b8aImage = null, sclImage = null;
     const promises = [];
-    const { GeoTIFF } = await import('./vendor/s2-flares/vendor/geotiff-esm.js');
+    const { GeoTIFF } = await import('./vendor/s2-flares/lib/vendor/geotiff-esm.js');
     promises.push(
         GeoTIFF.fromUrl(b11Url, { allowFullFile: false })
             .then(tiff => tiff.getImage())

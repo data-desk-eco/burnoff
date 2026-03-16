@@ -3,8 +3,8 @@ import { Store } from './store.js';
 import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, isReady as vnfReady } from './vnf.js';
-import { clusterDetections, isSeasonal } from './vendor/s2-flares/cluster.js';
-import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/geo.js';
+import { clusterDetections, isSeasonal } from './vendor/s2-flares/lib/cluster.js';
+import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/lib/geo.js';
 
 // ---------------------------------------------------------------------------
 // Mode state: 'vnf' or 's2'
