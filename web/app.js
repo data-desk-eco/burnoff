@@ -133,6 +133,20 @@ const syncManager = new SyncManager({
 (async () => {
     await store.open();
     await store.loadAll(detectionMap, processedMap);
+
+    // Purge completion markers for the current (ongoing) quarter so the
+    // Detect button stays enabled for picking up new imagery.
+    const _now = new Date();
+    const _curQKey = `${_now.getFullYear()}_${Math.floor(_now.getMonth() / 3) + 1}`;
+    const staleQtrKeys = [];
+    processedMap.forEach((_v, key) => {
+        if (key.startsWith(`__qtr:${_curQKey}:`)) staleQtrKeys.push(key);
+    });
+    for (const key of staleQtrKeys) {
+        processedMap.delete(key);
+        store.delete('proc', key);
+    }
+
     scheduleDetectionUpdate();
     mesh.connect();
 })();
@@ -1797,6 +1811,10 @@ function writeQuarterCompletionMarkers(job) {
     const ts = Date.now();
     const peerId = mesh.localPeerId;
 
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
+
     const sy = parseInt(job.startDate.substring(0, 4));
     const sm = parseInt(job.startDate.substring(5, 7));
     const ey = parseInt(job.endDate.substring(0, 4));
@@ -1811,6 +1829,9 @@ function writeQuarterCompletionMarkers(job) {
         const q0 = y === sy ? sq : 1;
         const q1 = y === ey ? eq : 4;
         for (let q = q0; q <= q1; q++) {
+            // Don't mark the current quarter as complete — new imagery
+            // keeps arriving, so the user should be able to re-detect.
+            if (y === currentYear && q === currentQuarter) continue;
             const key = `__qtr:${y}_${q}:${cLat}_${cLng}`;
             const val = [south, west, north, east];
             processedMap.set(key, val, ts, peerId);

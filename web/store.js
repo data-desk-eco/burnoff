@@ -65,6 +65,15 @@ export class Store {
         this._flush();
     }
 
+    delete(mapName, key) {
+        if (!this._db) return;
+        const prefix = mapName === 'det' ? 'd' : 'p';
+        const idbKey = `${prefix}:${key}`;
+        this._dirty.delete(idbKey);
+        const tx = this._db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(idbKey);
+    }
+
     flush() { this._flush(); }
 
     _flush() {
