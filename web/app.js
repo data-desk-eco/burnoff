@@ -1672,7 +1672,10 @@ function ensureDetectionLayer() {
 function updateDetectionSource() {
     const features = crossDateCluster(allRawDetections);
     const src = map.getSource('client-detections');
-    if (src) src.setData({ type: 'FeatureCollection', features });
+    if (src) {
+        src.setData({ type: 'FeatureCollection', features });
+        map.triggerRepaint();
+    }
 }
 
 function updateVNFSource() {
