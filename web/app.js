@@ -452,8 +452,20 @@ function startHelpingDetection(job, peerIndex, peerCount) {
     store.flush();
 
     _helpWorker = new Worker('detect-worker.js', { type: 'module' });
+
+    const payload = {
+        bbox: job.bbox, epsg: job.epsg,
+        startDate: job.startDate, endDate: job.endDate,
+        cachedBlockDates: getCachedBlockKeys(),
+        peerIndex, peerCount
+    };
+
     _helpWorker.onmessage = function(e) {
         const msg = e.data;
+        if (msg.type === 'ready') {
+            _helpWorker.postMessage(payload);
+            return;
+        }
         if (msg.type === 'blockDetections') {
             const cf = msg.skipped ? 'skipped' : msg.cloudFree !== undefined ? msg.cloudFree : true;
             cacheBlockResult(msg.blockId, msg.date, msg.detections, msg.lat, msg.lng, cf);
@@ -464,13 +476,6 @@ function startHelpingDetection(job, peerIndex, peerCount) {
         }
     };
     _helpWorker.onerror = () => stopHelping();
-
-    _helpWorker.postMessage({
-        bbox: job.bbox, epsg: job.epsg,
-        startDate: job.startDate, endDate: job.endDate,
-        cachedBlockDates: getCachedBlockKeys(),
-        peerIndex, peerCount
-    });
 }
 
 // Awareness listener for distributed detection coordination
@@ -1722,8 +1727,22 @@ function launchDetectWorker(job) {
     const text = document.getElementById('detect-text');
 
     detectWorker = new Worker('detect-worker.js', { type: 'module' });
+
+    const cached = getCachedBlockKeys();
+    const payload = {
+        bbox: job.bbox, epsg: job.epsg,
+        startDate: job.startDate, endDate: job.endDate,
+        cachedBlockDates: cached,
+        peerIndex, peerCount
+    };
+
     detectWorker.onmessage = function(e) {
         const msg = e.data;
+        if (msg.type === 'ready') {
+            // Worker module loaded — now safe to send the job
+            detectWorker.postMessage(payload);
+            return;
+        }
         if (msg.type === 'progress') {
             bar.style.width = msg.pct + '%';
             text.textContent = msg.stage;
@@ -1754,13 +1773,6 @@ function launchDetectWorker(job) {
         text.textContent = 'Worker error';
         setTimeout(resetDetectUI, 3000);
     };
-
-    detectWorker.postMessage({
-        bbox: job.bbox, epsg: job.epsg,
-        startDate: job.startDate, endDate: job.endDate,
-        cachedBlockDates: getCachedBlockKeys(),
-        peerIndex, peerCount
-    });
 }
 
 function cleanupDetection() {

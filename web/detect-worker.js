@@ -206,6 +206,8 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
 let _livePeerIndex = 0;
 let _livePeerCount = 1;
 
+self.postMessage({ type: 'ready' });
+
 self.onmessage = async function(e) {
     if (e.data.type === 'updatePeers') {
         _livePeerIndex = e.data.peerIndex || 0;
