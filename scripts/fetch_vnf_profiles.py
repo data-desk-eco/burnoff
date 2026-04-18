@@ -4,7 +4,7 @@
 By default downloads ALL profiles.  Use --near-facilities to filter by
 proximity to LNG terminals and oil/gas accumulations (the old behavior).
 
-Requires EOG_EMAIL and EOG_PASSWORD in .env.
+Credentials load from env → .env → gcloud Secret Manager (eog-env).
 
 Usage: uv run --with requests,beautifulsoup4,duckdb,lxml scripts/fetch_vnf_profiles.py
 """
@@ -36,35 +36,17 @@ INDEX_CSV_NAME = "multiyear_flare_month_summary_all_run48.csv"
 TERMINALS_GEOJSON = os.path.join(PROJECT_ROOT, "web", "terminals.geojson")
 ACCUMULATIONS_GEOJSON = os.path.join(PROJECT_ROOT, "web", "accumulations.geojson")
 
-
-# -- .env loader (no python-dotenv dependency) --------------------------------
-
-def load_dotenv():
-    """Read key=value pairs from .env file in project root."""
-    env_path = os.path.join(PROJECT_ROOT, ".env")
-    if not os.path.isfile(env_path):
-        return
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip().strip("'\"")
-            if key and key not in os.environ:
-                os.environ[key] = value
+sys.path.insert(0, os.path.join(PROJECT_ROOT, ".claude", "skills", "_lib"))
+from common import load_env  # noqa: E402
 
 
 # -- EOG Authentication -------------------------------------------------------
 
 def authenticate():
     """Authenticate with EOG via OIDC and return session with valid cookies."""
-    email = os.environ.get("EOG_EMAIL")
-    password = os.environ.get("EOG_PASSWORD")
-    if not email or not password:
-        print("Error: Set EOG_EMAIL and EOG_PASSWORD in .env", file=sys.stderr)
-        sys.exit(1)
+    env = load_env(["EOG_EMAIL", "EOG_PASSWORD"], secret="eog-env")
+    email = env["EOG_EMAIL"]
+    password = env["EOG_PASSWORD"]
 
     session = requests.Session()
     session.headers["User-Agent"] = "Mozilla/5.0"
@@ -374,7 +356,6 @@ def main():
     )
     args = parser.parse_args()
 
-    load_dotenv()
     os.makedirs(PROFILES_DIR, exist_ok=True)
 
     # 1. Authenticate

@@ -10,14 +10,22 @@ jobs:
   backfill:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Install dependencies
         run: pip install requests beautifulsoup4 lxml duckdb
+
+      - name: Fetch shared skill libs
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            https://api.github.com/repos/data-desk-eco/.github/tarball/main | \
+            tar -xz --strip-components=1 --wildcards '*/.claude'
 
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v2
@@ -29,7 +37,5 @@ jobs:
 
       - name: Run backfill
         env:
-          EOG_EMAIL: ${{ secrets.EOG_EMAIL }}
-          EOG_PASSWORD: ${{ secrets.EOG_PASSWORD }}
           VNF_PASSWORD: ${{ secrets.VNF_PASSWORD }}
         run: python scripts/backfill_vnf.py

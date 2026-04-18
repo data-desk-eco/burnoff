@@ -6,7 +6,7 @@ existing parquet, matches each detection to the nearest known flare by proximity
 and appends new daily rows.  When profiles are rebuilt (`make vnf`), the full
 profile-based parquet replaces everything, including these backfill rows.
 
-Requires EOG_EMAIL and EOG_PASSWORD environment variables (or .env file).
+EOG credentials load from env → .env → gcloud Secret Manager (eog-env).
 
 If VNF_PASSWORD is set, downloads the current parquet from GCS before backfilling
 and uploads the result after.  Otherwise works with a local web/vnf.parquet.
@@ -31,22 +31,6 @@ BASE_URL = "https://eogdata.mines.edu/wwwdata/viirs_products/vnf/v30/rearrange"
 SATELLITES = ["npp", "j01", "j02"]
 WORKERS = 20
 MATCH_RADIUS_KM = 5  # max distance to assign a detection to a known flare
-
-
-def load_dotenv():
-    env_path = os.path.join(PROJECT_ROOT, ".env")
-    if not os.path.isfile(env_path):
-        return
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip().strip("'\"")
-            if key and key not in os.environ:
-                os.environ[key] = value
 
 
 def authenticate():
@@ -198,7 +182,6 @@ def download_nightly(session, sat, d):
 
 
 def main():
-    load_dotenv()
     import duckdb
 
     db = duckdb.connect()
