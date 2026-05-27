@@ -28,7 +28,8 @@ function progress(stage, pct) {
 // ---------------------------------------------------------------------------
 
 async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
-    const { bands, date: imgDate, epsg: itemEpsg, mgrs } = item;
+    const { bands, date: imgDate, epsg: itemEpsg, mgrs,
+            sunElevation = null, sunAzimuth = null } = item;
     const { b12: b12Url, b11: b11Url, b8a: b8aUrl, scl: sclUrl } = bands;
 
     if (!b12Url || !b11Url) return [];
@@ -142,6 +143,7 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
                     blockOffsetY: y0,
                     width: w,
                     height: h,
+                    sunElevation, sunAzimuth,
                 });
 
                 if (result.detections.length === 0 && result.cloudFree === false) {
@@ -162,6 +164,13 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
                                 flare_lon: det.lon,
                                 flare_lat: det.lat,
                                 avg_b12: det.avg_b12,
+                                // openflaring glint/spectral annotations
+                                max_b11: det.max_b11,
+                                b12_b11_ratio: det.b12_b11_ratio,
+                                sun_elevation: det.sun_elevation,
+                                sun_azimuth: det.sun_azimuth,
+                                glint_angle: det.glint_angle,
+                                glint_score: det.glint_score,
                                 epsg: itemEpsg,
                                 cog_b12: b12Url,
                                 utm_bounds: [

@@ -16,6 +16,14 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
+// openflaring scoring methodology — imported from the shipped library so these
+// tests exercise the real code, not a copy.
+import {
+    scoreCluster, spectralScore, persistenceScore, glintPenalty,
+    glintAngleNadir, glintScoreFromAngle, glintScoreFromElevation,
+} from '../web/vendor/s2-flares/lib/score.js';
+import { clusterDetections } from '../web/vendor/s2-flares/lib/cluster.js';
+
 // ───────────────────────────────────────────────────────────────────────
 // Constants (copied from detect.js)
 // ───────────────────────────────────────────────────────────────────────
@@ -975,6 +983,115 @@ describe('Block-based detection determinism', () => {
         assert.equal(y1, 10 * 256 + 10, 'Block y1');
 
         console.log(`  Pixel (${pixelX},${pixelY}) → block (${blockRow},${blockCol}), window [${x0},${y0},${x1},${y1}]`);
+    });
+});
+
+describe('Cluster scoring (openflaring methodology)', () => {
+
+    it('glint geometry: angle = 90 − elevation, score ramps 25°→65°', () => {
+        assert.equal(glintAngleNadir(40), 50);
+        assert.equal(glintScoreFromAngle(20), 1.0, 'tight specular cone → max risk');
+        assert.equal(glintScoreFromAngle(65), 0.0, 'wide angle → no risk');
+        assert.equal(glintScoreFromAngle(45), 0.5, 'midpoint');
+        // A 30°N January noon (~elevation 38°) lands in the soft-penalty band.
+        const s = glintScoreFromAngle(glintAngleNadir(38));
+        assert.ok(s > 0 && s < 0.5, `winter-noon glint score ${s} is a soft signal`);
+    });
+
+    it('spectral score is the documented step function', () => {
+        assert.equal(spectralScore(1.5, 2.2), 1.0, 'saturated + very hot');
+        assert.equal(spectralScore(0.9, 2.6), 0.7, 'hot ratio alone');
+        assert.equal(spectralScore(0.9, 1.6), 0.5, 'flame ratio');
+        assert.equal(spectralScore(1.5, 1.25), 0.3, 'saturated, marginal ratio');
+        assert.equal(spectralScore(0.9, 1.1), 0.0, 'flat ratio → no spectral evidence');
+        assert.equal(spectralScore(NaN, 2.2), 0.0, 'missing data → 0');
+    });
+
+    it('persistence score caps at 1.0 once a cluster fires on 15% of obs', () => {
+        assert.equal(persistenceScore(3, 0), 0, 'no observation budget → 0');
+        assert.equal(persistenceScore(15, 100), 1.0, '15% → full score');
+        assert.equal(persistenceScore(30, 100), 1.0, 'clipped above 15%');
+        assert.ok(Math.abs(persistenceScore(6, 100) - 0.4) < 1e-9, '6/15 → 0.4');
+    });
+
+    it('glint penalty keys off the MINIMUM look, not the max', () => {
+        assert.equal(glintPenalty(null), 0, 'no glint data → no penalty');
+        assert.equal(glintPenalty(0.3), 0, 'below threshold → no penalty');
+        assert.equal(glintPenalty(1.0), -1.0, 'pure glint geometry → full penalty');
+        assert.ok(glintPenalty(0.75) < 0 && glintPenalty(0.75) > -1, 'ramps between');
+        // The cluster-level aggregate is min over looks: a flare seen once at
+        // high sun (0.9) and once at low sun (0.1) keeps min_glint = 0.1 → benign.
+        assert.equal(glintPenalty(Math.min(0.9, 0.1)), 0);
+    });
+
+    it('glint derives from sun_elevation — survives sync without a stored score', () => {
+        // Synced detections carry sun_elevation (codec i8 slot) but not the
+        // stored glint_score; glint must still resolve from elevation alone.
+        assert.equal(glintScoreFromElevation(50), glintScoreFromAngle(40));
+        assert.equal(glintScoreFromElevation(null), null, 'legacy: no elevation → null');
+        const obs = new Map([['2024-01-01', { cloudFree: true }]]);
+        const synced = ['2024-01-01', '2024-02-01', '2024-03-01', '2024-04-01']
+            .map(d => ({ date: d, flare_lat: 5.0, flare_lon: 5.0, max_b12: 0.9,
+                         pixels: 4, sun_elevation: 70 }));  // 70° → glint_angle 20° → score 1.0
+        const [c] = clusterDetections(synced, { mergeDistance: 135, minAvgB12: 0, observations: obs });
+        assert.equal(c.min_glint, 1.0, 'glint recovered from sun_elevation');
+        assert.ok(c.glint_penalty < 0, 'high-sun, flat-spectrum cluster is penalised');
+    });
+
+    it('total_score is the sum of the three components', () => {
+        const s = scoreCluster({ peakB12: 1.5, maxRatio: 2.2, nDates: 15, nObs: 100, minGlint: 0.1 });
+        assert.equal(s.spectral_score, 1.0);
+        assert.equal(s.persistence_score, 1.0);
+        assert.equal(s.glint_penalty, 0);
+        assert.equal(s.total_score, 2.0);
+    });
+
+    function rawDet(date, lat, lon, b12, ratio, glint) {
+        return { date, flare_lat: lat, flare_lon: lon, max_b12: b12, pixels: 4,
+                 b12_b11_ratio: ratio, glint_score: glint };
+    }
+
+    it('clusterDetections attaches scores and is order-independent', () => {
+        const obs = new Map();
+        for (let i = 0; i < 20; i++) obs.set(`2024-${String(i + 1).padStart(2, '0')}-01`, { cloudFree: true });
+        const dets = [
+            rawDet('2024-01-01', 25.0, 51.0, 1.5, 2.4, 0.1),
+            rawDet('2024-02-01', 25.0, 51.0, 1.45, 2.1, 0.2),
+            rawDet('2024-03-01', 25.0, 51.0, 1.5, 2.3, 0.05),
+            rawDet('2024-04-01', 25.0, 51.0, 1.4, 2.0, 0.15),
+        ];
+        const opts = { mergeDistance: 135, minAvgB12: 0, observations: obs };
+        const a = clusterDetections(dets, opts);
+        const b = clusterDetections([...dets].reverse(), opts);
+        assert.equal(a.length, 1);
+        // The per-date detections sub-array is order-insensitive; normalise it
+        // before comparing the rest (anchor, counts, scores must match exactly).
+        const norm = cl => ({ ...cl, detections: [...cl.detections].sort((x, y) => x.date < y.date ? -1 : 1) });
+        assert.deepStrictEqual(a.map(norm), b.map(norm), 'order-independent');
+        const c = a[0];
+        assert.equal(c.spectral_score, 1.0, 'saturated + hot ratio');
+        assert.equal(c.glint_penalty, 0, 'min glint 0.05 is benign');
+        assert.equal(c.total_score, c.spectral_score + c.persistence_score + c.glint_penalty);
+        assert.equal(c.max_ratio, 2.4);
+        assert.equal(c.min_glint, 0.05);
+    });
+
+    it('scoreThreshold drops low-score clusters but keeps strong ones', () => {
+        const obs = new Map([['2024-01-01', { cloudFree: true }], ['2024-02-01', { cloudFree: true }]]);
+        // Flat-spectrum, glint-prone, repeats-but-no-flame cluster.
+        const glinty = ['2024-01-01', '2024-02-01', '2024-03-01', '2024-04-01']
+            .map(d => rawDet(d, 10.0, 20.0, 0.6, 1.05, 0.9));
+        // Bright, hot, low-glint flare.
+        const flare = ['2024-01-01', '2024-02-01', '2024-03-01', '2024-04-01']
+            .map(d => rawDet(d, 30.0, 40.0, 1.5, 2.3, 0.1));
+        const all = [...glinty, ...flare];
+        const base = { mergeDistance: 135, minAvgB12: 0, observations: obs };
+        const kept = clusterDetections(all, { ...base, scoreThreshold: 1.0 });
+        assert.equal(kept.length, 1, 'only the real flare clears threshold 1.0');
+        assert.ok(kept[0].lat === 30.0, 'survivor is the hot, low-glint cluster');
+        const all2 = clusterDetections(all, { ...base, scoreThreshold: 0 });
+        assert.equal(all2.length, 2, 'threshold 0 keeps both, scores still attached');
+        for (const c of all2) assert.equal(typeof c.total_score, 'number');
     });
 });
 

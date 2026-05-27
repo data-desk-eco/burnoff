@@ -1029,11 +1029,26 @@ function utmBoundsToWgs84(utmBounds, epsg) {
 }
 
 function formatMetrics(props) {
-    if (!props.passes || !props.observations) return '';
-    const pct = Math.round(props.persistence * 100);
-    const cfPct = Math.round(props.observations / props.passes * 100);
-    return `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
-        `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
+    let html = '';
+    if (props.passes && props.observations) {
+        const pct = Math.round(props.persistence * 100);
+        const cfPct = Math.round(props.observations / props.passes * 100);
+        html += `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
+            `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
+    }
+    // openflaring score breakdown (S2 clusters only).
+    if (props.total_score != null) {
+        const signed = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+        const ratio = (props.max_ratio != null && isFinite(props.max_ratio))
+            ? props.max_ratio.toFixed(2) : '—';
+        html += (html ? '<br>' : '') +
+            `<span class="score-line">score <span class="sub-hi">${props.total_score.toFixed(2)}</span> = ` +
+            `spectral ${props.spectral_score.toFixed(2)} · ` +
+            `persist ${props.persistence_score.toFixed(2)} · ` +
+            `glint ${signed(props.glint_penalty)}</span>` +
+            `<br><span class="score-line">B12/B11 ratio <span class="sub-hi">${ratio}</span></span>`;
+    }
+    return html;
 }
 
 function showInfo(feature, { skipAutoSelect = false } = {}) {
@@ -1062,7 +1077,7 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
 
     const sub = document.getElementById('info-subtitle');
     if (sub) {
-        if (isVnf || props.terminal) {
+        if (isVnf || props.terminal || props.total_score != null) {
             sub.innerHTML = formatMetrics(props) ||
                 `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
         } else {
@@ -1070,9 +1085,14 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         }
     }
 
+    // Glint warning: a strongly negative glint_penalty means high-sun geometry
+    // with no flame spectral evidence across the cluster's looks — the
+    // openflaring replacement for the old Apr–Aug seasonal heuristic.
     const warn = document.getElementById('info-warning');
-    if (warn) warn.textContent = (!isVnf && props.seasonal)
-        ? 'Seasonal pattern, may be false positive' : '';
+    if (warn) {
+        warn.textContent = (!isVnf && props.glint_penalty != null && props.glint_penalty <= -0.5)
+            ? 'Possible sun glint — high-sun geometry, low spectral contrast' : '';
+    }
 
     let detections = props.detections || [];
     if (typeof detections === 'string') {
@@ -1456,6 +1476,10 @@ function crossDateCluster(allDetections) {
     // obsByBlock:    analysed entries (≤75% cloud, i.e. value !== false)
     const passesByBlock = new Map();
     const obsByBlock = new Map();
+    // Global cloud-free observation budget for the persistence_score denominator.
+    // A date is cloud-free if any block that date resolved to a coord (≤30% cloud,
+    // i.e. an array value — not null/30-75% or false/skipped).
+    const obsByDate = new Map();
     processedMap.forEach((value, key) => {
         if (key.startsWith('__')) return;
         const i = key.lastIndexOf(':');
@@ -1466,13 +1490,22 @@ function crossDateCluster(allDetections) {
             if (!obsByBlock.has(bid)) obsByBlock.set(bid, new Set());
             obsByBlock.get(bid).add(date);
         }
+        const cloudFree = Array.isArray(value);
+        const prev = obsByDate.get(date);
+        if (!prev) obsByDate.set(date, { cloudFree });
+        else if (cloudFree) prev.cloudFree = true;
     });
 
-    // Delegate spatial clustering to s2-flares
+    // Delegate spatial clustering to s2-flares. The avg-B12 slider remains the
+    // active quality gate (unchanged for existing users). The openflaring score
+    // is computed for display only — not gated — until we commit to syncing the
+    // B12/B11 ratio (a binary-format change, deferred). `observations` gives the
+    // cloud-free denominator for both the persistence metric and persistence_score.
     const clusters = clusterDetections(allDetections, {
         mergeDistance: MERGE_DISTANCE_M,
         minDates: MERGE_DISTANCE_M === 0 ? 1 : 4,
         minAvgB12: CLUSTER_AVG_B12_MIN,
+        observations: obsByDate,
     });
 
     // Wrap s2-flares cluster results into GeoJSON Features with burnoff-specific
@@ -1541,6 +1574,14 @@ function crossDateCluster(allDetections) {
                 max_b12: cl.max_b12,
                 detection_count: cl.detection_count,
                 seasonal: cl.seasonal,
+                // openflaring quality score
+                total_score: cl.total_score,
+                spectral_score: cl.spectral_score,
+                persistence_score: cl.persistence_score,
+                glint_penalty: cl.glint_penalty,
+                max_ratio: cl.max_ratio,
+                min_glint: cl.min_glint,
+                glint_suspect: cl.glint_suspect,
                 persistence,
                 passes,
                 observations,

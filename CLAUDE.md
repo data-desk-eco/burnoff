@@ -127,14 +127,37 @@ Per-block pipeline (fused into minimal passes):
   8. Cluster filters: size, peak, peakedness, single-pixel, warm-region halo
   9. Overlap dedup: canonical block via floor(pixel / 256)
 
+Each detection also carries glint/spectral annotations (lib/detect.js):
+  - sun_elevation/sun_azimuth (STAC view extension, via stac.js)
+  - glint_angle = 90 - sun_elevation; glint_score (1.0 ≤25°, →0 at 65°)
+  - max_b11, b12_b11_ratio (flames are hot, ratio >~1.3; glint is flat ~1.0)
+
 Cross-date clustering (main thread, grid-indexed):
   - Anchor-based merge, configurable radius (0-200m, default 135m)
   - Minimum 4 distinct dates per cluster
-  - Minimum average B12 per cluster: 0.85 (adjustable via UI slider)
-  - Seasonal false-positive flag: clusters with all detections in <=3
-    consecutive months are marked (catches sun glint off flat surfaces)
+  - Minimum average B12 per cluster: 0.85 (adjustable via UI slider) — the
+    active quality gate
+  - Glint false-positive flag: clusters whose minimum per-look glint_score is
+    high (high-sun geometry across every look, no flame spectral evidence) are
+    warned. Derived from sun_elevation, so it works on synced detections too.
+    Replaces the old Apr–Aug seasonal heuristic.
   - Persistence metric: detections / observations per cluster
   - Cloud-free %: fraction of observations with ≤30% cloud (data quality indicator)
+
+Cluster quality score (openflaring methodology, lib/score.js) — computed and
+shown in the detail card, NOT yet a gate:
+  - total_score = spectral_score + persistence_score − glint_penalty
+  - spectral_score (0–1): step function on peak B12 saturation × B12/B11 ratio
+  - persistence_score (0–1): n_dates / (0.15 × cloud-free obs), clipped to 1
+  - glint_penalty (−1–0): keys off the cluster's MINIMUM per-look glint_score —
+    a real flare fires across many sun geometries so its min drops low;
+    geometric glint stays high. (openflaring's S3 corroboration term is dropped
+    — no Sentinel-3 client-side.)
+  - spectral_score needs B12/B11 ratio, which the binary sync codec does NOT
+    carry. So synced/legacy detections score spectral 0. Until the ratio is
+    added to the codec (a format change), the score is display-only and the
+    avg-B12 slider stays the gate. `clusterDetections` accepts an optional
+    `scoreThreshold` (default 0/off) for when that lands.
 ```
 
 ## VNF Data Pipeline
