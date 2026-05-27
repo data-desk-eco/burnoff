@@ -35,46 +35,14 @@ const OGIM_URL = OGIM_BUCKET ? `${OGIM_BUCKET}/ogim.pmtiles` : 'data/ogim.pmtile
 
 const VNF_BUCKET = document.querySelector('meta[name="vnf-bucket"]')?.content || '';
 const VNF_VERSION = document.querySelector('meta[name="vnf-version"]')?.content || '';
-const VNF_SESSION_KEY = 'vnf_url';
-
-async function deriveVNFUrl(password) {
-    const data = new TextEncoder().encode(password);
-    const hash = await crypto.subtle.digest('SHA-256', data);
-    const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
-    const base = `${VNF_BUCKET}/vnf-${hex.slice(0, 16)}.parquet`;
-    return VNF_VERSION && VNF_VERSION !== 'dev' ? `${base}?v=${VNF_VERSION}` : base;
-}
-
-function getVNFSession() {
-    const url = localStorage.getItem(VNF_SESSION_KEY);
-    // Invalidate cached URL if version changed (forces re-download)
-    if (url && VNF_VERSION && VNF_VERSION !== 'dev' && !url.includes('v=' + VNF_VERSION)) {
-        localStorage.removeItem(VNF_SESSION_KEY);
-        return null;
-    }
-    return url;
-}
-function setVNFSession(url) { localStorage.setItem(VNF_SESSION_KEY, url); }
-
-async function promptVNFPassword() {
-    const pw = prompt('VNF access key:');
-    if (!pw) return null;
-    const url = await deriveVNFUrl(pw);
-    // Verify the file exists with a HEAD request (strip query for check)
-    const bare = url.split('?')[0];
-    try {
-        const resp = await fetch(bare, { method: 'HEAD' });
-        if (!resp.ok) { alert('Invalid key'); return null; }
-    } catch { alert('Invalid key'); return null; }
-    setVNFSession(url);
-    return url;
-}
+// VNF parquet is public — no access key required. The filename is derived
+// from the build password at upload time (see `make vnf-upload`).
+const VNF_FILE = 'vnf-a35a6ae998275227.parquet';
 
 async function getVNFUrl() {
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
-    const cached = getVNFSession();
-    if (cached) return cached;
-    return promptVNFPassword();
+    const base = `${VNF_BUCKET}/${VNF_FILE}`;
+    return VNF_VERSION && VNF_VERSION !== 'dev' ? `${base}?v=${VNF_VERSION}` : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,6 +1132,9 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     // Hide/show mode-specific buttons (entire actions bar in VNF)
     const actions = document.querySelector('.panel-actions');
     if (actions) actions.style.display = isVnf ? 'none' : '';
+    // No CSV export in VNF mode (data comes straight from EOG)
+    const dlBtn = document.getElementById('download-btn');
+    if (dlBtn) dlBtn.style.display = isVnf ? 'none' : '';
 
     document.activeElement?.blur();
 
