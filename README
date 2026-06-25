@@ -30,9 +30,11 @@ How It Works
 
 Gas flares emit strongly in shortwave infrared. Burnoff reads
 cloud-optimised GeoTIFF bands (B12, B11, B8A) from Element84's STAC
-catalogue via windowed HTTP range requests, runs a multi-stage
-detection pipeline client-side in a Web Worker, and clusters
-detections across dates using anchor-based spatial merging.
+catalogue via windowed HTTP range requests, runs the shared s2-flares
+detector client-side in a Web Worker, and clusters detections across
+dates using anchor-based spatial merging. The detector, clustering and
+quality score are the s2-flares methodology core, vendored as a git
+submodule at web/vendor/s2-flares (github.com/data-desk-eco/s2-flares).
 
 Detection pipeline (per 256x256 pixel block):
   1. Cloud screening via SCL band
@@ -41,10 +43,13 @@ Detection pipeline (per 256x256 pixel block):
   4. Connected components, cluster quality filters, warm-region halo rejection
   5. Cross-date clustering (grid-indexed, anchor-based, configurable radius)
 
-Clusters with detections in only a narrow seasonal window (<=3
-consecutive months) are flagged as potential false positives -- this
-catches sun glint from flat surfaces like warehouse roofs and solar
-arrays.
+Each cluster carries a vision-validated quality score (display-only;
+the avg-B12 slider stays the active gate): a smooth B12/B11-ratio term,
+a clear-sky persistence term, and a geometric glint penalty. Clusters
+with a strongly negative glint penalty -- high-sun specular geometry
+across every look, no flame spectral evidence -- are flagged as
+possible sun glint. This replaces the old seasonal-window heuristic and,
+deriving from sun elevation, works on synced detections too.
 
 P2P sync: results are stored in a custom LWW-Map CRDT, persisted
 locally via IndexedDB, and synced across peers via WebRTC
@@ -54,24 +59,26 @@ DataChannels with a custom binary sync protocol.
 Project Structure
 
   web/
-    app.js              Map viewer, CRDT sync, cross-date clustering
-    detect.js           Detection algorithm (Web Worker)
+    app.js              Map viewer, CRDT sync, cross-date clustering + score UI
+    detect-worker.js    Web Worker driving the s2-flares detector per block
     crdt.js             LWW-Map CRDT with binary codec
     sync.js             Sync protocol, awareness, validation
     rtc.js              WebRTC DataChannel mesh
     store.js            IndexedDB persistence
-    utm.js              UTM <-> WGS84 projection
+    vnf.js              VIIRS Nightfire overlay
     terminals.geojson   LNG terminal locations (Global Energy Monitor)
     index.html          Entry point
     style.css           UI styles
+    vendor/s2-flares    Shared detection/clustering/score core (git submodule)
   signal/
-    server.js           WebSocket signaling relay (RFC 6455, zero dependencies)
-    Dockerfile          Cloud Run container for production signaling
-  test/                 Determinism + P2P tests
+    worker.js           Cloudflare Durable Object signaling (production)
+    server.js           WebSocket signaling relay for local dev (zero deps)
+  test/                 Determinism (incl. score) + P2P tests
 
-Zero npm dependencies. MapLibre GL and geotiff.js are loaded from
-CDN. Everything else -- CRDT, WebRTC mesh, sync protocol, IndexedDB
-persistence, UTM projection, and signaling -- uses browser and
+Zero npm dependencies. MapLibre GL and geotiff.js are vendored. The
+detector, clustering, quality score and UTM projection come from the
+s2-flares submodule; everything else -- CRDT, WebRTC mesh, sync
+protocol, IndexedDB persistence, signaling -- uses browser and
 Node.js builtins only.
 
 
