@@ -1043,7 +1043,7 @@ function formatMetrics(props) {
             ? props.max_ratio.toFixed(2) : '—';
         html += (html ? '<br>' : '') +
             `<span class="score-line">score <span class="sub-hi">${props.total_score.toFixed(2)}</span> = ` +
-            `spectral ${props.spectral_score.toFixed(2)} · ` +
+            `ratio ${props.ratio_score.toFixed(2)} · ` +
             `persist ${props.persistence_score.toFixed(2)} · ` +
             `glint ${signed(props.glint_penalty)}</span>` +
             `<br><span class="score-line">B12/B11 ratio <span class="sub-hi">${ratio}</span></span>`;
@@ -1090,7 +1090,7 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     // openflaring replacement for the old Apr–Aug seasonal heuristic.
     const warn = document.getElementById('info-warning');
     if (warn) {
-        warn.textContent = (!isVnf && props.glint_penalty != null && props.glint_penalty <= -0.5)
+        warn.textContent = (!isVnf && props.glint_penalty != null && props.glint_penalty <= -0.28)
             ? 'Possible sun glint — high-sun geometry, low spectral contrast' : '';
     }
 
@@ -1576,7 +1576,7 @@ function crossDateCluster(allDetections) {
                 seasonal: cl.seasonal,
                 // openflaring quality score
                 total_score: cl.total_score,
-                spectral_score: cl.spectral_score,
+                ratio_score: cl.ratio_score,
                 persistence_score: cl.persistence_score,
                 glint_penalty: cl.glint_penalty,
                 max_ratio: cl.max_ratio,

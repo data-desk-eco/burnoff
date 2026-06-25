@@ -144,20 +144,28 @@ Cross-date clustering (main thread, grid-indexed):
   - Persistence metric: detections / observations per cluster
   - Cloud-free %: fraction of observations with ≤30% cloud (data quality indicator)
 
-Cluster quality score (openflaring methodology, lib/score.js) — computed and
-shown in the detail card, NOT yet a gate:
-  - total_score = spectral_score + persistence_score − glint_penalty
-  - spectral_score (0–1): step function on peak B12 saturation × B12/B11 ratio
-  - persistence_score (0–1): n_dates / (0.15 × cloud-free obs), clipped to 1
-  - glint_penalty (−1–0): keys off the cluster's MINIMUM per-look glint_score —
-    a real flare fires across many sun geometries so its min drops low;
-    geometric glint stays high. (openflaring's S3 corroboration term is dropped
-    — no Sentinel-3 client-side.)
-  - spectral_score needs B12/B11 ratio, which the binary sync codec does NOT
-    carry. So synced/legacy detections score spectral 0. Until the ratio is
-    added to the codec (a format change), the score is display-only and the
-    avg-B12 slider stays the gate. `clusterDetections` accepts an optional
-    `scoreThreshold` (default 0/off) for when that lands.
+Cluster quality score (vision-validated methodology, lib/score.js) — computed
+and shown in the detail card, NOT yet a gate. The formula was tuned in
+~/Research/permian-flaring against an unbiased 2,826-site aerial study (sql/30):
+  - total_score = 0.50·ratio_score
+                + 0.40·persistence_score·(0.1 + 0.9·ratio_score)
+                − 0.40·min_glint_score        (range −0.40 … +0.90)
+  - ratio_score (0–1): smooth ramp on the B12/B11 ratio over 1.1→1.7 — the
+    strongest precision signal. Peak-B12 brightness is FLAT as a ranking term and
+    is dropped from the score (it is the recall floor, i.e. the avg-B12 gate).
+  - persistence_score (0–1): the clear-sky share lit, n_dates / cloud-free obs.
+    Its weight ramps with the ratio (the 0.1 floor keeps dim-but-real pads
+    ordered); a flat additive persistence rewarded static reflectors.
+  - glint_penalty (−0.40–0): linear in the cluster's MINIMUM per-look glint_score
+    — a real flare fires across many sun geometries so its min drops low;
+    geometric glint stays high. (permian's three hard gates — far-from-facility,
+    on-building, on-road — need ground layers unavailable client-side, so they do
+    not port; and openflaring's S3 corroboration term is dropped — no Sentinel-3.)
+  - ratio_score needs B12/B11, which the binary sync codec does NOT carry. So
+    synced/legacy detections have a null ratio and score on persistence·0.1 −
+    glint alone. Until the ratio is added to the codec (a format change), the
+    score is display-only and the avg-B12 slider stays the gate.
+    `clusterDetections` accepts an optional `scoreThreshold` (default 0/off).
 ```
 
 ## VNF Data Pipeline
