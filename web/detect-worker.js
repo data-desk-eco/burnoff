@@ -164,8 +164,8 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
                                 flare_lon: det.lon,
                                 flare_lat: det.lat,
                                 avg_b12: det.avg_b12,
-                                // openflaring glint/spectral annotations
-                                max_b11: det.max_b11,
+                                // s2-flares glint/spectral annotations
+                                peak_b11: det.peak_b11,
                                 b12_b11_ratio: det.b12_b11_ratio,
                                 sun_elevation: det.sun_elevation,
                                 sun_azimuth: det.sun_azimuth,

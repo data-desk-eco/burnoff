@@ -130,7 +130,7 @@ Per-block pipeline (fused into minimal passes):
 Each detection also carries glint/spectral annotations (lib/detect.js):
   - sun_elevation/sun_azimuth (STAC view extension, via stac.js)
   - glint_angle = 90 - sun_elevation; glint_score (1.0 ≤25°, →0 at 65°)
-  - max_b11, b12_b11_ratio (flames are hot, ratio >~1.3; glint is flat ~1.0)
+  - peak_b11, b12_b11_ratio (flames are hot, ratio >~1.3; glint is flat ~1.0)
 
 Cross-date clustering (main thread, grid-indexed):
   - Anchor-based merge, configurable radius (0-200m, default 135m)
@@ -160,7 +160,8 @@ and shown in the detail card, NOT yet a gate. The formula was tuned in
     — a real flare fires across many sun geometries so its min drops low;
     geometric glint stays high. (permian's three hard gates — far-from-facility,
     on-building, on-road — need ground layers unavailable client-side, so they do
-    not port; and openflaring's S3 corroboration term is dropped — no Sentinel-3.)
+    not port; and the retired openflaring score's S3 corroboration term is not
+    carried — no Sentinel-3 client-side.)
   - ratio_score needs B12/B11, which the binary sync codec does NOT carry. So
     synced/legacy detections have a null ratio and score on persistence·0.1 −
     glint alone. Until the ratio is added to the codec (a format change), the

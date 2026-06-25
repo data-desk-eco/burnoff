@@ -1036,7 +1036,7 @@ function formatMetrics(props) {
         html += `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
             `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
     }
-    // openflaring score breakdown (S2 clusters only).
+    // s2-flares vision-validated score breakdown (S2 clusters only).
     if (props.total_score != null) {
         const signed = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
         const ratio = (props.max_ratio != null && isFinite(props.max_ratio))
@@ -1087,7 +1087,7 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
 
     // Glint warning: a strongly negative glint_penalty means high-sun geometry
     // with no flame spectral evidence across the cluster's looks — the
-    // openflaring replacement for the old Apr–Aug seasonal heuristic.
+    // vision-validated replacement for the old Apr–Aug seasonal heuristic.
     const warn = document.getElementById('info-warning');
     if (warn) {
         warn.textContent = (!isVnf && props.glint_penalty != null && props.glint_penalty <= -0.28)
@@ -1497,9 +1497,9 @@ function crossDateCluster(allDetections) {
     });
 
     // Delegate spatial clustering to s2-flares. The avg-B12 slider remains the
-    // active quality gate (unchanged for existing users). The openflaring score
-    // is computed for display only — not gated — until we commit to syncing the
-    // B12/B11 ratio (a binary-format change, deferred). `observations` gives the
+    // active quality gate (unchanged for existing users). The vision-validated
+    // score is computed for display only — not gated — until we commit to syncing
+    // the B12/B11 ratio (a binary-format change, deferred). `observations` gives the
     // cloud-free denominator for both the persistence metric and persistence_score.
     const clusters = clusterDetections(allDetections, {
         mergeDistance: MERGE_DISTANCE_M,
@@ -1574,7 +1574,7 @@ function crossDateCluster(allDetections) {
                 max_b12: cl.max_b12,
                 detection_count: cl.detection_count,
                 seasonal: cl.seasonal,
-                // openflaring quality score
+                // s2-flares vision-validated quality score
                 total_score: cl.total_score,
                 ratio_score: cl.ratio_score,
                 persistence_score: cl.persistence_score,

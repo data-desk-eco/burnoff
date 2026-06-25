@@ -16,7 +16,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-// openflaring scoring methodology — imported from the shipped library so these
+// s2-flares vision-validated scoring — imported from the shipped library so these
 // tests exercise the real code, not a copy.
 import {
     scoreCluster, ratioScore, persistenceScore, glintPenalty,
