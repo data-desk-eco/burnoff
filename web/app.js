@@ -1036,18 +1036,6 @@ function formatMetrics(props) {
         html += `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
             `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
     }
-    // s2-flares vision-validated score breakdown (S2 clusters only).
-    if (props.total_score != null) {
-        const signed = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
-        const ratio = (props.max_ratio != null && isFinite(props.max_ratio))
-            ? props.max_ratio.toFixed(2) : '—';
-        html += (html ? '<br>' : '') +
-            `<span class="score-line">score <span class="sub-hi">${props.total_score.toFixed(2)}</span> = ` +
-            `ratio ${props.ratio_score.toFixed(2)} · ` +
-            `persist ${props.persistence_score.toFixed(2)} · ` +
-            `glint ${signed(props.glint_penalty)}</span>` +
-            `<br><span class="score-line">B12/B11 ratio <span class="sub-hi">${ratio}</span></span>`;
-    }
     return html;
 }
 
@@ -1083,15 +1071,6 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         } else {
             sub.textContent = '';
         }
-    }
-
-    // Glint warning: a strongly negative glint_penalty means high-sun geometry
-    // with no flame spectral evidence across the cluster's looks — the
-    // vision-validated replacement for the old Apr–Aug seasonal heuristic.
-    const warn = document.getElementById('info-warning');
-    if (warn) {
-        warn.textContent = (!isVnf && props.glint_penalty != null && props.glint_penalty <= -0.28)
-            ? 'Possible sun glint — high-sun geometry, low spectral contrast' : '';
     }
 
     let detections = props.detections || [];
