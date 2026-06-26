@@ -39,6 +39,11 @@ const VNF_VERSION = document.querySelector('meta[name="vnf-version"]')?.content 
 // from the build password at upload time (see `make vnf-upload`).
 const VNF_FILE = 'vnf-a35a6ae998275227.parquet';
 
+// s2-flares web API Function URL (raw mode). When set, detection runs in the
+// Lambda (which caches per tile in S3) instead of downloading COGs in-browser;
+// empty falls back to fully client-side detection. See <meta name="flare-api">.
+const FLARE_API = document.querySelector('meta[name="flare-api"]')?.content || '';
+
 async function getVNFUrl() {
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
     const base = `${VNF_BUCKET}/${VNF_FILE}`;
@@ -425,7 +430,7 @@ function startHelpingDetection(job, peerIndex, peerCount) {
         bbox: job.bbox, epsg: job.epsg,
         startDate: job.startDate, endDate: job.endDate,
         cachedBlockDates: getCachedBlockKeys(),
-        peerIndex, peerCount
+        peerIndex, peerCount, apiUrl: FLARE_API
     };
 
     _helpWorker.onmessage = function(e) {
@@ -1724,7 +1729,7 @@ function launchDetectWorker(job) {
         bbox: job.bbox, epsg: job.epsg,
         startDate: job.startDate, endDate: job.endDate,
         cachedBlockDates: cached,
-        peerIndex, peerCount
+        peerIndex, peerCount, apiUrl: FLARE_API
     };
 
     detectWorker.onmessage = function(e) {
