@@ -3,6 +3,7 @@ import { Store } from './store.js';
 import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, isReady as vnfReady } from './vnf.js';
+import { initS2Archive, queryS2Archive, isReady as s2ArchiveReady } from './s2archive.js';
 import { clusterDetections, isSeasonal } from './vendor/s2-flares/lib/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/lib/geo.js';
 
@@ -15,6 +16,8 @@ let _vnfInitStarted = false;
 let _vnfFeatures = null;   // cached VNF FeatureCollection (clustered)
 let _vnfRawFeatures = null; // raw features from last queryVNF
 let _vnfRefreshTimer = null;
+let _s2InitStarted = false;
+let _s2RefreshTimer = null;
 let _suppressHashUpdate = false; // avoid feedback loop during deep link nav
 
 /** Parse #vnf/{flare_id} from location hash. Returns flare ID or null. */
@@ -39,10 +42,13 @@ const VNF_VERSION = document.querySelector('meta[name="vnf-version"]')?.content 
 // from the build password at upload time (see `make vnf-upload`).
 const VNF_FILE = 'vnf-a35a6ae998275227.parquet';
 
-// s2-flares web API Function URL (raw mode). When set, detection runs in the
-// Lambda (which caches per tile in S3) instead of downloading COGs in-browser;
-// empty falls back to fully client-side detection. See <meta name="flare-api">.
-const FLARE_API = document.querySelector('meta[name="flare-api"]')?.content || '';
+// S2 mode reads precomputed detections straight from the CloudFerro parquet
+// archive (s2-flares `box.sh publish`). When set, panning the viewport queries the
+// archive — viewport tiles+dates enumerated via STAC, parquet objects range-read
+// directly (anonymous LIST is denied, so no glob). The in-browser COG worker
+// ("Detect" button) stays as the fallback for areas not yet archived.
+const S2_ARCHIVE = document.querySelector('meta[name="s2-archive"]')?.content || '';
+const S2_PRESET = document.querySelector('meta[name="s2-preset"]')?.content || 'loose';
 
 async function getVNFUrl() {
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
@@ -430,7 +436,7 @@ function startHelpingDetection(job, peerIndex, peerCount) {
         bbox: job.bbox, epsg: job.epsg,
         startDate: job.startDate, endDate: job.endDate,
         cachedBlockDates: getCachedBlockKeys(),
-        peerIndex, peerCount, apiUrl: FLARE_API
+        peerIndex, peerCount
     };
 
     _helpWorker.onmessage = function(e) {
@@ -635,6 +641,7 @@ function toggleQuarter(btn) {
         scheduleVNFRefresh();
     } else {
         updateDetectButton();
+        scheduleS2Refresh();
     }
 }
 
@@ -701,6 +708,48 @@ async function refreshVNF() {
 function scheduleVNFRefresh() {
     clearTimeout(_vnfRefreshTimer);
     _vnfRefreshTimer = setTimeout(refreshVNF, 200);
+}
+
+// ---------------------------------------------------------------------------
+// S2 archive mode — read precomputed detections straight from the parquet
+// archive for the current viewport. Falls back to whatever is already in the
+// CRDT (local-worker / synced detections) when the archive has nothing here.
+// ---------------------------------------------------------------------------
+
+async function refreshS2Archive() {
+    if (currentMode !== 's2' || !S2_ARCHIVE || _isDetecting) return;
+    if (!s2ArchiveReady() || map.getZoom() < MIN_DETECT_ZOOM) { updateDetectionSource(); return; }
+    const dateRange = getSelectedDateRange();
+    if (!dateRange) { updateDetectionSource(); return; }
+    try {
+        const { detections, observations } = await queryS2Archive(getViewportBbox(), dateRange.startDate, dateRange.endDate);
+        if (currentMode !== 's2' || _isDetecting) return;
+        if (!detections.length) { updateDetectionSource(); return; }
+        const features = crossDateCluster(detections, observations);
+        ensureDetectionLayer();
+        const src = map.getSource('client-detections');
+        if (src) src.setData({ type: 'FeatureCollection', features });
+    } catch (err) {
+        console.error('S2 archive query error:', err);
+        updateDetectionSource();
+    }
+}
+
+function scheduleS2Refresh() {
+    if (!S2_ARCHIVE) return;
+    clearTimeout(_s2RefreshTimer);
+    _s2RefreshTimer = setTimeout(refreshS2Archive, 200);
+}
+
+// Lazily spin up DuckDB for the archive, then refresh the viewport.
+function ensureS2Archive() {
+    if (!S2_ARCHIVE) return;
+    if (s2ArchiveReady()) { refreshS2Archive(); return; }
+    if (_s2InitStarted) return;
+    _s2InitStarted = true;
+    initS2Archive(S2_ARCHIVE, S2_PRESET)
+        .then(() => { if (currentMode === 's2') refreshS2Archive(); })
+        .catch(err => { console.error('S2 archive init error:', err); _s2InitStarted = false; });
 }
 
 function switchMode(mode) {
@@ -773,10 +822,11 @@ function switchMode(mode) {
             refreshVNF();
         }
     } else {
-        // Restore S2 features
+        // Restore S2 features, then overlay the archive for this viewport.
         rebuildDetections();
         ensureDetectionLayer();
         updateDetectionSource();
+        ensureS2Archive();
     }
 
     updateCirclePaint();
@@ -1452,7 +1502,10 @@ function findNearestTerminal(lat, lon) {
     return best && bestDist <= TERMINAL_MATCH_M ? { name: best.properties.name, distance: bestDist } : null;
 }
 
-function crossDateCluster(allDetections) {
+// `obs` (optional) overrides the persistence source: an array of
+// {block_id, date, cloudFree} records (the S2-archive path). When omitted, the
+// per-block/per-date observation budget is derived from processedMap as before.
+function crossDateCluster(allDetections, obs) {
     if (allDetections.length === 0) return [];
 
     // Per-block date sets for burnoff-specific persistence calculation
@@ -1464,21 +1517,26 @@ function crossDateCluster(allDetections) {
     // A date is cloud-free if any block that date resolved to a coord (≤30% cloud,
     // i.e. an array value — not null/30-75% or false/skipped).
     const obsByDate = new Map();
-    processedMap.forEach((value, key) => {
-        if (key.startsWith('__')) return;
-        const i = key.lastIndexOf(':');
-        const bid = key.substring(0, i), date = key.substring(i + 1);
+    const ingest = (bid, date, cloudFree, analysed) => {
         if (!passesByBlock.has(bid)) passesByBlock.set(bid, new Set());
         passesByBlock.get(bid).add(date);
-        if (value !== false) {
+        if (analysed) {
             if (!obsByBlock.has(bid)) obsByBlock.set(bid, new Set());
             obsByBlock.get(bid).add(date);
         }
-        const cloudFree = Array.isArray(value);
         const prev = obsByDate.get(date);
         if (!prev) obsByDate.set(date, { cloudFree });
         else if (cloudFree) prev.cloudFree = true;
-    });
+    };
+    if (obs) {
+        for (const o of obs) ingest(o.block_id, o.date, o.cloudFree === true, o.cloudFree !== false);
+    } else {
+        processedMap.forEach((value, key) => {
+            if (key.startsWith('__')) return;
+            const i = key.lastIndexOf(':');
+            ingest(key.substring(0, i), key.substring(i + 1), Array.isArray(value), value !== false);
+        });
+    }
 
     // Delegate spatial clustering to s2-flares. The avg-B12 slider remains the
     // active quality gate (unchanged for existing users). The vision-validated
@@ -1729,7 +1787,7 @@ function launchDetectWorker(job) {
         bbox: job.bbox, epsg: job.epsg,
         startDate: job.startDate, endDate: job.endDate,
         cachedBlockDates: cached,
-        peerIndex, peerCount, apiUrl: FLARE_API
+        peerIndex, peerCount
     };
 
     detectWorker.onmessage = function(e) {
@@ -1938,6 +1996,7 @@ map.on('moveend', () => {
         scheduleVNFRefresh();
     } else {
         updateDetectButton();
+        scheduleS2Refresh();
     }
 });
 

@@ -35,9 +35,17 @@ signal server's WebSocket framing — is hand-rolled using web standards.
      (B12, B11, B8A, SCL)
 ```
 
-**S2 mode:** Peers share a single CRDT document. When one peer starts
-detection, idle peers read the job from awareness state, partition blocks
-by hash, and process their share. Results merge via LWW-Map CRDT.
+**S2 mode:** The default data source reads precomputed detections straight
+from the CloudFerro public parquet archive (s2-flares `box.sh publish`):
+`web/s2archive.js` enumerates the viewport's tiles+dates via a STAC search,
+range-reads the matching `flares/preset=…/mgrs=…/date=…/data.parquet` objects
+with DuckDB-WASM (anonymous LIST is denied, so exact object keys — no glob),
+and feeds the rows through the same `crossDateCluster` path as live detection.
+The in-browser COG detection worker (`detect-worker.js`, the "Detect" button)
+is the fallback for areas not yet archived: peers share a single CRDT document,
+idle peers read the job from awareness state, partition blocks by hash, and
+process their share, merging results via LWW-Map CRDT. The archive base + preset
+are set via `<meta name="s2-archive">` / `<meta name="s2-preset">` in index.html.
 
 **VNF mode:** DuckDB-WASM queries a pre-built Parquet file (on GCS in
 production, local in dev) containing per-flare daily observations from
