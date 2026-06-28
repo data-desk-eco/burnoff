@@ -3,7 +3,7 @@ import { Store } from './store.js';
 import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isReady as vnfReady } from './vnf.js';
-import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady } from './s2archive.js';
+import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered } from './s2archive.js';
 import { clusterDetections, isSeasonal } from './vendor/s2-flares/lib/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/lib/geo.js';
 
@@ -752,7 +752,21 @@ function scheduleVNFRefresh() {
 // CRDT (local-worker / synced detections) when the archive has nothing here.
 // ---------------------------------------------------------------------------
 
+// Archive builds serve precomputed clusters, so the local-worker detect path — and
+// the P2P mesh that shares its workload — only make sense where the archive has no
+// coverage. Reveal Detect / peer status / merge slider there; hide them where the
+// archive serves. No-op in pure detect builds (no <meta s2-archive>), which always
+// expose the controls. Coverage is an in-memory bbox test (one listing at init).
+function updateS2Controls() {
+    if (!S2_ARCHIVE) return;
+    const show = currentMode === 's2' && s2ArchiveReady() &&
+        map.getZoom() >= MIN_DETECT_ZOOM && !isCovered(getViewportBbox()) && !_isDetecting;
+    for (const sel of ['#peer-status', '#detect-btn', '.cluster-slider'])
+        document.querySelector(sel).style.setProperty('display', show ? '' : 'none');
+}
+
 async function refreshS2Archive() {
+    updateS2Controls();
     if (currentMode !== 's2' || !S2_ARCHIVE || _isDetecting) return;
     if (!s2ArchiveReady() || map.getZoom() < MIN_DETECT_ZOOM) { updateDetectionSource(); return; }
     const dateRange = getSelectedDateRange();
@@ -867,6 +881,7 @@ function switchMode(mode) {
         ensureS2Archive();
     }
 
+    updateS2Controls();
     updateCirclePaint();
 }
 
@@ -2462,12 +2477,9 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => switchMode(btn.dataset.mode));
 });
 
-// Archive mode serves pre-computed clusters, so the local-worker detect path —
-// and the P2P mesh that shares its workload — never runs. Hide both controls.
-if (S2_ARCHIVE) {
-    for (const id of ['peer-status', 'detect-btn'])
-        document.getElementById(id)?.style.setProperty('display', 'none');
-}
+// Archive builds start with the detect/P2P controls hidden; updateS2Controls reveals
+// them once the viewport lands on an area outside the archive's MGRS coverage.
+if (S2_ARCHIVE) updateS2Controls();
 
 // Deep link: navigate to a VNF flare by hash (#vnf/12345)
 async function navigateToFlare(flareId) {

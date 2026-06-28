@@ -5,9 +5,44 @@
 // object with vendored DuckDB-WASM, load every cluster once, then serve each viewport
 // from memory (bbox + date-overlap filter). Zero npm dependencies.
 
-let conn = null, _initPromise = null, _base = '', _all = null;
+import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/lib/geo.js';
+
+let conn = null, _initPromise = null, _base = '', _all = null, _tiles = null;
 
 export function isReady() { return !!conn; }
+
+// MGRS 100km-square id (e.g. "39RWJ") -> [west, south, east, north] WGS84 bbox.
+// the archive is partitioned by MGRS tile, so its tile set is the coverage footprint.
+const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
+const MGRS_ROWS = 'ABCDEFGHJKLMNPQRSTUV';                 // 100km northing letters, period 2,000,000 m
+const MGRS_BANDS = 'CDEFGHJKLMNPQRSTUVWX';                // 8° latitude bands from -80°
+function mgrsTileBounds(id) {
+    const [, z, band, col, row] = /^(\d+)([C-X])([A-Z])([A-Z])$/.exec(id);
+    const zone = +z, isNorth = band >= 'N';
+    const east = (MGRS_COLS[(zone - 1) % 3].indexOf(col) + 1) * 1e5;
+    let north = (MGRS_ROWS.indexOf(row) + (zone % 2 ? 0 : 5)) * 1e5;   // even zones offset +500km
+    const ref = wgs84ToUtm((zone - 1) * 6 - 177, -80 + 8 * MGRS_BANDS.indexOf(band) + 4, zone, isNorth)[1];
+    north += Math.round((ref - north) / 2e6) * 2e6;                    // resolve 2,000,000 m ambiguity via band
+    const cs = [[east, north], [east + 1e5, north], [east, north + 1e5], [east + 1e5, north + 1e5]]
+        .map(([e, n]) => utmToWgs84(e, n, zone, isNorth));
+    return [Math.min(...cs.map(c => c[0])), Math.min(...cs.map(c => c[1])),
+            Math.max(...cs.map(c => c[0])), Math.max(...cs.map(c => c[1]))];
+}
+
+/** True if the viewport bbox overlaps any archived MGRS tile. Unknown coverage ⇒ true (assume archived). */
+export function isCovered([w, s, e, n]) {
+    if (!_tiles) return true;
+    return _tiles.some(([tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts);
+}
+
+/** One bucket listing at init: the `detections/mgrs=…` partitions are the coverage footprint. */
+async function loadTiles() {
+    try {
+        const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000`)).text();
+        const ids = new Set([...xml.matchAll(/detections\/mgrs=(\d+[C-X][A-Z]{2})/g)].map(m => m[1]));
+        _tiles = [...ids].map(mgrsTileBounds);
+    } catch { _tiles = null; }
+}
 
 /** Init DuckDB-WASM and remember the archive base URL. */
 export function initS2Archive(base) {
@@ -16,6 +51,7 @@ export function initS2Archive(base) {
 }
 
 async function _init() {
+    loadTiles();   // fire-and-forget; isCovered assumes archived until the listing lands
     const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
     const b = new URL('.', import.meta.url).href;
     const blob = new Blob([`importScripts("${b}vendor/duckdb/duckdb-browser-eh.worker.js");`], { type: 'text/javascript' });
