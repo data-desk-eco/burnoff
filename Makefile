@@ -43,11 +43,13 @@ web/vnf.parquet: scripts/build_vnf.py
 # vnf/data.parquet (mirrors detections/ and clusters/). Needs S3 credentials for the
 # bucket — e.g. `export $(openstack ec2 credentials list -f value -c Access -c Secret
 # | awk '{print "AWS_ACCESS_KEY_ID="$1; print "AWS_SECRET_ACCESS_KEY="$2}')`.
-ARCHIVE_ENDPOINT := https://s3.WAW3-2.cloudferro.com
+ARCHIVE_REGION   := WAW3-2
+ARCHIVE_ENDPOINT := https://s3.$(ARCHIVE_REGION).cloudferro.com
 ARCHIVE_BUCKET   := s2-flares-archive
 
 vnf-upload: web/vnf.parquet
-	aws --endpoint-url $(ARCHIVE_ENDPOINT) s3 cp web/vnf.parquet s3://$(ARCHIVE_BUCKET)/vnf/data.parquet
+	@test -n "$$AWS_ACCESS_KEY_ID" || { echo "Set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY first (openstack ec2 credentials list)"; exit 1; }
+	aws --endpoint-url $(ARCHIVE_ENDPOINT) --region $(ARCHIVE_REGION) s3 cp web/vnf.parquet s3://$(ARCHIVE_BUCKET)/vnf/data.parquet
 	@echo "Uploaded to s3://$(ARCHIVE_BUCKET)/vnf/data.parquet"
 
 vnf-deploy: vnf vnf-upload
