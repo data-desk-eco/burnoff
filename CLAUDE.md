@@ -108,7 +108,6 @@ scripts/
 signal/
   server.js           WebSocket signaling relay for local dev (RFC 6455 over node:http)
   worker.js           Cloudflare Worker + Durable Object signaling relay (production)
-  Dockerfile          Legacy Cloud Run container (unused)
 wrangler.toml         Cloudflare Worker config (Durable Object binding + migration)
 test/
   determinism.test.mjs       Detection + clustering determinism tests (node:test)

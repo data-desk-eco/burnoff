@@ -7,3 +7,4 @@ web/vnf_nightly*.parquet
 .venv/
 .claude/
 .wrangler/
+web/vendor/.ok
