@@ -1003,10 +1003,12 @@ function formatDate(dateStr) {
     return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
 }
 
-function copernicusUrl(lat, lon, date) {
+function copernicusUrl(date) {
     const from = `${date}T00:00:00.000Z`;
     const to = `${date}T23:59:59.999Z`;
-    return `https://browser.dataspace.copernicus.eu/?zoom=15&lat=${lat}&lng=${lon}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=6-SWIR&dateMode=SINGLE`;
+    const { lat, lng } = map.getCenter();
+    const zoom = Math.round(map.getZoom());
+    return `https://browser.dataspace.copernicus.eu/?zoom=${zoom}&lat=${lat}&lng=${lng}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=6-SWIR&dateMode=SINGLE`;
 }
 
 function setCirclesGreyed() {
@@ -2370,8 +2372,7 @@ document.getElementById('about-modal').addEventListener('click', function(e) {
 document.getElementById('download-btn').addEventListener('click', downloadFlareCSV);
 document.getElementById('open-image-btn').addEventListener('click', () => {
     if (!currentFeature || !selectedDetection) return;
-    const [lon, lat] = currentFeature.geometry.coordinates;
-    window.open(copernicusUrl(lat, lon, selectedDetection.date), '_blank');
+    window.open(copernicusUrl(selectedDetection.date), '_blank');
 });
 document.querySelector('.close-btn').addEventListener('click', closeInfo);
 document.getElementById('detect-btn').addEventListener('click', startDetection);
