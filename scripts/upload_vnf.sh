@@ -16,11 +16,16 @@ OPENRC=${OPENRC:-$HOME/Tools/s2-flares/cloud/s2-flares-openrc-2fa.sh}
 
 [ -f "$SRC" ] || { echo "missing $SRC — run 'make vnf' first"; exit 1; }
 
-# 1. openstack auth (skip if already authenticated this shell)
+# 1. openstack auth (skip if already authenticated this shell). the vendored openrc
+# is written for a lax shell — it references unset OS_* vars and has its own returns —
+# so source it with -eu off and restore IFS after (it leaves IFS=$'\n'), like box.sh.
 if ! openstack token issue >/dev/null 2>&1; then
     [ -f "$OPENRC" ] || { echo "no openstack auth and no openrc at $OPENRC (set OPENRC=...)"; exit 1; }
+    set +eu
     # shellcheck disable=SC1090
     source "$OPENRC"
+    set -eu
+    unset IFS
 fi
 
 # 2. ec2 (s3) credentials — reuse if present, else create (mirrors box.sh s3creds)
