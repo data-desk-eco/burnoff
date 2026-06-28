@@ -62,7 +62,8 @@ async function getVNFUrl() {
 // P2P sync (LWW-Map CRDT)
 // ---------------------------------------------------------------------------
 
-const MIN_DETECT_ZOOM = 11;
+const MIN_DETECT_ZOOM = 11;       // local-worker COG detect (heavy) + its controls
+const MIN_ARCHIVE_ZOOM = 4;       // displaying precomputed archive clusters (cheap, in-memory)
 const MIN_VNF_ZOOM = 6;
 let allRawDetections = [];
 let terminalFeatures = [];
@@ -773,7 +774,7 @@ function updateS2Controls() {
 async function refreshS2Archive() {
     updateS2Controls();
     if (currentMode !== 's2' || !S2_ARCHIVE || _isDetecting) return;
-    if (!s2ArchiveReady() || map.getZoom() < MIN_DETECT_ZOOM) { updateDetectionSource(); return; }
+    if (!s2ArchiveReady() || map.getZoom() < MIN_ARCHIVE_ZOOM) { updateDetectionSource(); return; }
     const dateRange = getSelectedDateRange();
     if (!dateRange) { updateDetectionSource(); return; }
     try {
