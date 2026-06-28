@@ -50,5 +50,17 @@ SET s3_access_key_id='$AK';
 SET s3_secret_access_key='$SK';
 COPY (SELECT * FROM read_parquet('$SRC')) TO 's3://$BUCKET/$KEY' (FORMAT parquet);
 "
-echo "done: https://s3.$REGION.cloudferro.com/$BUCKET/$KEY"
-echo "(if vnf/ isn't public yet, add s2-flares-archive/vnf/* to the bucket policy — see step 2)"
+echo "uploaded: https://s3.$REGION.cloudferro.com/$BUCKET/$KEY"
+
+# 4. ensure anonymous public-read covers vnf/ — applies the SAME policy box.sh's
+# publish() sets (detections/* + clusters/* + vnf/*), so there's no drift if either
+# is re-run. idempotent. s3api works against radosgw when region+endpoint are set.
+if command -v aws >/dev/null; then
+    env AWS_ACCESS_KEY_ID="$AK" AWS_SECRET_ACCESS_KEY="$SK" AWS_DEFAULT_REGION="$REGION" \
+      aws --endpoint-url "https://s3.$REGION.cloudferro.com" --no-cli-pager s3api put-bucket-policy \
+      --bucket "$BUCKET" --policy '{"Version":"2012-10-17","Statement":[{"Sid":"PublicReadArchive","Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::'"$BUCKET"'/detections/*","arn:aws:s3:::'"$BUCKET"'/clusters/*","arn:aws:s3:::'"$BUCKET"'/vnf/*"]},{"Sid":"PublicListArchive","Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::'"$BUCKET"'"]}]}' \
+      && echo "public-read policy ensured (detections/* clusters/* vnf/*)" \
+      || echo "WARN: couldn't set bucket policy — run '(cd ~/Tools/s2-flares && ./cloud/box.sh publish)' to make vnf/ public"
+else
+    echo "(aws cli not found — run '(cd ~/Tools/s2-flares && ./cloud/box.sh publish)' once to make vnf/ public)"
+fi
