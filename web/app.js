@@ -1045,7 +1045,7 @@ function buildLegendHTML(cfg) {
             ${new URLSearchParams(location.search).get('layer') === 'licenses' ? '<div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><rect x="1" y="1" width="8" height="8" fill="none" stroke="#6dd" stroke-width="1.2"/></svg>Licenses</div>' : ''}
             <label class="legend-item ogim-toggle-row">
                 <input type="checkbox" id="ogim-toggle"${_ogimVisible ? ' checked' : ''}>
-                <span>OGIM infrastructure</span>
+                <span>OGIM</span>
             </label>
             <div class="ogim-sub-items" id="ogim-legend-items" style="display:${_ogimVisible ? '' : 'none'}">
                 <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="0" y1="5" x2="10" y2="5" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/></svg>Pipelines</div>
