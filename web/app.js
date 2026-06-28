@@ -1141,6 +1141,28 @@ function utmBoundsToWgs84(utmBounds, epsg) {
     return [sw[0], sw[1], ne[0], ne[1]];
 }
 
+// Quarter-aware card metrics. Detections filter exactly to the selected quarters
+// (numerator). The cloud-free observation count has no per-date breakdown — the
+// archive carries only a cluster total — so the denominator is scaled by the share
+// of the cluster's active-quarter span the selection covers. Left as the published
+// totals when every quarter, or none, is selected.
+function quarterMetrics(props, dets, qKeys) {
+    const detection_count = dets.filter(d => dateInActiveQuarters(d.date, qKeys)).length;
+    let { observations, persistence } = props;
+    if (observations != null && dets.length) {
+        const qi = d => +d.date.slice(0, 4) * 4 + Math.floor((+d.date.slice(5, 7) - 1) / 3);
+        const idx = dets.map(qi), lo = Math.min(...idx), hi = Math.max(...idx);
+        let span = 0, sel = 0;
+        for (let i = lo; i <= hi; i++, span++)
+            if (!qKeys.size || qKeys.has(`${Math.floor(i / 4)}_${i % 4 + 1}`)) sel++;
+        if (sel < span) {
+            observations = Math.round(observations * sel / span);
+            persistence = observations > 0 ? Math.min(1, detection_count / observations) : 0;
+        }
+    }
+    return { detection_count, observations, persistence };
+}
+
 function formatMetrics(props) {
     if (!props.observations) return '';
     const pct = Math.round(props.persistence * 100);
@@ -1157,6 +1179,14 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         history.replaceState(null, '', `#vnf/${feature.properties.flare_id}`);
     }
     const props = feature.properties;
+
+    // Parse detections once; the active quarter selection drives both the list
+    // below and the headline metrics (numerator exactly, observation denominator
+    // scaled) — deselecting a quarter updates both, not just the map.
+    let allDets = props.detections || [];
+    if (typeof allDets === 'string') { try { allDets = JSON.parse(allDets); } catch (e) { allDets = []; } }
+    const qKeys = activeQuarterKeys();
+    const metrics = quarterMetrics(props, allDets, qKeys);
 
     setCirclesGreyed();
 
@@ -1175,21 +1205,15 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     const sub = document.getElementById('info-subtitle');
     if (sub) {
         if (isVnf || props.terminal || props.total_score != null) {
-            sub.innerHTML = formatMetrics(props) ||
-                `${props.detection_count} detection${props.detection_count !== 1 ? 's' : ''}`;
+            sub.innerHTML = formatMetrics(metrics) ||
+                `${metrics.detection_count} detection${metrics.detection_count !== 1 ? 's' : ''}`;
         } else {
             sub.textContent = '';
         }
     }
 
-    let detections = props.detections || [];
-    if (typeof detections === 'string') {
-        try { detections = JSON.parse(detections); } catch (e) { detections = []; }
-    }
-    // Card shows only detections in the selected quarter window — deselecting a
-    // quarter drops its detections here, not just on the map.
-    const qKeys = activeQuarterKeys();
-    detections = detections.filter(d => dateInActiveQuarters(d.date, qKeys));
+    // Card shows only detections in the selected quarter window (parsed above).
+    let detections = allDets.filter(d => dateInActiveQuarters(d.date, qKeys));
 
     const list = document.getElementById('events-list');
     list.innerHTML = '';
