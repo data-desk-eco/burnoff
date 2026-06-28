@@ -4,10 +4,11 @@ Client-side Sentinel-2 SWIR flare detection with P2P sync, plus a
 VIIRS Nightfire (VNF) mode for browsing EOG's satellite flare catalog.
 
 Zero npm dependencies. The only external libraries are MapLibre GL (map
-rendering), geotiff.js (COG reads), and DuckDB-WASM (VNF Parquet
-queries), all loaded from CDN. Everything else — CRDT, WebRTC mesh,
-sync protocol, IndexedDB persistence, UTM projection math, and the
-signal server's WebSocket framing — is hand-rolled using web standards.
+rendering), geotiff.js (COG reads), DuckDB-WASM (Parquet queries), and the
+s2-flares rust core compiled to wasm (the flare detector) — all vendored under
+`web/vendor/` and `web/s2/`. Everything else — CRDT, WebRTC mesh, sync protocol,
+IndexedDB persistence, UTM projection math, and the signal server's WebSocket
+framing — is hand-rolled using web standards.
 
 ## Architecture
 
@@ -31,7 +32,7 @@ signal server's WebSocket framing — is hand-rolled using web standards.
             │ HTTP range requests                    │
             ▼                                        ▼
      Element84 STAC API          DuckDB-WASM
-     Sentinel-2 L2A COGs         VNF Parquet (GCS)
+     Sentinel-2 L2A COGs         VNF Parquet (CloudFerro archive)
      (B12, B11, B8A, SCL)
 ```
 
@@ -44,15 +45,20 @@ cluster once, then serves each viewport from memory (bbox + date-overlap filter)
 `archiveFeature` maps a row straight to the Feature shape `crossDateCluster`
 emits, so the avg-B12 slider gates client-side but the server-side clustering is
 not re-run. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
-button) is the fallback for areas not yet archived: peers share a single CRDT
-document, idle peers read the job from awareness state, partition blocks by hash,
-and process their share, merging results via LWW-Map CRDT. The archive base is
-set via `<meta name="s2-archive">` in index.html.
+button) is the fallback for areas not yet archived: it runs the s2-flares rust core
+compiled to wasm (`web/s2/wasm/`, same methodology as the server-side archive; JS
+`detect.js` is the fallback), so peers share a single CRDT document, idle peers read
+the job from awareness state, partition blocks by hash, and process their share,
+merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**
+(`ensureDetect()` dynamically imports crdt/sync/rtc/store) only when the viewport
+sits outside the archive's coverage — a pure-archive session never fetches it. The
+archive base is set via `<meta name="s2-archive">` in index.html.
 
-**VNF mode:** DuckDB-WASM queries a pre-built Parquet file (on GCS in
-production, local in dev) containing per-flare daily observations from
-EOG profile CSVs. Each row has `clear`/`detected` booleans for real
-cloud-free persistence metrics.
+**VNF mode:** DuckDB-WASM queries a pre-built Parquet file containing per-flare
+daily observations from EOG profile CSVs. In production it lives in the shared
+s2-flares CloudFerro archive at `vnf/data.parquet` (`<meta name="vnf-url">`); dev
+falls back to a local `web/vnf.parquet`. Each row has `clear`/`detected` booleans
+for real cloud-free persistence metrics.
 
 ## Commands
 
@@ -61,7 +67,7 @@ make serve        # Dev server on :8000 + signaling on :4444
 make signal       # Signaling server only
 make test         # Run determinism tests
 make vnf          # Build VNF parquet from EOG profile CSVs
-make vnf-upload   # Upload VNF parquet to GCS
+make vnf-upload   # Upload VNF parquet to the s2-flares archive (vnf/data.parquet)
 make deploy       # Deploy signaling worker to Cloudflare
 git push          # Deploy static site via GitHub Pages (auto on push to main)
 ```
@@ -75,14 +81,23 @@ Tests use `node:test` and `node:assert`.
 
 ```
 web/
-  app.js              Main thread: map, UI, CRDT sync, cross-date clustering
+  app.js              Main thread orchestrator: map setup, mode switching, UI,
+                      info card, lazy CRDT wiring (ensureDetect)
+  map-style.js        MapLibre base style + magma colour ramp
+  render.js           Mode config + colour/radius/legend expression builders
+  clustering.js       Terminal grid + archive/VNF feature builders
+  duckdb.js           Shared DuckDB-WASM bootstrap (openDuckDB) for vnf + archive
   vnf.js              VNF data module: DuckDB-WASM Parquet queries
-  detect-worker.js    Module Web Worker: delegates to s2-flares for detection
-  vendor/s2-flares/   Shared detection library (git submodule)
-  crdt.js             LWW-Map CRDT with binary codec
-  sync.js             Sync protocol, awareness, validation
-  rtc.js              WebRTC DataChannel mesh (raw RTCPeerConnection)
-  store.js            IndexedDB persistence with batched flushes
+  s2archive.js        S2 archive reader: DuckDB-WASM over the cluster parquet
+  detect-worker.js    Module Web Worker: wasm block detector (JS fallback) + COG I/O
+  s2/                 The s2-flares methodology core, adopted in-tree (no submodule):
+                      stac/cog/geo I/O + cluster/score JS + the rust core compiled to
+                      wasm in s2/wasm/. detect-worker runs the wasm; detect.js is the
+                      JS fallback, so Detect uses the same methodology as the archive.
+  crdt.js             LWW-Map CRDT with binary codec   (lazy: loaded outside coverage)
+  sync.js             Sync protocol, awareness, validation              (lazy)
+  rtc.js              WebRTC DataChannel mesh (raw RTCPeerConnection)   (lazy)
+  store.js            IndexedDB persistence with batched flushes        (lazy)
   terminals.geojson   LNG terminal locations (Global Energy Monitor)
   index.html          Entry point
   style.css           UI styles
@@ -104,9 +119,10 @@ test/
 
 | Library | Purpose | Loaded from |
 |---------|---------|-------------|
-| MapLibre GL 5.1 | WebGL map rendering | CDN (`<script>`) |
-| geotiff.js 2.1 | Cloud Optimized GeoTIFF reads | Vendored in s2-flares submodule |
-| DuckDB-WASM 1.29 | VNF Parquet queries | CDN (`import()`) |
+| MapLibre GL 5.1 | WebGL map rendering | Vendored (`web/vendor/`) |
+| geotiff.js 2.1 | Cloud Optimized GeoTIFF reads | Vendored in `web/s2/vendor/` (ESM, one copy) |
+| s2-flares wasm 2.0 | Block flare detector (rust core) | Vendored in `web/s2/wasm/` |
+| DuckDB-WASM 1.29 | VNF + S2-archive Parquet queries | Vendored (`web/vendor/duckdb/`) |
 
 Everything else uses browser/Node.js builtins:
 WebRTC, IndexedDB, Web Workers, Fetch, Canvas, WebSocket,
