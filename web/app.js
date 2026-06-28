@@ -1006,7 +1006,7 @@ function formatDate(dateStr) {
 function copernicusUrl(lat, lon, date) {
     const from = `${date}T00:00:00.000Z`;
     const to = `${date}T23:59:59.999Z`;
-    return `https://browser.dataspace.copernicus.eu/?zoom=15&lat=${lat}&lng=${lon}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=1_TRUE_COLOR&dateMode=SINGLE`;
+    return `https://browser.dataspace.copernicus.eu/?zoom=15&lat=${lat}&lng=${lon}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=6-SWIR&dateMode=SINGLE`;
 }
 
 function setCirclesGreyed() {
