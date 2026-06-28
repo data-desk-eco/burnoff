@@ -8,3 +8,4 @@ web/vnf_nightly*.parquet
 .claude/
 .wrangler/
 web/vendor/.ok
+docs/
