@@ -1,4 +1,4 @@
-.PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy vnf-backfill profiles vendor help
+.PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy vnf-backfill vnf-backfill-deploy profiles vendor help
 
 terminals: web/terminals.geojson
 
@@ -49,6 +49,8 @@ vnf-deploy: vnf vnf-upload
 
 vnf-backfill:
 	uv run --with requests,beautifulsoup4,lxml,duckdb scripts/backfill_vnf.py
+
+vnf-backfill-deploy: vnf-backfill vnf-upload
 
 data/gem-extraction-tracker.xlsx:
 	curl -L -o $@ "https://globalenergymonitor.org/wp-content/uploads/2025/02/Global-Oil-and-Gas-Extraction-Tracker-Feb-2025.xlsx"

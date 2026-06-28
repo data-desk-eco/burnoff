@@ -8,8 +8,10 @@ profile-based parquet replaces everything, including these backfill rows.
 
 EOG credentials load from env → .env → gcloud Secret Manager (eog-env).
 
-If VNF_PASSWORD is set, downloads the current parquet from GCS before backfilling
-and uploads the result after.  Otherwise works with a local web/vnf.parquet.
+Downloads the current (public) parquet from the s2-flares archive first so rows
+append to the live file, then writes web/vnf.parquet. Uploading is a separate
+step — `make vnf-upload` (or `make vnf-backfill-deploy` to chain both). Set
+BACKFILL_SKIP_DOWNLOAD=1 to backfill a purely local web/vnf.parquet instead.
 
 Usage: uv run --with requests,beautifulsoup4,lxml,duckdb scripts/backfill_vnf.py
 """
@@ -41,53 +43,27 @@ def authenticate():
     return session
 
 
-def gcs_parquet_url():
-    """Derive GCS URL from VNF_PASSWORD, or return None."""
-    import hashlib
-    pw = os.environ.get("VNF_PASSWORD")
-    if not pw:
-        return None
-    h = hashlib.sha256(pw.encode()).hexdigest()[:16]
-    return f"https://storage.googleapis.com/burnoff-data/vnf-{h}.parquet"
+# VNF parquet lives in the shared s2-flares CloudFerro archive at a stable, public
+# key — download is anonymous; upload goes through scripts/upload_vnf.sh (auth + creds).
+ARCHIVE_URL = "https://s3.WAW3-2.cloudferro.com/s2-flares-archive/vnf/data.parquet"
 
 
-def download_from_gcs(url, dest):
-    """Download parquet from GCS. Returns True on success."""
+def download_archive(dest):
+    """Download the current (public) parquet from the archive. True on success."""
     import requests as req
     try:
-        resp = req.get(url, timeout=120)
+        resp = req.get(ARCHIVE_URL, timeout=120)
         if resp.ok:
             with open(dest, "wb") as f:
                 f.write(resp.content)
-            print(f"  Downloaded {len(resp.content) / 1e6:.1f} MB from GCS")
+            print(f"  Downloaded {len(resp.content) / 1e6:.1f} MB from the archive")
             return True
-        print(f"  GCS download failed: HTTP {resp.status_code}")
+        print(f"  Archive download failed: HTTP {resp.status_code}")
     except Exception as e:
-        print(f"  GCS download error: {e}")
+        print(f"  Archive download error: {e}")
     return False
 
 
-def upload_to_gcs(src):
-    """Upload parquet to GCS using gsutil/gcloud."""
-    import hashlib, subprocess
-    pw = os.environ.get("VNF_PASSWORD")
-    if not pw:
-        print("  No VNF_PASSWORD — skipping GCS upload")
-        return False
-    h = hashlib.sha256(pw.encode()).hexdigest()[:16]
-    dest = f"gs://burnoff-data/vnf-{h}.parquet"
-    try:
-        subprocess.run(
-            ["gcloud", "storage", "cp", src, dest],
-            check=True, capture_output=True, text=True,
-        )
-        print(f"  Uploaded to {dest}")
-        return True
-    except FileNotFoundError:
-        print("  gcloud CLI not found — skipping upload")
-    except subprocess.CalledProcessError as e:
-        print(f"  Upload failed: {e.stderr.strip()}")
-    return False
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
@@ -186,11 +162,10 @@ def main():
 
     db = duckdb.connect()
 
-    # Download from GCS if available
-    gcs_url = gcs_parquet_url()
-    if gcs_url and not os.environ.get("BACKFILL_SKIP_DOWNLOAD"):
-        print("Downloading current parquet from GCS...")
-        download_from_gcs(gcs_url, OUTPUT)
+    # Refresh from the (public) archive unless told to work purely locally
+    if not os.environ.get("BACKFILL_SKIP_DOWNLOAD"):
+        print("Downloading current parquet from the archive...")
+        download_archive(OUTPUT)
 
     # Load existing state
     flare_positions = load_flare_positions(db)
@@ -354,12 +329,7 @@ def main():
     size_mb = os.path.getsize(os.path.abspath(OUTPUT)) / 1e6
     print(f"  Written {total:,} rows ({size_mb:.1f} MB)")
 
-    # Upload to GCS
-    if gcs_url:
-        print("Uploading to GCS...")
-        upload_to_gcs(os.path.abspath(OUTPUT))
-
-    print("Done.")
+    print("Done. Run `make vnf-upload` to push web/vnf.parquet to the archive.")
 
 
 if __name__ == "__main__":
