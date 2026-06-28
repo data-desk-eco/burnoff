@@ -3,4 +3,7 @@
 data/
 web/data
 web/vnf.parquet
+web/vnf_nightly*.parquet
 .venv/
+.claude/
+.wrangler/

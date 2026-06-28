@@ -5,7 +5,7 @@
 // object with vendored DuckDB-WASM, load every cluster once, then serve each viewport
 // from memory (bbox + date-overlap filter). Zero npm dependencies.
 
-import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/lib/geo.js';
+import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 
 let conn = null, _initPromise = null, _base = '', _all = null, _tiles = null, _rings = null, _tilesPromise = null;
 

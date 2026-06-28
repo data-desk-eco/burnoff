@@ -1,4 +1,4 @@
-.PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy vnf-backfill accumulations profiles vendor help
+.PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy vnf-backfill profiles vendor help
 
 terminals: web/terminals.geojson
 
@@ -50,11 +50,6 @@ vnf-deploy: vnf vnf-upload
 vnf-backfill:
 	uv run --with requests,beautifulsoup4,lxml,duckdb scripts/backfill_vnf.py
 
-accumulations: web/accumulations.geojson
-
-web/accumulations.geojson: scripts/fetch_accumulations.py
-	uv run scripts/fetch_accumulations.py
-
 data/gem-extraction-tracker.xlsx:
 	curl -L -o $@ "https://globalenergymonitor.org/wp-content/uploads/2025/02/Global-Oil-and-Gas-Extraction-Tracker-Feb-2025.xlsx"
 
@@ -87,5 +82,4 @@ help:
 	@echo "make vnf-deploy - Build + upload VNF parquet (one step)"
 	@echo "make vnf-backfill - Backfill recent nightly VNF data into parquet"
 	@echo "make profiles    - Download VNF profiles for facility-adjacent flares"
-	@echo "make accumulations - Fetch oil/gas field polygons from MapStand"
 	@echo "make deploy     - Deploy signaling worker to Cloudflare"

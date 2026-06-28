@@ -9,10 +9,42 @@
  * archive (see s2archive.js), no COGs downloaded.
  */
 
-import { searchSTAC } from './vendor/s2-flares/lib/stac.js';
-import { openCOG, readWindow, enumerateBlocks } from './vendor/s2-flares/lib/cog.js';
-import { detectBlock, BLOCK_SIZE, BLOCK_OVERLAP } from './vendor/s2-flares/lib/detect.js';
-import { utmToWgs84, utmParams } from './vendor/s2-flares/lib/geo.js';
+import { searchSTAC } from './s2/stac.js';
+import { openCOG, readWindow, enumerateBlocks } from './s2/cog.js';
+import { detectBlock, BLOCK_SIZE, BLOCK_OVERLAP } from './s2/detect.js';
+import { utmToWgs84, utmParams } from './s2/geo.js';
+import initWasm, { detectBlock as wasmDetectBlock } from './s2/wasm/s2_flares_wasm.js';
+
+// The block detector is the one piece of compute we delegate to the s2-flares rust
+// core (compiled to wasm) — the SAME methodology the server-side archive run uses.
+// STAC/COG I/O and clustering stay JS (web/s2/). If the wasm can't initialise we
+// fall back to the JS port, so detection still works (matches "client-side fallback").
+let _wasmDetect = null;
+const _wasmReady = initWasm()
+    .then(() => { _wasmDetect = wasmDetectBlock; })
+    .catch(e => console.warn('wasm detector unavailable, using JS detector:', e?.message || e));
+
+// Run the block detector via wasm when available, else the JS port. Both take the
+// same band typed-arrays; the wasm shim wants a snake_case meta and returns
+// { detections (peak_img_row/col), cloud_free }, normalised here to the JS shape.
+function runDetectBlock(b12, b11, b8a, scl, m) {
+    if (_wasmDetect) {
+        try {
+            const r = _wasmDetect(b12, b11, b8a, scl, {
+                date: m.date, epsg: m.epsg, img_min_x: m.imgMinX, img_max_y: m.imgMaxY,
+                res_x: m.resX, res_y: m.resY, block_offset_x: m.x0, block_offset_y: m.y0,
+                width: m.w, height: m.h, mgrs: m.mgrs, scene: m.scene,
+                sun_elevation: m.sunElevation, sun_azimuth: m.sunAzimuth,
+            }, undefined);
+            return { detections: r.detections, cloudFree: r.cloud_free };
+        } catch (e) { _wasmDetect = null; console.warn('wasm detect failed → JS:', e?.message || e); }
+    }
+    return detectBlock(b12, b11, b8a, scl, {
+        date: m.date, epsg: m.epsg, imgMinX: m.imgMinX, imgMaxY: m.imgMaxY, resX: m.resX, resY: m.resY,
+        blockOffsetX: m.x0, blockOffsetY: m.y0, width: m.w, height: m.h,
+        sunElevation: m.sunElevation, sunAzimuth: m.sunAzimuth,
+    });
+}
 
 // Concurrency limits
 const IMG_CONCURRENCY = 2;
@@ -66,7 +98,7 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
     // Open auxiliary bands
     let b11Image = null, b8aImage = null, sclImage = null;
     const promises = [];
-    const { GeoTIFF } = await import('./vendor/s2-flares/lib/vendor/geotiff-esm.js');
+    const { GeoTIFF } = await import('./s2/vendor/geotiff-esm.js');
     promises.push(
         GeoTIFF.fromUrl(b11Url, { allowFullFile: false })
             .then(tiff => tiff.getImage())
@@ -138,14 +170,9 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
                     try { sclRaw = await readWindow(sclImage, windowArr); } catch (e) { /* skip */ }
                 }
 
-                const result = detectBlock(b12Raw, b11Raw, b8aRaw, sclRaw, {
-                    date: imgDate,
-                    epsg: itemEpsg,
-                    imgMinX, imgMaxY, resX, resY,
-                    blockOffsetX: x0,
-                    blockOffsetY: y0,
-                    width: w,
-                    height: h,
+                const result = runDetectBlock(b12Raw, b11Raw, b8aRaw, sclRaw, {
+                    date: imgDate, epsg: itemEpsg, imgMinX, imgMaxY, resX, resY,
+                    x0, y0, w, h, mgrs, scene: item.scene ?? item.id ?? '',
                     sunElevation, sunAzimuth,
                 });
 
@@ -156,8 +183,8 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
                     // Overlap dedup: only keep detections whose peak pixel falls in this block's canonical area
                     const kept = [];
                     for (const det of result.detections) {
-                        const canonRow = Math.floor(det._peakImgRow / BLOCK_SIZE);
-                        const canonCol = Math.floor(det._peakImgCol / BLOCK_SIZE);
+                        const canonRow = Math.floor((det.peak_img_row ?? det._peakImgRow) / BLOCK_SIZE);
+                        const canonCol = Math.floor((det.peak_img_col ?? det._peakImgCol) / BLOCK_SIZE);
                         if (canonRow === br && canonCol === bc) {
                             // Map s2-flares field names to burnoff's expected names
                             kept.push({
@@ -215,6 +242,7 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
 // ---------------------------------------------------------------------------
 
 async function detectLocally(job, cachedBlockDates) {
+    await _wasmReady; // pick wasm vs JS detector before the first block
     const { bbox, startDate, endDate } = job;
     progress('SEARCHING CATALOGUE', 0);
 
