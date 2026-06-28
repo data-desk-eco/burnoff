@@ -779,7 +779,9 @@ function switchMode(mode) {
     // Reconfigure sliders for current mode
     const clSlider = document.querySelector('.cluster-slider');
     const clRange = document.getElementById('cluster-range');
-    if (mode === 'vnf') {
+    // clustering is server-side in archive mode, so the merge-distance slider is
+    // inert there; only the local-worker detect fallback (no archive) honours it.
+    if (mode === 'vnf' || S2_ARCHIVE) {
         clSlider.style.display = 'none';
     } else {
         clSlider.style.display = '';
