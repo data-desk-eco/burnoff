@@ -578,8 +578,8 @@ async function updateQuarterIndicators() {
         if (ready && zoomOk) {
             try {
                 avail = isVnf
-                    ? await availableQuartersVNF(getViewportBbox(), GRID_START, GRID_END)
-                    : await availableQuartersS2(getViewportBbox());
+                    ? await availableQuartersVNF(padBbox(getViewportBbox()), GRID_START, GRID_END)
+                    : await availableQuartersS2(padBbox(getViewportBbox()));
             } catch (err) { console.error('quarter availability error:', err); }
         }
         btns.forEach(b => b.classList.toggle('unavailable', !!avail && !avail.has(key(b))));
@@ -1813,6 +1813,15 @@ function enrichVNFFeatures(features) {
 function getViewportBbox() {
     const bounds = map.getBounds();
     return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+}
+
+// expand a viewport bbox to at least `min` degrees per axis (centered). quarter
+// availability tests whether flares fall inside it; zoomed in far the raw viewport
+// is razor-thin, so every quarter greys out the moment you sit between flares. a
+// ~3 km floor makes availability reflect the surrounding area instead.
+function padBbox([w, s, e, n], min = 0.03) {
+    const dw = Math.max(0, (min - (e - w)) / 2), dh = Math.max(0, (min - (n - s)) / 2);
+    return [w - dw, s - dh, e + dw, n + dh];
 }
 
 function guessEpsg(bbox) {
