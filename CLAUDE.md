@@ -35,17 +35,19 @@ signal server's WebSocket framing — is hand-rolled using web standards.
      (B12, B11, B8A, SCL)
 ```
 
-**S2 mode:** The default data source reads precomputed detections straight
-from the CloudFerro public parquet archive (s2-flares `box.sh publish`):
-`web/s2archive.js` enumerates the viewport's tiles+dates via a STAC search,
-range-reads the matching `flares/preset=…/mgrs=…/date=…/data.parquet` objects
-with DuckDB-WASM (anonymous LIST is denied, so exact object keys — no glob),
-and feeds the rows through the same `crossDateCluster` path as live detection.
-The in-browser COG detection worker (`detect-worker.js`, the "Detect" button)
-is the fallback for areas not yet archived: peers share a single CRDT document,
-idle peers read the job from awareness state, partition blocks by hash, and
-process their share, merging results via LWW-Map CRDT. The archive base + preset
-are set via `<meta name="s2-archive">` / `<meta name="s2-preset">` in index.html.
+**S2 mode:** The default data source reads the precomputed *cluster view*
+straight from the CloudFerro public parquet archive (s2-flares `box.sh publish`).
+The archive co-produces a single derived object, `clusters/data.parquet` — one
+row per cluster (scalar score columns + a nested `detections` list).
+`web/s2archive.js` range-reads that one object with DuckDB-WASM, loads every
+cluster once, then serves each viewport from memory (bbox + date-overlap filter);
+`archiveFeature` maps a row straight to the Feature shape `crossDateCluster`
+emits, so the avg-B12 slider gates client-side but the server-side clustering is
+not re-run. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
+button) is the fallback for areas not yet archived: peers share a single CRDT
+document, idle peers read the job from awareness state, partition blocks by hash,
+and process their share, merging results via LWW-Map CRDT. The archive base is
+set via `<meta name="s2-archive">` in index.html.
 
 **VNF mode:** DuckDB-WASM queries a pre-built Parquet file (on GCS in
 production, local in dev) containing per-flare daily observations from

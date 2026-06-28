@@ -1,23 +1,17 @@
-// S2 archive reader — reads precomputed Sentinel-2 SWIR flare detections straight
-// from the CloudFerro public parquet archive (hive-partitioned by preset/mgrs/date)
-// via vendored DuckDB-WASM. The viewport's tiles+dates are enumerated with a STAC
-// search (no bucket LIST needed — anonymous listing is denied); the parquet objects
-// that exist are range-read directly. Zero npm dependencies.
-import { searchSTAC } from './vendor/s2-flares/lib/stac.js';
+// S2 archive reader — reads the precomputed Sentinel-2 SWIR flare *cluster view*
+// straight from the CloudFerro public parquet archive (s2-flares `box.sh archive`).
+// The archive co-produces a single derived view, `clusters/data.parquet`: one row per
+// cluster (scalar score columns + a nested `detections` list). We range-read that one
+// object with vendored DuckDB-WASM, load every cluster once, then serve each viewport
+// from memory (bbox + date-overlap filter). Zero npm dependencies.
 
-let conn = null, _initPromise = null, _base = '', _preset = 'loose';
-// the archive is immutable per session, so every probe/read is cached forever:
-const _exists = new Map(); // object url -> bool (HEAD probe)
-const _rows = new Map();   // object url -> detections[] (whole tile, parsed once)
-const _stac = new Map();   // snapped-bbox+dates key -> Promise<Map<url,{mgrs,date}>>
-const SNAP = 0.5;          // degrees; snap the viewport out to this grid so local pans reuse the STAC enumeration
+let conn = null, _initPromise = null, _base = '', _all = null;
 
 export function isReady() { return !!conn; }
 
-/** Init DuckDB-WASM and remember the archive base URL + preset. */
-export function initS2Archive(base, preset = 'loose') {
+/** Init DuckDB-WASM and remember the archive base URL. */
+export function initS2Archive(base) {
     _base = base.replace(/\/$/, '');
-    _preset = preset;
     return _initPromise ??= _init();
 }
 
@@ -32,83 +26,45 @@ async function _init() {
     await conn.query(`SET enable_object_cache=true`);
 }
 
-const objUrl = (mgrs, date) => `${_base}/flares/preset=${_preset}/mgrs=${mgrs}/date=${date}/data.parquet`;
 const num = v => v == null ? null : Number(v);
 
-/**
- * Enumerate the parquet objects covering a viewport, cached by the viewport
- * snapped out to the SNAP grid + date range. Panning within a snapped cell reuses
- * the STAC search (and the wider snapped area means the tiles are pre-fetched), so
- * local navigation issues no further STAC requests.
- */
-function enumScenes(bbox, startDate, endDate) {
-    const [w, s, e, n] = bbox;
-    const lo = (v, f) => f(v / SNAP) * SNAP;
-    const snap = [lo(w, Math.floor), lo(s, Math.floor), lo(e, Math.ceil), lo(n, Math.ceil)];
-    const key = [...snap, startDate, endDate].join(',');
-    let p = _stac.get(key);
-    if (!p) _stac.set(key, p = (async () => {
-        const scenes = new Map(); // url -> { mgrs, date }
-        for await (const it of searchSTAC(snap, startDate, endDate))
-            scenes.set(objUrl(it.mgrs, it.date), { mgrs: it.mgrs, date: it.date });
-        return scenes;
-    })());
-    return p;
-}
-
-/** Read whole tiles (no bbox filter) once and cache their parsed rows by object url. */
-async function readTiles(urls) {
-    for (const u of urls) _rows.set(u, []); // empty tiles still cache as "read"
-    const list = urls.map(u => `'${u}'`).join(',');
-    const res = await conn.query(`
-        SELECT mgrs, CAST(date AS VARCHAR) AS date, lon, lat,
-               max_b12, avg_b12, max_b11 AS peak_b11, b12_b11_ratio, pixels,
-               sun_elevation, sun_azimuth, glint_angle, glint_score
-        FROM read_parquet([${list}], hive_partitioning=true)
-    `);
-    for (let i = 0; i < res.numRows; i++) {
-        const r = res.get(i);
-        const mgrs = String(r.mgrs), date = String(r.date).slice(0, 10);
-        _rows.get(objUrl(mgrs, date))?.push({
-            date, mgrs, block_id: mgrs, block_row: 0, block_col: 0,
-            flare_lon: Number(r.lon), flare_lat: Number(r.lat),
-            max_b12: Number(r.max_b12), avg_b12: Number(r.avg_b12), pixels: Number(r.pixels),
-            peak_b11: num(r.peak_b11), b12_b11_ratio: num(r.b12_b11_ratio),
-            sun_elevation: num(r.sun_elevation), sun_azimuth: num(r.sun_azimuth),
-            glint_angle: num(r.glint_angle), glint_score: num(r.glint_score),
-        });
-    }
+/** Load every cluster row once (the view is one small global object) and cache it. */
+function loadAll() {
+    return _all ??= (async () => {
+        const res = await conn.query(`
+            SELECT lon, lat, max_b12, avg_b12, detection_count, date_count,
+                   CAST(first_date AS VARCHAR) AS first_date, CAST(last_date AS VARCHAR) AS last_date,
+                   persistence, seasonal, ratio_score, persistence_score, glint_penalty,
+                   total_score, max_ratio, min_glint, glint_suspect, to_json(detections) AS detections
+            FROM read_parquet('${_base}/clusters/data.parquet')`);
+        const out = [];
+        for (let i = 0; i < res.numRows; i++) {
+            const r = res.get(i);
+            out.push({
+                lon: Number(r.lon), lat: Number(r.lat),
+                max_b12: Number(r.max_b12), avg_b12: Number(r.avg_b12),
+                detection_count: Number(r.detection_count), date_count: Number(r.date_count),
+                first_date: String(r.first_date).slice(0, 10), last_date: String(r.last_date).slice(0, 10),
+                persistence: num(r.persistence), seasonal: !!r.seasonal,
+                ratio_score: num(r.ratio_score), persistence_score: num(r.persistence_score),
+                glint_penalty: num(r.glint_penalty), total_score: num(r.total_score),
+                max_ratio: num(r.max_ratio), min_glint: num(r.min_glint), glint_suspect: !!r.glint_suspect,
+                detections: JSON.parse(r.detections).map(d => ({ ...d, date: String(d.date).slice(0, 10) })),
+            });
+        }
+        return out;
+    })();
 }
 
 /**
- * Read all archived detections within a viewport bbox and date range.
- * Returns { detections, observations } shaped for crossDateCluster: detections use
- * burnoff field names (flare_lon/flare_lat, block_id=mgrs); observations is one
- * record per existing scene (a cloud-free pass, the persistence denominator).
- *
- * STAC enumeration and per-tile parquet reads are both cached, so panning within an
- * already-visited region is a pure in-memory bbox filter — no network requests.
+ * Precomputed clusters intersecting a viewport bbox + date window. The view is
+ * clustered over the whole archive, so the date window is an overlap filter on each
+ * cluster's [first_date, last_date]; the published scalar scores are passed through.
  */
 export async function queryS2Archive(bbox, startDate, endDate) {
     if (!conn) throw new Error('S2 archive not initialized');
-
-    const scenes = await enumScenes(bbox, startDate, endDate);
-    const urls = [...scenes.keys()];
-    await Promise.all(urls.filter(u => !_exists.has(u)).map(u =>
-        fetch(u, { method: 'HEAD' }).then(r => _exists.set(u, r.ok)).catch(() => _exists.set(u, false))));
-    const live = urls.filter(u => _exists.get(u));
-    if (!live.length) return { detections: [], observations: [] };
-
-    const missing = live.filter(u => !_rows.has(u));
-    if (missing.length) await readTiles(missing);
-
-    // Assemble from cache; filter to the live viewport bbox client-side.
     const [w, s, e, n] = bbox;
-    const detections = [];
-    for (const u of live)
-        for (const d of _rows.get(u) || [])
-            if (d.flare_lon >= w && d.flare_lon <= e && d.flare_lat >= s && d.flare_lat <= n)
-                detections.push(d);
-    const observations = live.map(u => ({ block_id: scenes.get(u).mgrs, date: scenes.get(u).date, cloudFree: true }));
-    return { detections, observations };
+    return (await loadAll()).filter(c =>
+        c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n &&
+        c.last_date >= startDate && c.first_date <= endDate);
 }

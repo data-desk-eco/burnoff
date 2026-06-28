@@ -48,7 +48,6 @@ const VNF_FILE = 'vnf-a35a6ae998275227.parquet';
 // directly (anonymous LIST is denied, so no glob). The in-browser COG worker
 // ("Detect" button) stays as the fallback for areas not yet archived.
 const S2_ARCHIVE = document.querySelector('meta[name="s2-archive"]')?.content || '';
-const S2_PRESET = document.querySelector('meta[name="s2-preset"]')?.content || 'loose';
 
 async function getVNFUrl() {
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
@@ -722,10 +721,10 @@ async function refreshS2Archive() {
     const dateRange = getSelectedDateRange();
     if (!dateRange) { updateDetectionSource(); return; }
     try {
-        const { detections, observations } = await queryS2Archive(getViewportBbox(), dateRange.startDate, dateRange.endDate);
+        const clusters = await queryS2Archive(getViewportBbox(), dateRange.startDate, dateRange.endDate);
         if (currentMode !== 's2' || _isDetecting) return;
-        if (!detections.length) { updateDetectionSource(); return; }
-        const features = crossDateCluster(detections, observations);
+        const features = clusters.filter(c => c.avg_b12 >= CLUSTER_AVG_B12_MIN).map(archiveFeature);
+        if (!features.length) { updateDetectionSource(); return; }
         ensureDetectionLayer();
         const src = map.getSource('client-detections');
         if (src) src.setData({ type: 'FeatureCollection', features });
@@ -747,7 +746,7 @@ function ensureS2Archive() {
     if (s2ArchiveReady()) { refreshS2Archive(); return; }
     if (_s2InitStarted) return;
     _s2InitStarted = true;
-    initS2Archive(S2_ARCHIVE, S2_PRESET)
+    initS2Archive(S2_ARCHIVE)
         .then(() => { if (currentMode === 's2') refreshS2Archive(); })
         .catch(err => { console.error('S2 archive init error:', err); _s2InitStarted = false; });
 }
@@ -1505,6 +1504,33 @@ function findNearestTerminal(lat, lon) {
 // `obs` (optional) overrides the persistence source: an array of
 // {block_id, date, cloudFree} records (the S2-archive path). When omitted, the
 // per-block/per-date observation budget is derived from processedMap as before.
+// Map a precomputed archive cluster (clusters/data.parquet row) to the same Feature
+// shape crossDateCluster emits, so rendering/detail/CSV are unchanged. The view is
+// pre-clustered server-side, so the avg-B12 slider gates these rows client-side and
+// the merge-distance/score controls don't re-run. The view carries no cloud counts,
+// so passes == cloud-free observations (derived from the published persistence).
+function archiveFeature(c) {
+    const terminal = findNearestTerminal(c.lat, c.lon);
+    const observations = c.persistence ? Math.round(c.detection_count / c.persistence) : c.date_count;
+    return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
+        properties: {
+            name: terminal ? terminal.name : `${c.detection_count} detection${c.detection_count !== 1 ? 's' : ''}`,
+            terminal: terminal?.name || null,
+            max_b12: c.max_b12, detection_count: c.detection_count, seasonal: c.seasonal,
+            total_score: c.total_score, ratio_score: c.ratio_score,
+            persistence_score: c.persistence_score, glint_penalty: c.glint_penalty,
+            max_ratio: c.max_ratio, min_glint: c.min_glint, glint_suspect: c.glint_suspect,
+            persistence: c.persistence, passes: observations, observations,
+            detections: c.detections.map(d => ({
+                date: d.date, max_b12: d.max_b12, pixels: d.pixels,
+                raw_lon: d.lon, raw_lat: d.lat, b12_corrected: d.max_b12,
+            })),
+        },
+    };
+}
+
 function crossDateCluster(allDetections, obs) {
     if (allDetections.length === 0) return [];
 
