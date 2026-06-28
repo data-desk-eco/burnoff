@@ -1087,13 +1087,8 @@ function utmBoundsToWgs84(utmBounds, epsg) {
 function formatMetrics(props) {
     if (!props.observations) return '';
     const pct = Math.round(props.persistence * 100);
-    let html = `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence`;
-    // archive rows carry no total-pass count, so report the cloud-free denominator
-    // alone; only the detect/VNF paths know passes and can show a cloud-free fraction.
-    html += props.passes
-        ? `,<br><span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${Math.round(props.observations / props.passes * 100)}%)`
-        : `, over <span class="sub-hi">${props.observations}</span> cloud-free observations`;
-    return html;
+    return `<span class="sub-hi">${pct}%</span> persistence<br>` +
+        `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${props.observations}</span> clear observations`;
 }
 
 function showInfo(feature, { skipAutoSelect = false } = {}) {
