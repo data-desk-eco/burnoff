@@ -1,9 +1,13 @@
 name: VNF daily backfill
 
+# DISABLED for now: the nightly schedule is commented out until the CloudFerro S3
+# secrets (CLOUDFERRO_S3_KEY / CLOUDFERRO_S3_SECRET) are added to the repo and a
+# manual run is confirmed green. See TODO.md. Trigger manually via the Actions tab
+# in the meantime. (gcloud auth stays — it's for EOG creds in Secret Manager, not
+# the parquet upload, which now goes to the s2-flares CloudFerro archive.)
 on:
-  schedule:
-    # Run daily at 10:00 UTC (after all VIIRS orbits for the previous day)
-    - cron: '0 10 * * *'
+  # schedule:
+  #   - cron: '0 10 * * *'   # daily 10:00 UTC, after the previous day's VIIRS orbits
   workflow_dispatch:
 
 jobs:
@@ -17,7 +21,9 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 lxml duckdb
+        run: |
+          pip install requests beautifulsoup4 lxml duckdb
+          curl -sL https://install.duckdb.org | sh   # duckdb CLI for upload_vnf.sh
 
       - name: Fetch shared skill libs
         env:
@@ -27,7 +33,7 @@ jobs:
             https://api.github.com/repos/data-desk-eco/.github/tarball/main | \
             tar -xz --strip-components=1 --wildcards '*/.claude'
 
-      - name: Authenticate with Google Cloud
+      - name: Authenticate with Google Cloud   # EOG credentials live in Secret Manager (eog-env)
         uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.GCS_SERVICE_ACCOUNT_KEY }}
@@ -35,7 +41,11 @@ jobs:
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Run backfill
+      - name: Backfill recent nightly rows
+        run: python scripts/backfill_vnf.py     # downloads the public archive parquet, appends
+
+      - name: Upload to the s2-flares archive
         env:
-          VNF_PASSWORD: ${{ secrets.VNF_PASSWORD }}
-        run: python scripts/backfill_vnf.py
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFERRO_S3_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFERRO_S3_SECRET }}
+        run: make vnf-upload                     # upload_vnf.sh uses the static AWS creds, no 2FA
