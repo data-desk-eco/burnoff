@@ -1083,13 +1083,14 @@ function utmBoundsToWgs84(utmBounds, epsg) {
 }
 
 function formatMetrics(props) {
-    let html = '';
-    if (props.passes && props.observations) {
-        const pct = Math.round(props.persistence * 100);
-        const cfPct = Math.round(props.observations / props.passes * 100);
-        html += `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence,<br>` +
-            `<span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${cfPct}%)`;
-    }
+    if (!props.observations) return '';
+    const pct = Math.round(props.persistence * 100);
+    let html = `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${pct}%</span> persistence`;
+    // archive rows carry no total-pass count, so report the cloud-free denominator
+    // alone; only the detect/VNF paths know passes and can show a cloud-free fraction.
+    html += props.passes
+        ? `,<br><span class="sub-hi">${props.passes}</span> passes, <span class="sub-hi">${props.observations}</span> cloud-free (${Math.round(props.observations / props.passes * 100)}%)`
+        : `, over <span class="sub-hi">${props.observations}</span> cloud-free observations`;
     return html;
 }
 
@@ -1508,7 +1509,9 @@ function findNearestTerminal(lat, lon) {
 // shape crossDateCluster emits, so rendering/detail/CSV are unchanged. The view is
 // pre-clustered server-side, so the avg-B12 slider gates these rows client-side and
 // the merge-distance/score controls don't re-run. The view carries no cloud counts,
-// so passes == cloud-free observations (derived from the published persistence).
+// only the published persistence, so we report the cloud-free observation count
+// (detections / persistence) and leave passes null — there is no total-pass figure
+// to compute a meaningful cloud-free fraction from.
 function archiveFeature(c) {
     const terminal = findNearestTerminal(c.lat, c.lon);
     const observations = c.persistence ? Math.round(c.detection_count / c.persistence) : c.date_count;
@@ -1522,7 +1525,7 @@ function archiveFeature(c) {
             total_score: c.total_score, ratio_score: c.ratio_score,
             persistence_score: c.persistence_score, glint_penalty: c.glint_penalty,
             max_ratio: c.max_ratio, min_glint: c.min_glint, glint_suspect: c.glint_suspect,
-            persistence: c.persistence, passes: observations, observations,
+            persistence: c.persistence, passes: null, observations,
             detections: c.detections.map(d => ({
                 date: d.date, max_b12: d.max_b12, pixels: d.pixels,
                 raw_lon: d.lon, raw_lat: d.lat, b12_corrected: d.max_b12,
