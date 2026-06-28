@@ -1,7 +1,7 @@
-import { LWWMap } from './crdt.js';
-import { Store } from './store.js';
-import { PeerMesh, geohash3 } from './rtc.js';
-import { SyncManager, validateDetection } from './sync.js';
+// crdt/sync/rtc/store are loaded lazily by ensureDetect() — only outside the
+// archive's coverage, where the Detect button + P2P mesh come into play. A
+// pure-archive session never fetches them. These bindings stay null until then.
+let LWWMap, Store, PeerMesh, geohash3, SyncManager, validateDetection;
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isReady as vnfReady } from './vnf.js';
 import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageMask, whenCovered } from './s2archive.js';
 import { clusterDetections } from './s2/cluster.js';
@@ -70,17 +70,16 @@ const MIN_VNF_ZOOM = 6;
 let allRawDetections = [];
 let terminalFeatures = [];
 
-const detectionMap = new LWWMap();
-const processedMap = new LWWMap();
-
-// Local persistence
-const store = new Store('burnoff');
+let detectionMap = null, processedMap = null, store = null, mesh = null, syncManager = null;
+let _detectReady = null;          // promise once ensureDetect() has fired
 
 // Signaling server URL
 const _sigMeta = document.querySelector('meta[name="signaling-url"]');
 const _sigUrl = _sigMeta
     ? _sigMeta.content
     : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:4444`;
+
+const AWARENESS_HEARTBEAT_MS = 15_000;
 
 /** Compute geo summary: precision-3 geohash set from processedMap locations. */
 function computeGeoSummary() {
@@ -95,66 +94,80 @@ function computeGeoSummary() {
     return hashes;
 }
 
-// P2P mesh
-const mesh = new PeerMesh({
-    signalingUrl: _sigUrl,
-    room: 'burnoff',
-    onPeerConnect: () => {},
-    onPeerDisconnect: () => {},
-    onMessage: () => {},
-    maxPeers: 8,
-    getGeoSummary: computeGeoSummary
-});
+// Lazily spin up the CRDT/P2P detection subsystem: import the modules, build the
+// LWW-Maps + mesh + store, restore IndexedDB, wire awareness. Fired the first time
+// the viewport sits outside the archive's coverage (updateS2Controls) or the user
+// hits Detect — and eagerly in pure-detect builds (no <meta s2-archive>). Idempotent.
+function ensureDetect() {
+    if (_detectReady) return _detectReady;
+    _detectReady = (async () => {
+        const [c, st, r, sy] = await Promise.all([
+            import('./crdt.js'), import('./store.js'), import('./rtc.js'), import('./sync.js')]);
+        ({ LWWMap } = c); ({ Store } = st); ({ PeerMesh, geohash3 } = r);
+        ({ SyncManager, validateDetection } = sy);
 
-const syncManager = new SyncManager({
-    detectionMap,
-    processedMap,
-    store,
-    mesh
-});
+        detectionMap = new LWWMap();
+        processedMap = new LWWMap();
+        store = new Store('burnoff');
+        mesh = new PeerMesh({
+            signalingUrl: _sigUrl, room: 'burnoff',
+            onPeerConnect: () => {}, onPeerDisconnect: () => {}, onMessage: () => {},
+            maxPeers: 8, getGeoSummary: computeGeoSummary
+        });
+        syncManager = new SyncManager({ detectionMap, processedMap, store, mesh });
 
-// Init: load from IndexedDB, then connect mesh
-(async () => {
-    await store.open();
-    await store.loadAll(detectionMap, processedMap);
+        // Re-render on CRDT change; sanitize remote entries.
+        detectionMap.onChange = (key, value, source) => {
+            if (source === 'remote') {
+                const clean = sanitizeDetections(key, value);
+                if (clean === null) {
+                    detectionMap.delete(key);
+                } else if (clean.length !== value.length) {
+                    const entry = detectionMap.getEntry(key);
+                    if (entry) detectionMap.set(key, clean, entry.ts, entry.peerId);
+                }
+            }
+            scheduleDetectionUpdate();
+        };
+        syncManager.onAwarenessChange(updatePeerStatus);
+        syncManager.onAwarenessChange(onAwarenessDetect);
+        syncManager.setLocalAwareness({ active: true, t: Date.now() });
+        window.addEventListener('beforeunload', () => {
+            syncManager.setLocalAwareness(null);
+            mesh.disconnect();
+        });
+        setInterval(() => {
+            const states = syncManager.getActiveStates();
+            const myState = states.get(mesh.localPeerId);
+            if (myState) syncManager.setLocalAwareness({ ...myState, t: Date.now() });
+        }, AWARENESS_HEARTBEAT_MS);
 
-    // Purge completion markers for the current (ongoing) quarter so the
-    // Detect button stays enabled for picking up new imagery.
-    const _now = new Date();
-    const _curQKey = `${_now.getFullYear()}_${Math.floor(_now.getMonth() / 3) + 1}`;
-    const staleQtrKeys = [];
-    processedMap.forEach((_v, key) => {
-        if (key.startsWith(`__qtr:${_curQKey}:`)) staleQtrKeys.push(key);
-    });
-    for (const key of staleQtrKeys) {
-        processedMap.delete(key);
-        store.delete('proc', key);
-    }
+        await store.open();
+        await store.loadAll(detectionMap, processedMap);
 
-    scheduleDetectionUpdate();
-    mesh.connect();
-})();
+        // Purge completion markers for the current (ongoing) quarter so the
+        // Detect button stays enabled for picking up new imagery.
+        const _now = new Date();
+        const _curQKey = `${_now.getFullYear()}_${Math.floor(_now.getMonth() / 3) + 1}`;
+        const staleQtrKeys = [];
+        processedMap.forEach((_v, key) => {
+            if (key.startsWith(`__qtr:${_curQKey}:`)) staleQtrKeys.push(key);
+        });
+        for (const key of staleQtrKeys) {
+            processedMap.delete(key);
+            store.delete('proc', key);
+        }
 
-// Set initial awareness
-syncManager.setLocalAwareness({ active: true, t: Date.now() });
-
-// Clear awareness on page unload
-window.addEventListener('beforeunload', () => {
-    syncManager.setLocalAwareness(null);
-    mesh.disconnect();
-});
-
-// Heartbeat: update timestamp every 15s
-const AWARENESS_HEARTBEAT_MS = 15_000;
-
-setInterval(() => {
-    const states = syncManager.getActiveStates();
-    const myState = states.get(mesh.localPeerId);
-    if (myState) syncManager.setLocalAwareness({ ...myState, t: Date.now() });
-}, AWARENESS_HEARTBEAT_MS);
+        scheduleDetectionUpdate();
+        updatePeerStatus();
+        updateQuarterIndicators();
+        mesh.connect();
+    })();
+    return _detectReady;
+}
 
 function getActiveStates() {
-    return syncManager.getActiveStates();
+    return syncManager ? syncManager.getActiveStates() : new Map();
 }
 
 // Initialize map
@@ -180,6 +193,7 @@ let _preSessionKeys = null;
 // ---------------------------------------------------------------------------
 
 function getCachedBlockKeys() {
+    if (!processedMap) return [];
     return Array.from(processedMap.keys()).filter(k => !k.startsWith('__'));
 }
 
@@ -208,6 +222,7 @@ function cacheBlockResult(blockId, date, detections, lat, lng, cloudFree) {
 // Rebuild allRawDetections from the full CRDT map
 function rebuildDetections() {
     allRawDetections = [];
+    if (!detectionMap) return;
     detectionMap.forEach(dets => {
         if (dets && dets.length > 0) {
             allRawDetections = allRawDetections.concat(dets);
@@ -239,23 +254,6 @@ function sanitizeDetections(key, dets) {
     return valid.length > 0 ? valid : null;
 }
 
-// Subscribe to CRDT changes
-detectionMap.onChange = (key, value, source) => {
-    if (source === 'remote') {
-        // Sanitize remote entries
-        const clean = sanitizeDetections(key, value);
-        if (clean === null) {
-            detectionMap.delete(key);
-        } else if (clean.length !== value.length) {
-            const entry = detectionMap.getEntry(key);
-            if (entry) {
-                detectionMap.set(key, clean, entry.ts, entry.peerId);
-            }
-        }
-    }
-    scheduleDetectionUpdate();
-};
-
 // Peer count indicator
 let _lastPeerCount = 0;
 function updatePeerStatus() {
@@ -272,10 +270,6 @@ function updatePeerStatus() {
     }
     if (peers !== _lastPeerCount) _lastPeerCount = peers;
 }
-
-syncManager.onAwarenessChange(updatePeerStatus);
-updatePeerStatus();
-
 
 // ---------------------------------------------------------------------------
 // Awareness helpers for distributed detection
@@ -352,8 +346,8 @@ function startHelpingDetection(job, peerIndex, peerCount) {
     _helpWorker.onerror = () => stopHelping();
 }
 
-// Awareness listener for distributed detection coordination
-syncManager.onAwarenessChange(() => {
+// Awareness listener for distributed detection coordination (registered in ensureDetect)
+function onAwarenessDetect() {
     // Requester: update worker partition without restarting
     if (_isDetecting && _currentJob) {
         const { peerIndex, peerCount } = getPeerPartition(_currentJob.id);
@@ -386,7 +380,7 @@ syncManager.onAwarenessChange(() => {
     } else if (!activeJob && _helpWorker) {
         stopHelping();
     }
-});
+}
 
 // Block grid is 256px at 20m = ~5120m ≈ 0.046° lat
 const BLOCK_DEG = 0.046;
@@ -397,6 +391,7 @@ const GRID_START = `${new Date().getFullYear() - 3}-01-01`;
 const GRID_END = `${new Date().getFullYear()}-12-31`;
 
 function getDetectedQuarters() {
+    if (!processedMap) return new Set();
     const bounds = map.getBounds();
     const vw = bounds.getWest(), vs = bounds.getSouth();
     const ve = bounds.getEast(), vn = bounds.getNorth();
@@ -659,6 +654,8 @@ function updateS2Controls() {
     if (!S2_ARCHIVE) return;
     const show = currentMode === 's2' && s2ArchiveReady() &&
         map.getZoom() >= MIN_DETECT_ZOOM && !isCovered(getViewportBbox()) && !_isDetecting;
+    // Outside archive coverage the Detect/P2P path is live — load the CRDT lazily.
+    if (show) ensureDetect();
     for (const sel of ['#peer-status', '#detect-btn', '.cluster-slider'])
         document.querySelector(sel).style.setProperty('display', show ? '' : 'none');
 }
@@ -1438,7 +1435,7 @@ function crossDateCluster(allDetections, obs) {
     };
     if (obs) {
         for (const o of obs) ingest(o.block_id, o.date, o.cloudFree === true, o.cloudFree !== false);
-    } else {
+    } else if (processedMap) {
         processedMap.forEach((value, key) => {
             if (key.startsWith('__')) return;
             const i = key.lastIndexOf(':');
@@ -1753,6 +1750,7 @@ function cleanupDetection() {
 }
 
 async function startDetection() {
+    await ensureDetect();
     if (detectWorker) { detectWorker.terminate(); detectWorker = null; }
     _isDetecting = true;
     _preSessionKeys = new Set(processedMap.keys());
@@ -2214,8 +2212,10 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
 });
 
 // Archive builds start with the detect/P2P controls hidden; updateS2Controls reveals
-// them once the viewport lands on an area outside the archive's MGRS coverage.
+// them — and lazily loads the CRDT — once the viewport lands outside MGRS coverage.
+// A pure-detect build (no archive) is all-detect, so load the CRDT up front.
 if (S2_ARCHIVE) updateS2Controls();
+else ensureDetect();
 
 // Deep link: navigate to a VNF flare by hash (#vnf/12345)
 async function navigateToFlare(flareId) {
