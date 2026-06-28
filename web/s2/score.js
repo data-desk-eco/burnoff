@@ -53,8 +53,8 @@ export const GLINT_RATIO_SUSPECT = 1.3;
 // ─── Glint geometry ──────────────────────────────────────────────────────────
 // glint_score is a pure function of sun elevation, so it never needs to be
 // stored or synced — recompute it from the (already-persisted) sun_elevation
-// wherever it's needed. This is the single source of truth (detect.js re-exports
-// these so callers can annotate detections at detection time).
+// wherever it's needed. This is the single source of truth; the test suite imports
+// these helpers directly to check the glint geometry.
 
 // Angle between the specularly-reflected sun direction and a nadir view. For S2
 // the view zenith is small (≤ 10°), so treating the view as nadir makes this just

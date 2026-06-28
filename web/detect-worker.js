@@ -10,40 +10,32 @@
  */
 
 import { searchSTAC } from './s2/stac.js';
-import { openCOG, readWindow, enumerateBlocks } from './s2/cog.js';
-import { detectBlock, BLOCK_SIZE, BLOCK_OVERLAP } from './s2/detect.js';
+import { openCOG, readWindow, enumerateBlocks, BLOCK_SIZE, BLOCK_OVERLAP } from './s2/cog.js';
 import { utmToWgs84, utmParams } from './s2/geo.js';
 import initWasm, { detectBlock as wasmDetectBlock } from './s2/wasm/s2_flares_wasm.js';
 
-// The block detector is the one piece of compute we delegate to the s2-flares rust
-// core (compiled to wasm) — the SAME methodology the server-side archive run uses.
-// STAC/COG I/O and clustering stay JS (web/s2/). If the wasm can't initialise we
-// fall back to the JS port, so detection still works (matches "client-side fallback").
+// The block detector is the s2-flares rust core, compiled to wasm — the SAME
+// methodology the server-side archive run uses; STAC/COG I/O and clustering stay JS
+// (web/s2/). There is no JS fallback detector: the app already hard-depends on
+// WebAssembly (DuckDB-WASM powers the archive + VNF modes), so a parallel JS port
+// would only ever run when the rest of the app is already dead — and a silently
+// drifting copy is exactly how the in-browser pixel counts diverged from the core.
 let _wasmDetect = null;
 const _wasmReady = initWasm()
     .then(() => { _wasmDetect = wasmDetectBlock; })
-    .catch(e => console.warn('wasm detector unavailable, using JS detector:', e?.message || e));
+    .catch(e => console.warn('wasm detector failed to initialise:', e?.message || e));
 
-// Run the block detector via wasm when available, else the JS port. Both take the
-// same band typed-arrays; the wasm shim wants a snake_case meta and returns
+// Run the block detector via wasm. The shim wants a snake_case meta and returns
 // { detections (peak_img_row/col), cloud_free }, normalised here to the JS shape.
 function runDetectBlock(b12, b11, b8a, scl, m) {
-    if (_wasmDetect) {
-        try {
-            const r = _wasmDetect(b12, b11, b8a, scl, {
-                date: m.date, epsg: m.epsg, img_min_x: m.imgMinX, img_max_y: m.imgMaxY,
-                res_x: m.resX, res_y: m.resY, block_offset_x: m.x0, block_offset_y: m.y0,
-                width: m.w, height: m.h, mgrs: m.mgrs, scene: m.scene,
-                sun_elevation: m.sunElevation, sun_azimuth: m.sunAzimuth,
-            }, undefined);
-            return { detections: r.detections, cloudFree: r.cloud_free };
-        } catch (e) { _wasmDetect = null; console.warn('wasm detect failed → JS:', e?.message || e); }
-    }
-    return detectBlock(b12, b11, b8a, scl, {
-        date: m.date, epsg: m.epsg, imgMinX: m.imgMinX, imgMaxY: m.imgMaxY, resX: m.resX, resY: m.resY,
-        blockOffsetX: m.x0, blockOffsetY: m.y0, width: m.w, height: m.h,
-        sunElevation: m.sunElevation, sunAzimuth: m.sunAzimuth,
-    });
+    if (!_wasmDetect) throw new Error('wasm flare detector unavailable');
+    const r = _wasmDetect(b12, b11, b8a, scl, {
+        date: m.date, epsg: m.epsg, img_min_x: m.imgMinX, img_max_y: m.imgMaxY,
+        res_x: m.resX, res_y: m.resY, block_offset_x: m.x0, block_offset_y: m.y0,
+        width: m.w, height: m.h, mgrs: m.mgrs, scene: m.scene,
+        sun_elevation: m.sunElevation, sun_azimuth: m.sunAzimuth,
+    }, undefined);
+    return { detections: r.detections, cloudFree: r.cloud_free };
 }
 
 // Concurrency limits
@@ -242,7 +234,11 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
 // ---------------------------------------------------------------------------
 
 async function detectLocally(job, cachedBlockDates) {
-    await _wasmReady; // pick wasm vs JS detector before the first block
+    await _wasmReady; // the wasm detector must be ready before the first block
+    if (!_wasmDetect) {
+        self.postMessage({ type: 'error', message: 'WebAssembly flare detector failed to initialise' });
+        return;
+    }
     const { bbox, startDate, endDate } = job;
     progress('SEARCHING CATALOGUE', 0);
 

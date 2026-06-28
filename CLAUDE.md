@@ -46,8 +46,10 @@ cluster once, then serves each viewport from memory (bbox + date-overlap filter)
 emits, so the avg-B12 slider gates client-side but the server-side clustering is
 not re-run. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
 button) is the fallback for areas not yet archived: it runs the s2-flares rust core
-compiled to wasm (`web/s2/wasm/`, same methodology as the server-side archive; JS
-`detect.js` is the fallback), so peers share a single CRDT document, idle peers read
+compiled to wasm (`web/s2/wasm/`), the SAME binary methodology as the server-side
+archive — there is no JS detector port (it drifted from the core and was removed; the
+app already hard-depends on wasm via DuckDB-WASM, so wasm-or-nothing loses no reach).
+Peers share a single CRDT document, idle peers read
 the job from awareness state, partition blocks by hash, and process their share,
 merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**
 (`ensureDetect()` dynamically imports crdt/sync/rtc/store) only when the viewport
@@ -89,11 +91,11 @@ web/
   duckdb.js           Shared DuckDB-WASM bootstrap (openDuckDB) for vnf + archive
   vnf.js              VNF data module: DuckDB-WASM Parquet queries
   s2archive.js        S2 archive reader: DuckDB-WASM over the cluster parquet
-  detect-worker.js    Module Web Worker: wasm block detector (JS fallback) + COG I/O
+  detect-worker.js    Module Web Worker: wasm block detector + COG I/O
   s2/                 The s2-flares methodology core, adopted in-tree (no submodule):
                       stac/cog/geo I/O + cluster/score JS + the rust core compiled to
-                      wasm in s2/wasm/. detect-worker runs the wasm; detect.js is the
-                      JS fallback, so Detect uses the same methodology as the archive.
+                      wasm in s2/wasm/. detect-worker runs the wasm — the same binary
+                      methodology as the archive; cog.js holds the block tiling glue.
   crdt.js             LWW-Map CRDT with binary codec   (lazy: loaded outside coverage)
   sync.js             Sync protocol, awareness, validation              (lazy)
   rtc.js              WebRTC DataChannel mesh (raw RTCPeerConnection)   (lazy)
@@ -153,7 +155,8 @@ Per-block pipeline (fused into minimal passes):
   8. Cluster filters: size, peak, peakedness, single-pixel, warm-region halo
   9. Overlap dedup: canonical block via floor(pixel / 256)
 
-Each detection also carries glint/spectral annotations (lib/detect.js):
+Each detection also carries glint/spectral annotations (s2-flares core; the
+glint geometry helpers are re-exported from `web/s2/score.js`):
   - sun_elevation/sun_azimuth (STAC view extension, via stac.js)
   - glint_angle = 90 - sun_elevation; glint_score (1.0 ≤25°, →0 at 65°)
   - peak_b11, b12_b11_ratio (flames are hot, ratio >~1.3; glint is flat ~1.0)
