@@ -1142,7 +1142,9 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     sorted.forEach(det => {
         const item = document.createElement('div');
         let isL1C = false;
-        if (!isVNF) {
+        // Archive detections have no COG (cluster view only) but still carry a date
+        // + raw point — clickable for the intensity halo and external "Open image".
+        if (!isVNF && !S2_ARCHIVE) {
             const url = det.cog_b12;
             isL1C = !url || typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif');
         }
@@ -1257,6 +1259,44 @@ function showVNFHeatFootprint(det) {
     map.setPaintProperty('basemap', 'raster-brightness-max', 0.25);
 }
 
+// Per-date halo for archive detections (no COG to render): a magma footprint at
+// the detection's raw point, sized by its B12 intensity. Mirrors showVNFHeatFootprint.
+function showS2HeatFootprint(det) {
+    if (!det || !currentFeature) return;
+    const lon = det.raw_lon ?? currentFeature.geometry.coordinates[0];
+    const lat = det.raw_lat ?? currentFeature.geometry.coordinates[1];
+    const b12 = det.max_b12 || det.b12_corrected || 0;
+    if (b12 <= 0) return;
+
+    const radiusM = 45 * Math.sqrt(b12);
+    const dLat = radiusM / 111320;
+    const dLon = radiusM / (111320 * Math.cos(lat * DEG_TO_RAD));
+
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const [r, g, b] = magmaColor(scaleT(MODE.s2, b12));
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, `rgba(${r},${g},${b},0.85)`);
+    grad.addColorStop(0.3, `rgba(${r},${g},${b},0.5)`);
+    grad.addColorStop(0.7, `rgba(${r},${g},${b},0.15)`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+
+    const coords = [
+        [lon - dLon, lat + dLat], [lon + dLon, lat + dLat],
+        [lon + dLon, lat - dLat], [lon - dLon, lat - dLat]
+    ];
+    map.addSource('cog-source', { type: 'image', url: canvas.toDataURL(), coordinates: coords });
+    map.addLayer({ id: 'cog-layer', type: 'raster', source: 'cog-source',
+        paint: { 'raster-opacity': 1, 'raster-resampling': 'linear' } }, 'client-detection-circles');
+
+    setCirclesGreyed();
+    map.setPaintProperty('basemap', 'raster-brightness-max', 0.25);
+}
+
 function closeInfo() {
     document.getElementById('info').classList.remove('visible');
     closeImagery();
@@ -1277,7 +1317,7 @@ async function loadImageryForDetection(det) {
     if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
     if (map.getSource('cog-source')) map.removeSource('cog-source');
 
-    if (!det?.cog_b12) return;
+    if (!det?.cog_b12) return void showS2HeatFootprint(det);
 
     const url = det.cog_b12;
     if (typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif')) {
