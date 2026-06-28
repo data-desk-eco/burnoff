@@ -331,7 +331,7 @@ function scheduleDetectionUpdate() {
         if (currentMode !== 's2') return;
         rebuildDetections();
         ensureDetectionLayer();
-        updateDetectionSource();
+        refreshS2View();
     }, 50);
 }
 
@@ -795,6 +795,12 @@ function scheduleS2Refresh() {
     clearTimeout(_s2RefreshTimer);
     _s2RefreshTimer = setTimeout(refreshS2Archive, 200);
 }
+
+// Refresh the whole s2 view. In archive builds the archive overlay owns the
+// `client-detections` source, so a plain updateDetectionSource() (CRDT only)
+// would wipe it — route through the archive path, which falls back to the CRDT
+// where the archive is empty. Used by the sync-debounce and slider callers.
+function refreshS2View() { if (S2_ARCHIVE) refreshS2Archive(); else updateDetectionSource(); }
 
 // Lazily spin up DuckDB for the archive, then refresh the viewport.
 function ensureS2Archive() {
@@ -1911,7 +1917,7 @@ function updateVNFSource() {
 
 function updateCurrentSource() {
     if (currentMode === 'vnf') updateVNFSource();
-    else updateDetectionSource();
+    else refreshS2View();
 }
 
 function reselectCurrentFeature() {
