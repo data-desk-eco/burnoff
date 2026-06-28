@@ -6,6 +6,8 @@ import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isRea
 import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageMask, whenCovered } from './s2archive.js';
 import { clusterDetections } from './s2/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
+import { MAP_STYLE, magmaColor } from './map-style.js';
+import { MODE, scaleT, scaleColor, chartNorm, buildLegendHTML, s2ColorExpr, vnfColorExpr, s2RadiusExpr, vnfRadiusExpr, formatDate } from './render.js';
 
 // ---------------------------------------------------------------------------
 // Mode state: 'vnf' or 's2'
@@ -158,117 +160,7 @@ function getActiveStates() {
 // Initialize map
 const map = new maplibregl.Map({
     container: 'map',
-    style: {
-        version: 8,
-        glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
-        sources: {
-            satellite: {
-                type: 'raster',
-                tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-                tileSize: 256
-            },
-            labels: {
-                type: 'vector',
-                url: 'https://tiles.openfreemap.org/planet',
-                attribution: '&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://openstreetmap.org">OSM</a>'
-            }
-        },
-        layers: [{
-            id: 'basemap',
-            type: 'raster',
-            source: 'satellite',
-            paint: { 'raster-saturation': -1, 'raster-brightness-max': 0.85 }
-        }, {
-            id: 'country-borders',
-            type: 'line',
-            source: 'labels',
-            'source-layer': 'boundary',
-            filter: ['==', ['get', 'admin_level'], 2],
-            paint: {
-                'line-color': 'rgba(255, 255, 255, 0.25)',
-                'line-width': ['interpolate', ['linear'], ['zoom'], 1, 0.5, 6, 1.5]
-            }
-        }, {
-            id: 'country-labels',
-            type: 'symbol',
-            source: 'labels',
-            'source-layer': 'place',
-            filter: ['==', ['get', 'class'], 'country'],
-            minzoom: 2,
-            layout: {
-                'symbol-sort-key': ['get', 'rank'],
-                'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
-                'text-font': ['Noto Sans Regular'],
-                'text-size': ['interpolate', ['linear'], ['zoom'], 2, 10, 6, 14],
-                'text-transform': 'uppercase',
-                'text-letter-spacing': 0.15,
-                'text-max-width': 8
-            },
-            paint: {
-                'text-color': 'rgba(255, 255, 255, 0.85)',
-                'text-halo-color': 'rgba(0, 0, 0, 0.6)',
-                'text-halo-width': 1.5
-            }
-        }, {
-            id: 'state-labels',
-            type: 'symbol',
-            source: 'labels',
-            'source-layer': 'place',
-            filter: ['==', ['get', 'class'], 'state'],
-            minzoom: 4,
-            layout: {
-                'symbol-sort-key': ['get', 'rank'],
-                'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
-                'text-font': ['Noto Sans Regular'],
-                'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 12],
-                'text-letter-spacing': 0.1,
-                'text-max-width': 8
-            },
-            paint: {
-                'text-color': 'rgba(255, 255, 255, 0.6)',
-                'text-halo-color': 'rgba(0, 0, 0, 0.5)',
-                'text-halo-width': 1
-            }
-        }, {
-            id: 'city-labels',
-            type: 'symbol',
-            source: 'labels',
-            'source-layer': 'place',
-            filter: ['in', ['get', 'class'], ['literal', ['city', 'town']]],
-            minzoom: 4,
-            layout: {
-                'symbol-sort-key': ['get', 'rank'],
-                'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
-                'text-font': ['Noto Sans Regular'],
-                'text-size': ['interpolate', ['linear'], ['zoom'], 4, 10, 10, 14, 14, 18],
-                'text-max-width': 8
-            },
-            paint: {
-                'text-color': 'rgba(255, 255, 255, 0.9)',
-                'text-halo-color': 'rgba(0, 0, 0, 0.6)',
-                'text-halo-width': 1.5
-            }
-        }, {
-            id: 'village-labels',
-            type: 'symbol',
-            source: 'labels',
-            'source-layer': 'place',
-            filter: ['in', ['get', 'class'], ['literal', ['village', 'suburb', 'neighbourhood']]],
-            minzoom: 10,
-            layout: {
-                'symbol-sort-key': ['get', 'rank'],
-                'text-field': ['coalesce', ['get', 'name:en'], ['get', 'name']],
-                'text-font': ['Noto Sans Regular'],
-                'text-size': ['interpolate', ['linear'], ['zoom'], 10, 10, 14, 14],
-                'text-max-width': 8
-            },
-            paint: {
-                'text-color': 'rgba(255, 255, 255, 0.7)',
-                'text-halo-color': 'rgba(0, 0, 0, 0.5)',
-                'text-halo-width': 1
-            }
-        }]
-    },
+    style: MAP_STYLE,
     center: [51.52, 25.92],
     zoom: 12,
     minZoom: 1.5,
@@ -909,7 +801,7 @@ function updateCoverageMask() {
 function updateLegend() {
     const legend = document.querySelector('.legend');
     if (!legend) return;
-    legend.innerHTML = buildLegendHTML(modeConf());
+    legend.innerHTML = buildLegendHTML(modeConf(), _ogimVisible);
 }
 
 function updateCirclePaint() {
@@ -919,161 +811,7 @@ function updateCirclePaint() {
     map.setPaintProperty('client-detection-circles', 'circle-radius', isVnf ? vnfRadiusExpr : s2RadiusExpr);
 }
 
-// ---------------------------------------------------------------------------
-// Magma color ramp (8-stop)
-// ---------------------------------------------------------------------------
-
-function magmaColor(t) {
-    t = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
-    const colors = [
-        [0, 0, 4], [40, 11, 84], [101, 21, 110], [159, 42, 99],
-        [212, 72, 66], [245, 125, 21], [250, 193, 39], [255, 255, 0]
-    ];
-    const idx = Math.min(Math.floor(t * (colors.length - 1)), colors.length - 2);
-    const f = t * (colors.length - 1) - idx;
-    const c1 = colors[idx], c2 = colors[idx + 1];
-    return [
-        Math.round(c1[0] + f * (c2[0] - c1[0])),
-        Math.round(c1[1] + f * (c2[1] - c1[1])),
-        Math.round(c1[2] + f * (c2[2] - c1[2]))
-    ];
-}
-
-function magmaHex(t) {
-    const [r, g, b] = magmaColor(t);
-    return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
-}
-
-// ---------------------------------------------------------------------------
-// Mode config — single source of truth for color, chart, legend, sliders
-// ---------------------------------------------------------------------------
-
-const RH_TO_MCM = 0.0315;
-
-const MODE = {
-    s2: {
-        label: 'B12 reflectance',
-        prop: 'max_b12',
-        col2: 'B12', col3: 'px',
-        stops: [0.9, 1.15, 1.5],
-        log: false,
-        chartRange: [0.85, 1.6],
-        filter: { min: 0, max: 1.5, step: 0.05, default: 0.85 },
-        formatFilter: v => v === 0 ? 'Off' : v.toFixed(2).replace(/^0\./, '.'),
-        yVal: d => d.b12_corrected,
-        formatVal: d => d.max_b12?.toFixed(2) || '-',
-        formatCount: d => String(d.pixels || '-'),
-        sentinel: null,
-        // Radius: linear in value, zoom-dependent [base, multiplier]
-        radiusZooms: [[0, 4, 4], [6, 6, 6], [10, 10, 8], [14, 12, 10]],
-    },
-    vnf: {
-        label: 'Radiant heat (MW)',
-        prop: 'max_rh',
-        col2: 'RH', col3: 'MCM/d',
-        stops: [1, 7, 20],
-        log: true,
-        chartRange: [0.5, 50],
-        filter: { min: 0, max: 10, step: 0.5, default: 3 },
-        formatFilter: v => v === 0 ? 'Off' : `${v} MW`,
-        yVal: d => d.rh_mw || 0,
-        formatVal: d => d.rh_mw >= 999 ? '-' : (d.rh_mw?.toFixed(1) || '-'),
-        formatCount: d => d.rh_mw >= 999 ? '-' : (d.rh_mw != null ? (d.rh_mw * RH_TO_MCM).toFixed(2) : '-'),
-        sentinel: 999,
-        // Radius: log in value, zoom-dependent [base, multiplier, cap]
-        radiusZooms: [[0, 4, 2, 8], [6, 6, 3, 12], [10, 8, 4, 14], [14, 10, 5, 16]],
-    }
-};
-
 function modeConf() { return MODE[currentMode] || MODE.s2; }
-
-// Normalize value to 0→1 on the mode's color scale (stops[0]→stops[2])
-function scaleT(cfg, val) {
-    const [lo, , hi] = cfg.stops;
-    const raw = cfg.log
-        ? Math.log(Math.max(lo, val) / lo) / Math.log(hi / lo)
-        : (val - lo) / (hi - lo);
-    // Map into [0.3, 1.0] of the magma ramp for visibility
-    return 0.3 + Math.max(0, Math.min(1, raw)) * 0.7;
-}
-
-function scaleColor(cfg, val) {
-    const [r, g, b] = magmaColor(scaleT(cfg, val));
-    return `rgb(${r},${g},${b})`;
-}
-
-// Normalize value to 0→1 on the chart y-axis (wider than color stops)
-function chartNorm(cfg, val) {
-    const [lo, hi] = cfg.chartRange;
-    if (cfg.log) return (Math.log(Math.max(lo, val)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo));
-    return (val - lo) / (hi - lo);
-}
-
-// Build MapLibre color interpolation expression from config
-function buildColorExpr(cfg) {
-    const prop = ['coalesce', ['get', cfg.prop], cfg.stops[0]];
-    const expr = cfg.log
-        ? ['interpolate', ['linear'], ['ln', ['+', prop, 1]]]
-        : ['interpolate', ['linear'], prop];
-    for (const stop of cfg.stops) {
-        if (cfg.log) expr.push(Math.log(stop + 1));
-        else expr.push(stop);
-        expr.push(magmaHex(scaleT(cfg, stop)));
-    }
-    return expr;
-}
-
-// Build MapLibre radius expression from config
-function buildRadiusExpr(cfg) {
-    const prop = ['coalesce', ['get', cfg.prop], cfg.log ? 1 : 0];
-    const scaled = cfg.log ? ['ln', ['+', prop, 1]] : prop;
-    const expr = ['interpolate', ['exponential', 1.5], ['zoom']];
-    for (const z of cfg.radiusZooms) {
-        if (cfg.log) {
-            const [zoom, base, mult, cap] = z;
-            expr.push(zoom, ['+', base, ['min', cap, ['*', scaled, mult]]]);
-        } else {
-            const [zoom, base, mult] = z;
-            expr.push(zoom, ['+', base, ['*', scaled, mult]]);
-        }
-    }
-    return expr;
-}
-
-// Build legend HTML from config
-function buildLegendHTML(cfg) {
-    const stops = [...cfg.stops].reverse(); // high to low
-    const items = stops.map((v, i) => {
-        const label = i === 0 ? `${v}+` : String(v);
-        return `<div class="legend-item"><div class="legend-circle" style="border-color: ${magmaHex(scaleT(cfg, v))}"></div>${label}</div>`;
-    }).join('\n            ');
-    return `
-            <h4 class="label-sm">${cfg.label}</h4>
-            ${items}
-            <h4 class="label-sm legend-section">Infrastructure</h4>
-            <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="1" y1="1" x2="9" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="1" x2="1" y2="9" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>LNG</div>
-            <label class="legend-item ogim-toggle-row">
-                <input type="checkbox" id="ogim-toggle"${_ogimVisible ? ' checked' : ''}>
-                <span>OGIM</span>
-            </label>
-            <div class="ogim-sub-items" id="ogim-legend-items" style="display:${_ogimVisible ? '' : 'none'}">
-                <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="0" y1="5" x2="10" y2="5" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/></svg>Pipelines</div>
-                <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><polygon points="5,1 9,5 5,9 1,5" fill="rgba(255,200,100,0.8)"/></svg>Facilities</div>
-                <div class="legend-item"><svg width="10" height="10" style="margin-right: 10px; flex-shrink: 0"><line x1="2" y1="2" x2="8" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><line x1="8" y1="2" x2="2" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>Wells</div>
-            </div>
-        `;}
-
-// Pre-built expressions (regenerated from config)
-const s2ColorExpr = buildColorExpr(MODE.s2);
-const vnfColorExpr = buildColorExpr(MODE.vnf);
-const s2RadiusExpr = buildRadiusExpr(MODE.s2);
-const vnfRadiusExpr = buildRadiusExpr(MODE.vnf);
-
-function formatDate(dateStr) {
-    if (!dateStr) return '-';
-    const d = new Date(dateStr);
-    return d.getDate() + ' ' + d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
-}
 
 function copernicusUrl(date) {
     const from = `${date}T00:00:00.000Z`;
