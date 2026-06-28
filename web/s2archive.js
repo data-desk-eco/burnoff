@@ -52,12 +52,21 @@ export function coverageMask() {
         geometry: { type: 'Polygon', coordinates: [world, ..._rings.map(asHole)] } }] };
 }
 
-/** One bucket listing at init: the `detections/mgrs=…` partitions are the coverage footprint. */
+/** Bucket listing at init: the `detections/mgrs=…` partitions are the coverage
+ *  footprint. Pages through every key (ListObjectsV2 caps a response at 1000) so the
+ *  coverage hint stays complete as the archive grows past one page. */
 function loadTiles() {
     return _tilesPromise ??= (async () => {
         try {
-            const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000`)).text();
-            const ids = new Set([...xml.matchAll(/detections\/mgrs=(\d+[C-X][A-Z]{2})/g)].map(m => m[1]));
+            const ids = new Set();
+            for (let token = ''; ;) {
+                const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000`
+                    + (token && `&continuation-token=${encodeURIComponent(token)}`))).text();
+                for (const m of xml.matchAll(/detections\/mgrs=(\d+[C-X][A-Z]{2})/g)) ids.add(m[1]);
+                if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
+                token = xml.match(/<NextContinuationToken>([^<]+)</)?.[1] ?? '';
+                if (!token) break;
+            }
             _rings = [...ids].map(mgrsTileRing);
             _tiles = _rings.map(ringBbox);
         } catch { _tiles = null; _rings = null; }
