@@ -2385,6 +2385,13 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => switchMode(btn.dataset.mode));
 });
 
+// Archive mode serves pre-computed clusters, so the local-worker detect path —
+// and the P2P mesh that shares its workload — never runs. Hide both controls.
+if (S2_ARCHIVE) {
+    for (const id of ['peer-status', 'detect-btn'])
+        document.getElementById(id)?.style.setProperty('display', 'none');
+}
+
 // Deep link: navigate to a VNF flare by hash (#vnf/12345)
 async function navigateToFlare(flareId) {
     _suppressHashUpdate = true;
