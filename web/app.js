@@ -567,12 +567,14 @@ function getDetectedQuarters() {
 
 // Mark each quarter button: 'detected' (local-worker S2, already processed) or
 // 'unavailable' (archive/VNF, no data in this viewport). A null `avail` means the
-// data source isn't ready / zoomed-out — leave everything enabled.
+// data source isn't ready / zoomed-out — leave everything enabled. Uncovered S2
+// viewports fall through to the detect branch (same coverage test that reveals the
+// Detect button) so quarters stay selectable for the local-worker fallback.
 async function updateQuarterIndicators() {
     const btns = document.querySelectorAll('.quarter-btn');
     const key = btn => `${btn.dataset.year}_${btn.dataset.quarter}`;
 
-    if (currentMode === 'vnf' || S2_ARCHIVE) {
+    if (currentMode === 'vnf' || (S2_ARCHIVE && isCovered(getViewportBbox()))) {
         btns.forEach(b => b.classList.remove('detected'));
         const isVnf = currentMode === 'vnf';
         const ready = isVnf ? vnfReady() : s2ArchiveReady();
