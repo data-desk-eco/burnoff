@@ -40,17 +40,10 @@ web/vnf.parquet: scripts/build_vnf.py
 	uv run --with duckdb scripts/build_vnf.py
 
 # VNF parquet ships to the shared s2-flares CloudFerro archive at the stable key
-# vnf/data.parquet (mirrors detections/ and clusters/). Needs S3 credentials for the
-# bucket — e.g. `export $(openstack ec2 credentials list -f value -c Access -c Secret
-# | awk '{print "AWS_ACCESS_KEY_ID="$1; print "AWS_SECRET_ACCESS_KEY="$2}')`.
-ARCHIVE_REGION   := WAW3-2
-ARCHIVE_ENDPOINT := https://s3.$(ARCHIVE_REGION).cloudferro.com
-ARCHIVE_BUCKET   := s2-flares-archive
-
+# vnf/data.parquet (mirrors detections/ and clusters/). The script sources openstack
+# auth, mints ec2/s3 creds if needed, and writes via duckdb httpfs (as box.sh does).
 vnf-upload: web/vnf.parquet
-	@test -n "$$AWS_ACCESS_KEY_ID" || { echo "Set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY first (openstack ec2 credentials list)"; exit 1; }
-	aws --endpoint-url $(ARCHIVE_ENDPOINT) --region $(ARCHIVE_REGION) s3 cp web/vnf.parquet s3://$(ARCHIVE_BUCKET)/vnf/data.parquet
-	@echo "Uploaded to s3://$(ARCHIVE_BUCKET)/vnf/data.parquet"
+	@bash scripts/upload_vnf.sh
 
 vnf-deploy: vnf vnf-upload
 
