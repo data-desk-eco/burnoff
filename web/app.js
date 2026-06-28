@@ -3,7 +3,7 @@ import { Store } from './store.js';
 import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isReady as vnfReady } from './vnf.js';
-import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered } from './s2archive.js';
+import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageMask, whenCovered } from './s2archive.js';
 import { clusterDetections, isSeasonal } from './vendor/s2-flares/lib/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/lib/geo.js';
 
@@ -894,6 +894,15 @@ function switchMode(mode) {
 
     updateS2Controls();
     updateCirclePaint();
+    updateCoverageMask();
+}
+
+// Refresh the coverage-spotlight overlay's data + visibility (s2 mode only).
+function updateCoverageMask() {
+    if (!map.getLayer('coverage-dark')) return;
+    const mask = coverageMask();
+    if (mask) map.getSource('coverage-mask')?.setData(mask);
+    map.setLayoutProperty('coverage-dark', 'visibility', currentMode === 's2' ? 'visible' : 'none');
 }
 
 function updateLegend() {
@@ -2170,6 +2179,20 @@ map.on('moveend', () => {
 
 map.on('load', () => {
     updateMapCentre();
+
+    // Coverage spotlight: dark fill over the whole globe with the archived MGRS
+    // tiles punched out as holes, so only covered ground stays lit. Sits just
+    // above the satellite basemap (below borders/labels/detections). Populated
+    // once the archive's tile listing lands; gated to s2 mode in switchMode.
+    if (S2_ARCHIVE) {
+        map.addSource('coverage-mask', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+        map.addLayer({
+            id: 'coverage-dark', type: 'fill', source: 'coverage-mask',
+            paint: { 'fill-color': '#000', 'fill-opacity': 0.72, 'fill-antialias': false }
+        }, 'country-borders');
+        updateCoverageMask();
+        whenCovered().then(updateCoverageMask);
+    }
 
     // Detections restored from IndexedDB + peers via onChange callback.
     scheduleDetectionUpdate();
