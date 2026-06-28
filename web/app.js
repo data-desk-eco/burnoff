@@ -39,11 +39,10 @@ maplibregl.addProtocol('pmtiles', _pmtilesProtocol.tile);
 const OGIM_BUCKET = document.querySelector('meta[name="ogim-bucket"]')?.content;
 const OGIM_URL = OGIM_BUCKET ? `${OGIM_BUCKET}/ogim.pmtiles` : 'data/ogim.pmtiles';
 
-const VNF_BUCKET = document.querySelector('meta[name="vnf-bucket"]')?.content || '';
-const VNF_VERSION = document.querySelector('meta[name="vnf-version"]')?.content || '';
-// VNF parquet is public — no access key required. The filename is derived
-// from the build password at upload time (see `make vnf-upload`).
-const VNF_FILE = 'vnf-a35a6ae998275227.parquet';
+// VNF parquet now lives in the shared s2-flares CloudFerro archive at a stable
+// key (vnf/data.parquet) — public-read, DuckDB range-reads it remotely. Set via
+// <meta name="vnf-url">; localhost (or an unset url) falls back to a local build.
+const VNF_URL = document.querySelector('meta[name="vnf-url"]')?.content || '';
 
 // S2 mode reads precomputed detections straight from the CloudFerro parquet
 // archive (s2-flares `box.sh publish`). When set, panning the viewport queries the
@@ -56,9 +55,8 @@ const S2_ARCHIVE = document.querySelector('meta[name="s2-archive"]')?.content ||
 if (S2_ARCHIVE) initS2Archive(S2_ARCHIVE);
 
 async function getVNFUrl() {
-    if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
-    const base = `${VNF_BUCKET}/${VNF_FILE}`;
-    return VNF_VERSION && VNF_VERSION !== 'dev' ? `${base}?v=${VNF_VERSION}` : base;
+    if (location.hostname === 'localhost' || !VNF_URL) return 'vnf.parquet';
+    return VNF_URL;
 }
 
 // ---------------------------------------------------------------------------

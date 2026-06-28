@@ -39,11 +39,16 @@ vnf: web/vnf.parquet
 web/vnf.parquet: scripts/build_vnf.py
 	uv run --with duckdb scripts/build_vnf.py
 
+# VNF parquet ships to the shared s2-flares CloudFerro archive at the stable key
+# vnf/data.parquet (mirrors detections/ and clusters/). Needs S3 credentials for the
+# bucket — e.g. `export $(openstack ec2 credentials list -f value -c Access -c Secret
+# | awk '{print "AWS_ACCESS_KEY_ID="$1; print "AWS_SECRET_ACCESS_KEY="$2}')`.
+ARCHIVE_ENDPOINT := https://s3.WAW3-2.cloudferro.com
+ARCHIVE_BUCKET   := s2-flares-archive
+
 vnf-upload: web/vnf.parquet
-	@test -f .env || { echo "Missing .env with VNF_PASSWORD"; exit 1; }
-	$(eval VNF_HASH := $(shell python3 -c "import hashlib; f=open('.env'); pw=[l.split('=',1)[1].strip() for l in f if l.startswith('VNF_PASSWORD=')][0]; print(hashlib.sha256(pw.encode()).hexdigest()[:16])"))
-	gcloud storage cp web/vnf.parquet gs://burnoff-data/vnf-$(VNF_HASH).parquet
-	@echo "Uploaded as vnf-$(VNF_HASH).parquet"
+	aws --endpoint-url $(ARCHIVE_ENDPOINT) s3 cp web/vnf.parquet s3://$(ARCHIVE_BUCKET)/vnf/data.parquet
+	@echo "Uploaded to s3://$(ARCHIVE_BUCKET)/vnf/data.parquet"
 
 vnf-deploy: vnf vnf-upload
 
@@ -78,7 +83,7 @@ help:
 	@echo "make vendor     - Download vendored dependencies (MapLibre, geotiff, DuckDB, Inter)"
 	@echo "make test       - Run determinism tests"
 	@echo "make vnf        - Build VNF parquet from EOG profile CSVs"
-	@echo "make vnf-upload - Upload VNF parquet to GCS"
+	@echo "make vnf-upload - Upload VNF parquet to the s2-flares archive (vnf/data.parquet)"
 	@echo "make vnf-deploy - Build + upload VNF parquet (one step)"
 	@echo "make vnf-backfill - Backfill recent nightly VNF data into parquet"
 	@echo "make profiles    - Download VNF profiles for facility-adjacent flares"
