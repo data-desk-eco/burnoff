@@ -60,6 +60,8 @@ async function _init() {
     conn = await db.connect();
     await conn.query(`SET enable_http_metadata_cache=true`);
     await conn.query(`SET enable_object_cache=true`);
+    loadAll();   // prime the full-archive cache now so the first viewport (or a
+                 // switch back from VNF) never has to wait on the parquet read
 }
 
 const num = v => v == null ? null : Number(v);

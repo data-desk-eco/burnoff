@@ -48,6 +48,9 @@ const VNF_FILE = 'vnf-a35a6ae998275227.parquet';
 // directly (anonymous LIST is denied, so no glob). The in-browser COG worker
 // ("Detect" button) stays as the fallback for areas not yet archived.
 const S2_ARCHIVE = document.querySelector('meta[name="s2-archive"]')?.content || '';
+// warm DuckDB + the full-archive cache at page parse, overlapping maplibre init,
+// so points are ready the moment s2 mode becomes active (incl. back from vnf).
+if (S2_ARCHIVE) initS2Archive(S2_ARCHIVE);
 
 async function getVNFUrl() {
     if (!VNF_BUCKET || location.hostname === 'localhost') return 'vnf.parquet';
