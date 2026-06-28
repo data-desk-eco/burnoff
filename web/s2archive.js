@@ -7,27 +7,30 @@
 
 import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/lib/geo.js';
 
-let conn = null, _initPromise = null, _base = '', _all = null, _tiles = null;
+let conn = null, _initPromise = null, _base = '', _all = null, _tiles = null, _rings = null, _tilesPromise = null;
 
 export function isReady() { return !!conn; }
 
-// MGRS 100km-square id (e.g. "39RWJ") -> [west, south, east, north] WGS84 bbox.
+// MGRS 100km-square id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
 // the archive is partitioned by MGRS tile, so its tile set is the coverage footprint.
 const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
 const MGRS_ROWS = 'ABCDEFGHJKLMNPQRSTUV';                 // 100km northing letters, period 2,000,000 m
 const MGRS_BANDS = 'CDEFGHJKLMNPQRSTUVWX';                // 8° latitude bands from -80°
-function mgrsTileBounds(id) {
+function mgrsTileRing(id) {
     const [, z, band, col, row] = /^(\d+)([C-X])([A-Z])([A-Z])$/.exec(id);
     const zone = +z, isNorth = band >= 'N';
     const east = (MGRS_COLS[(zone - 1) % 3].indexOf(col) + 1) * 1e5;
     let north = (MGRS_ROWS.indexOf(row) + (zone % 2 ? 0 : 5)) * 1e5;   // even zones offset +500km
     const ref = wgs84ToUtm((zone - 1) * 6 - 177, -80 + 8 * MGRS_BANDS.indexOf(band) + 4, zone, isNorth)[1];
     north += Math.round((ref - north) / 2e6) * 2e6;                    // resolve 2,000,000 m ambiguity via band
-    const cs = [[east, north], [east + 1e5, north], [east, north + 1e5], [east + 1e5, north + 1e5]]
+    const [sw, se, nw, ne] = [[east, north], [east + 1e5, north], [east, north + 1e5], [east + 1e5, north + 1e5]]
         .map(([e, n]) => utmToWgs84(e, n, zone, isNorth));
-    return [Math.min(...cs.map(c => c[0])), Math.min(...cs.map(c => c[1])),
-            Math.max(...cs.map(c => c[0])), Math.max(...cs.map(c => c[1]))];
+    return [sw, se, ne, nw, sw];   // [lng,lat] ring
 }
+const ringBbox = r => [Math.min(...r.map(c => c[0])), Math.min(...r.map(c => c[1])),
+                       Math.max(...r.map(c => c[0])), Math.max(...r.map(c => c[1]))];
+const ringArea = r => r.slice(1).reduce((a, c, i) => a + (r[i][0] * c[1] - c[0] * r[i][1]), 0);
+const asHole = r => ringArea(r) > 0 ? r.slice().reverse() : r;   // holes wind clockwise
 
 /** True if the viewport bbox overlaps any archived MGRS tile. Unknown coverage ⇒ true (assume archived). */
 export function isCovered([w, s, e, n]) {
@@ -35,13 +38,29 @@ export function isCovered([w, s, e, n]) {
     return _tiles.some(([tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts);
 }
 
+/** Resolves once the coverage footprint (MGRS tile listing) has been fetched. */
+export function whenCovered() { return _tilesPromise || Promise.resolve(); }
+
+/** A whole-world dark polygon with every archived MGRS tile punched out as a hole.
+ *  Drives the "globe darkened except covered tiles" spotlight overlay. Null until tiles load. */
+export function coverageMask() {
+    if (!_rings || !_rings.length) return null;
+    const world = [[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]];
+    return { type: 'FeatureCollection', features: [{
+        type: 'Feature', properties: {},
+        geometry: { type: 'Polygon', coordinates: [world, ..._rings.map(asHole)] } }] };
+}
+
 /** One bucket listing at init: the `detections/mgrs=…` partitions are the coverage footprint. */
-async function loadTiles() {
-    try {
-        const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000`)).text();
-        const ids = new Set([...xml.matchAll(/detections\/mgrs=(\d+[C-X][A-Z]{2})/g)].map(m => m[1]));
-        _tiles = [...ids].map(mgrsTileBounds);
-    } catch { _tiles = null; }
+function loadTiles() {
+    return _tilesPromise ??= (async () => {
+        try {
+            const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000`)).text();
+            const ids = new Set([...xml.matchAll(/detections\/mgrs=(\d+[C-X][A-Z]{2})/g)].map(m => m[1]));
+            _rings = [...ids].map(mgrsTileRing);
+            _tiles = _rings.map(ringBbox);
+        } catch { _tiles = null; _rings = null; }
+    })();
 }
 
 /** Init DuckDB-WASM and remember the archive base URL. */
