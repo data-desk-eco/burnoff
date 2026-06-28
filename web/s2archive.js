@@ -68,3 +68,18 @@ export async function queryS2Archive(bbox, startDate, endDate) {
         c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n &&
         c.last_date >= startDate && c.first_date <= endDate);
 }
+
+/** Set of `year_quarter` keys that have any detection in the viewport (all dates). */
+export async function availableQuartersS2(bbox) {
+    if (!conn) return new Set();
+    const [w, s, e, n] = bbox;
+    const qs = new Set();
+    for (const c of await loadAll()) {
+        if (c.lon < w || c.lon > e || c.lat < s || c.lat > n) continue;
+        for (const d of c.detections) {
+            const q = Math.floor((+d.date.slice(5, 7) - 1) / 3) + 1;
+            qs.add(`${d.date.slice(0, 4)}_${q}`);
+        }
+    }
+    return qs;
+}

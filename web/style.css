@@ -269,8 +269,16 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     color: var(--text-hint);
     background: transparent;
 }
+.quarter-btn.unavailable {
+    opacity: 0.3;
+    pointer-events: none;
+}
 .quarter-spacer {
     flex: 1;
+    /* match .quarter-btn's 1px border so flex distributes identical widths
+       (border-box flex-basis:0 still reserves the border, so a border-less
+       spacer would hand each sibling button ~1px extra and misalign columns) */
+    border: 1px solid transparent;
 }
 .cluster-slider, .intensity-slider {
     margin-bottom: 18px;

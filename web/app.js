@@ -2,8 +2,8 @@ import { LWWMap } from './crdt.js';
 import { Store } from './store.js';
 import { PeerMesh, geohash3 } from './rtc.js';
 import { SyncManager, validateDetection } from './sync.js';
-import { initVNF, resetVNF, queryVNF, queryVNFFlare, isReady as vnfReady } from './vnf.js';
-import { initS2Archive, queryS2Archive, isReady as s2ArchiveReady } from './s2archive.js';
+import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isReady as vnfReady } from './vnf.js';
+import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady } from './s2archive.js';
 import { clusterDetections, isSeasonal } from './vendor/s2-flares/lib/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './vendor/s2-flares/lib/geo.js';
 
@@ -495,6 +495,11 @@ syncManager.onAwarenessChange(() => {
 // Block grid is 256px at 20m = ~5120m ≈ 0.046° lat
 const BLOCK_DEG = 0.046;
 
+// Date span the quarter grid covers (last 4 calendar years) — bounds the VNF
+// availability query so it stays cheap.
+const GRID_START = `${new Date().getFullYear() - 3}-01-01`;
+const GRID_END = `${new Date().getFullYear()}-12-31`;
+
 function getDetectedQuarters() {
     const bounds = map.getBounds();
     const vw = bounds.getWest(), vs = bounds.getSouth();
@@ -557,18 +562,33 @@ function getDetectedQuarters() {
     return quarters;
 }
 
-function updateQuarterIndicators() {
-    if (currentMode === 'vnf') {
-        // No detected-quarter indicators in VNF mode
-        document.querySelectorAll('.quarter-btn').forEach(btn => {
-            btn.classList.remove('detected');
-        });
+// Mark each quarter button: 'detected' (local-worker S2, already processed) or
+// 'unavailable' (archive/VNF, no data in this viewport). A null `avail` means the
+// data source isn't ready / zoomed-out — leave everything enabled.
+async function updateQuarterIndicators() {
+    const btns = document.querySelectorAll('.quarter-btn');
+    const key = btn => `${btn.dataset.year}_${btn.dataset.quarter}`;
+
+    if (currentMode === 'vnf' || S2_ARCHIVE) {
+        btns.forEach(b => b.classList.remove('detected'));
+        const isVnf = currentMode === 'vnf';
+        const ready = isVnf ? vnfReady() : s2ArchiveReady();
+        const zoomOk = map.getZoom() >= (isVnf ? MIN_VNF_ZOOM : MIN_DETECT_ZOOM);
+        let avail = null;
+        if (ready && zoomOk) {
+            try {
+                avail = isVnf
+                    ? await availableQuartersVNF(getViewportBbox(), GRID_START, GRID_END)
+                    : await availableQuartersS2(getViewportBbox());
+            } catch (err) { console.error('quarter availability error:', err); }
+        }
+        btns.forEach(b => b.classList.toggle('unavailable', !!avail && !avail.has(key(b))));
         return;
     }
+
+    btns.forEach(b => b.classList.remove('unavailable'));
     const quarters = getDetectedQuarters();
-    document.querySelectorAll('.quarter-btn').forEach(btn => {
-        btn.classList.toggle('detected', quarters.has(`${btn.dataset.year}_${btn.dataset.quarter}`));
-    });
+    btns.forEach(b => b.classList.toggle('detected', quarters.has(key(b))));
     updateDetectButton(quarters);
 }
 
@@ -642,6 +662,8 @@ function toggleQuarter(btn) {
         updateDetectButton();
         scheduleS2Refresh();
     }
+    // Re-filter the open card to the new window (the async re-query reconciles the map).
+    if (currentFeature) showInfo(currentFeature, { skipAutoSelect: true });
 }
 
 function getSelectedDateRange() {
@@ -665,6 +687,21 @@ function getSelectedDateRange() {
         if (!maxDate || end > maxDate) maxDate = end;
     }
     return { startDate: minDate, endDate: maxDate };
+}
+
+// Active quarter keys (e.g. "2025_3"). Non-contiguous selections are honoured
+// exactly — used to filter a cluster card's per-date detections to the window.
+function activeQuarterKeys() {
+    const keys = new Set();
+    document.querySelectorAll('.quarter-btn.active').forEach(b =>
+        keys.add(`${b.dataset.year}_${b.dataset.quarter}`));
+    return keys;
+}
+
+function dateInActiveQuarters(dateStr, keys) {
+    if (!keys.size) return true;
+    const q = Math.floor((+dateStr.slice(5, 7) - 1) / 3) + 1;
+    return keys.has(`${dateStr.slice(0, 4)}_${q}`);
 }
 
 initQuarterPicker();
@@ -747,7 +784,7 @@ function ensureS2Archive() {
     if (_s2InitStarted) return;
     _s2InitStarted = true;
     initS2Archive(S2_ARCHIVE)
-        .then(() => { if (currentMode === 's2') refreshS2Archive(); })
+        .then(() => { if (currentMode === 's2') { refreshS2Archive(); updateQuarterIndicators(); } })
         .catch(err => { console.error('S2 archive init error:', err); _s2InitStarted = false; });
 }
 
@@ -811,7 +848,7 @@ function switchMode(mode) {
                 if (!url) { switchMode('s2'); return; }
                 _vnfInitStarted = true;
                 initVNF(url).then(() => {
-                    if (currentMode === 'vnf') refreshVNF();
+                    if (currentMode === 'vnf') { refreshVNF(); updateQuarterIndicators(); }
                 }).catch(err => {
                     console.error('VNF init error:', err);
                     _vnfInitStarted = false;
@@ -1131,6 +1168,10 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     if (typeof detections === 'string') {
         try { detections = JSON.parse(detections); } catch (e) { detections = []; }
     }
+    // Card shows only detections in the selected quarter window — deselecting a
+    // quarter drops its detections here, not just on the map.
+    const qKeys = activeQuarterKeys();
+    detections = detections.filter(d => dateInActiveQuarters(d.date, qKeys));
 
     const list = document.getElementById('events-list');
     list.innerHTML = '';

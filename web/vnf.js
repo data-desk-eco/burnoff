@@ -139,6 +139,25 @@ export async function queryVNF(bbox, startDate, endDate) {
     return { type: 'FeatureCollection', features };
 }
 
+/** Set of `year_quarter` keys with any detection in the viewport over [start,end]. */
+export async function availableQuartersVNF(bbox, startDate, endDate) {
+    if (!conn) return new Set();
+    const [west, south, east, north] = bbox;
+    const result = await conn.query(`
+        SELECT DISTINCT year(date) AS y, quarter(date) AS q
+        FROM '${_parquetUrl}'
+        WHERE detected
+          AND lat BETWEEN ${south} AND ${north}
+          AND lon BETWEEN ${west} AND ${east}
+          AND date BETWEEN '${startDate}' AND '${endDate}'`);
+    const qs = new Set();
+    for (let i = 0; i < result.numRows; i++) {
+        const r = result.get(i);
+        qs.add(`${Number(r.y)}_${Number(r.q)}`);
+    }
+    return qs;
+}
+
 /**
  * Query a single VNF flare by ID (for deep links).
  * Returns a GeoJSON FeatureCollection with 0 or 1 features.
