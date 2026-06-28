@@ -1070,7 +1070,9 @@ function copernicusUrl(date) {
     const from = `${date}T00:00:00.000Z`;
     const to = `${date}T23:59:59.999Z`;
     const { lat, lng } = map.getCenter();
-    const zoom = Math.round(map.getZoom());
+    // maplibre renders 512px tiles, so its zoom is one level lower than the
+    // 256px slippy zoom copernicus browser (leaflet) expects for the same scale.
+    const zoom = Math.round(map.getZoom()) + 1;
     return `https://browser.dataspace.copernicus.eu/?zoom=${zoom}&lat=${lat}&lng=${lng}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=6-SWIR&dateMode=SINGLE`;
 }
 
