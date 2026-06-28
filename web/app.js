@@ -8,6 +8,7 @@ import { clusterDetections } from './s2/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { MAP_STYLE, magmaColor } from './map-style.js';
 import { MODE, scaleT, scaleColor, chartNorm, buildLegendHTML, s2ColorExpr, vnfColorExpr, s2RadiusExpr, vnfRadiusExpr, formatDate } from './render.js';
+import { setTerminals, getTerminals, findNearestTerminal, archiveFeature, enrichVNFFeatures, DEG_TO_RAD } from './clustering.js';
 
 // ---------------------------------------------------------------------------
 // Mode state: 'vnf' or 's2'
@@ -15,7 +16,6 @@ import { MODE, scaleT, scaleColor, chartNorm, buildLegendHTML, s2ColorExpr, vnfC
 
 let currentMode = null;
 let _vnfInitStarted = false;
-let _vnfFeatures = null;   // cached VNF FeatureCollection (clustered)
 let _vnfRawFeatures = null; // raw features from last queryVNF
 let _vnfRefreshTimer = null;
 let _s2InitStarted = false;
@@ -68,7 +68,6 @@ const MIN_DETECT_ZOOM = 11;       // local-worker COG detect (heavy) + its contr
 const MIN_ARCHIVE_ZOOM = 4;       // displaying precomputed archive clusters (cheap, in-memory)
 const MIN_VNF_ZOOM = 6;
 let allRawDetections = [];
-let terminalFeatures = [];
 
 let detectionMap = null, processedMap = null, store = null, mesh = null, syncManager = null;
 let _detectReady = null;          // promise once ensureDetect() has fired
@@ -609,7 +608,6 @@ async function refreshVNF() {
     if (!vnfReady()) return;
     if (map.getZoom() < MIN_VNF_ZOOM) {
         _vnfRawFeatures = null;
-        _vnfFeatures = null;
         const src = map.getSource('client-detections');
         if (src) src.setData({ type: 'FeatureCollection', features: [] });
         return;
@@ -623,9 +621,8 @@ async function refreshVNF() {
     try {
         const fc = await queryVNF(bbox, dateRange.startDate, dateRange.endDate);
         _vnfRawFeatures = fc.features;
-        const clustered = enrichVNFFeatures(_vnfRawFeatures);
+        const clustered = enrichVNFFeatures(_vnfRawFeatures, VNF_AVG_RH_MIN);
         const clusteredFc = { type: 'FeatureCollection', features: clustered };
-        _vnfFeatures = clusteredFc;
         ensureDetectionLayer();
         const src = map.getSource('client-detections');
         if (src && currentMode === 'vnf') src.setData(clusteredFc);
@@ -1040,74 +1037,32 @@ function selectDetection(det, element) {
     document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
     element.classList.add('active');
     selectedDetection = det;
-    if (currentMode === 'vnf') showVNFHeatFootprint(det);
+    if (currentMode === 'vnf') showHeatFootprint(det);
     else loadImageryForDetection(det);
 }
 
-function showVNFHeatFootprint(det) {
-    // Inline cleanup (no brightness flash — mirrors loadImageryForDetection)
+// Tear down the COG / heat-footprint image overlay (idempotent).
+function clearCogLayers() {
     if (map.getLayer('cog-border')) map.removeLayer('cog-border');
-    if (map.getSource('cog-border')) map.removeSource('cog-border');
     if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
+    if (map.getSource('cog-border')) map.removeSource('cog-border');
     if (map.getSource('cog-source')) map.removeSource('cog-source');
-
-    if (!det || !currentFeature) return;
-    const [lon, lat] = currentFeature.geometry.coordinates;
-    const rh = det.rh_mw || 0;
-    if (rh <= 0) return;
-
-    // Radius in real-world meters, sqrt-scaled from RH
-    const radiusM = 50 * Math.sqrt(Math.max(rh, 0.5));
-    const dLat = radiusM / 111320;
-    const dLon = radiusM / (111320 * Math.cos(lat * DEG_TO_RAD));
-
-    // Canvas with radial gradient heat signature
-    const size = 128;
-    const canvas = document.createElement('canvas');
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext('2d');
-
-    const [r, g, b] = magmaColor(scaleT(MODE.vnf, rh));
-
-    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-    grad.addColorStop(0, `rgba(${r},${g},${b},0.85)`);
-    grad.addColorStop(0.3, `rgba(${r},${g},${b},0.5)`);
-    grad.addColorStop(0.7, `rgba(${r},${g},${b},0.15)`);
-    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, size, size);
-
-    const coords = [
-        [lon - dLon, lat + dLat], [lon + dLon, lat + dLat],
-        [lon + dLon, lat - dLat], [lon - dLon, lat - dLat]
-    ];
-
-    map.addSource('cog-source', {
-        type: 'image',
-        url: canvas.toDataURL(),
-        coordinates: coords
-    });
-    map.addLayer({
-        id: 'cog-layer',
-        type: 'raster',
-        source: 'cog-source',
-        paint: { 'raster-opacity': 1, 'raster-resampling': 'linear' }
-    }, 'client-detection-circles');
-
-    setCirclesGreyed();
-    map.setPaintProperty('basemap', 'raster-brightness-max', 0.25);
 }
 
-// Per-date halo for archive detections (no COG to render): a magma footprint at
-// the detection's raw point, sized by its B12 intensity. Mirrors showVNFHeatFootprint.
-function showS2HeatFootprint(det) {
+// Magma radial-gradient footprint at a detection's point, sized by intensity, used
+// where there is no COG to render: VNF (sized on radiant heat) and S2 archive rows
+// (sized on B12, located at the per-date raw point).
+function showHeatFootprint(det) {
+    clearCogLayers();
     if (!det || !currentFeature) return;
-    const lon = det.raw_lon ?? currentFeature.geometry.coordinates[0];
-    const lat = det.raw_lat ?? currentFeature.geometry.coordinates[1];
-    const b12 = det.max_b12 || det.b12_corrected || 0;
-    if (b12 <= 0) return;
+    const isVnf = currentMode === 'vnf';
+    const [cLon, cLat] = currentFeature.geometry.coordinates;
+    const lon = isVnf ? cLon : (det.raw_lon ?? cLon);
+    const lat = isVnf ? cLat : (det.raw_lat ?? cLat);
+    const val = isVnf ? (det.rh_mw || 0) : (det.max_b12 || det.b12_corrected || 0);
+    if (val <= 0) return;
 
-    const radiusM = 45 * Math.sqrt(b12);
+    const radiusM = isVnf ? 50 * Math.sqrt(Math.max(val, 0.5)) : 45 * Math.sqrt(val);
     const dLat = radiusM / 111320;
     const dLon = radiusM / (111320 * Math.cos(lat * DEG_TO_RAD));
 
@@ -1115,7 +1070,7 @@ function showS2HeatFootprint(det) {
     const canvas = document.createElement('canvas');
     canvas.width = size; canvas.height = size;
     const ctx = canvas.getContext('2d');
-    const [r, g, b] = magmaColor(scaleT(MODE.s2, b12));
+    const [r, g, b] = magmaColor(scaleT(isVnf ? MODE.vnf : MODE.s2, val));
     const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
     grad.addColorStop(0, `rgba(${r},${g},${b},0.85)`);
     grad.addColorStop(0.3, `rgba(${r},${g},${b},0.5)`);
@@ -1151,12 +1106,9 @@ function closeInfo() {
 }
 
 async function loadImageryForDetection(det) {
-    if (map.getLayer('cog-border')) map.removeLayer('cog-border');
-    if (map.getSource('cog-border')) map.removeSource('cog-border');
-    if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
-    if (map.getSource('cog-source')) map.removeSource('cog-source');
+    clearCogLayers();
 
-    if (!det?.cog_b12) return void showS2HeatFootprint(det);
+    if (!det?.cog_b12) return void showHeatFootprint(det);
 
     const url = det.cog_b12;
     if (typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif')) {
@@ -1229,10 +1181,7 @@ async function loadImageryForDetection(det) {
         }
         ctx.putImageData(imgData, 0, 0);
 
-        if (map.getLayer('cog-border')) map.removeLayer('cog-border');
-        if (map.getSource('cog-border')) map.removeSource('cog-border');
-        if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
-        if (map.getSource('cog-source')) map.removeSource('cog-source');
+        clearCogLayers();
 
         const coords = [[bounds[0], bounds[3]], [bounds[2], bounds[3]], [bounds[2], bounds[1]], [bounds[0], bounds[1]]];
 
@@ -1271,10 +1220,7 @@ async function loadImageryForDetection(det) {
 }
 
 function closeImagery() {
-    if (map.getLayer('cog-border')) map.removeLayer('cog-border');
-    if (map.getSource('cog-border')) map.removeSource('cog-border');
-    if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
-    if (map.getSource('cog-source')) map.removeSource('cog-source');
+    clearCogLayers();
     map.setPaintProperty('basemap', 'raster-brightness-max', 1);
     if (currentFeature) setCirclesGreyed();
     else setCirclesDefault();
@@ -1327,89 +1273,9 @@ let S2_MERGE_DISTANCE_M = 135;
 let CLUSTER_AVG_B12_MIN = MODE.s2.filter.default;
 let VNF_AVG_RH_MIN = MODE.vnf.filter.default;
 
-// Fast equirectangular distance — accurate to <0.1% at distances under 1 km
-// and at latitudes under ~70°. Used in terminal grid lookup.
-const DEG_TO_RAD = Math.PI / 180;
-const R_EARTH = 6371000;
-function fastDistM(lat1, lon1, lat2, lon2) {
-    const dLat = (lat2 - lat1) * DEG_TO_RAD;
-    const dLon = (lon2 - lon1) * DEG_TO_RAD * Math.cos(((lat1 + lat2) * 0.5) * DEG_TO_RAD);
-    return R_EARTH * Math.sqrt(dLat * dLat + dLon * dLon);
-}
-
-const TERMINAL_MATCH_M = 7500;
-
-// Pre-built grid index for terminal features, rebuilt when terminals load.
-let _terminalGrid = null;
-let _terminalGridCell = 0;
-
-function buildTerminalGrid() {
-    const cell = TERMINAL_MATCH_M / 111320;       // degrees per grid cell
-    _terminalGridCell = cell;
-    const g = new Map();
-    for (const f of terminalFeatures) {
-        const [lon, lat] = f.geometry.coordinates;
-        const r = Math.floor(lat / cell), c = Math.floor(lon / cell);
-        for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
-                const key = (r + dr) * 0x100000 + (c + dc);
-                const bucket = g.get(key);
-                if (bucket) bucket.push(f);
-                else g.set(key, [f]);
-            }
-        }
-    }
-    _terminalGrid = g;
-}
-
-function findNearestTerminal(lat, lon) {
-    if (!_terminalGrid || terminalFeatures.length === 0) return null;
-    const cell = _terminalGridCell;
-    const r = Math.floor(lat / cell), c = Math.floor(lon / cell);
-    const key = r * 0x100000 + c;
-    const bucket = _terminalGrid.get(key);
-    if (!bucket) return null;
-    let best = null, bestDist = Infinity;
-    for (const f of bucket) {
-        const [tLon, tLat] = f.geometry.coordinates;
-        const d = fastDistM(lat, lon, tLat, tLon);
-        if (d < bestDist) { bestDist = d; best = f; }
-    }
-    return best && bestDist <= TERMINAL_MATCH_M ? { name: best.properties.name, distance: bestDist } : null;
-}
-
 // `obs` (optional) overrides the persistence source: an array of
 // {block_id, date, cloudFree} records (the S2-archive path). When omitted, the
 // per-block/per-date observation budget is derived from processedMap as before.
-// Map a precomputed archive cluster (clusters/data.parquet row) to the same Feature
-// shape crossDateCluster emits, so rendering/detail/CSV are unchanged. The view is
-// pre-clustered server-side, so the avg-B12 slider gates these rows client-side and
-// the merge-distance/score controls don't re-run. The view carries no cloud counts,
-// only the published persistence, so we report the cloud-free observation count
-// (detections / persistence) and leave passes null — there is no total-pass figure
-// to compute a meaningful cloud-free fraction from.
-function archiveFeature(c) {
-    const terminal = findNearestTerminal(c.lat, c.lon);
-    const observations = c.persistence ? Math.round(c.detection_count / c.persistence) : c.date_count;
-    return {
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
-        properties: {
-            name: terminal ? terminal.name : `${c.detection_count} detection${c.detection_count !== 1 ? 's' : ''}`,
-            terminal: terminal?.name || null,
-            max_b12: c.max_b12, detection_count: c.detection_count, seasonal: c.seasonal,
-            total_score: c.total_score, ratio_score: c.ratio_score,
-            persistence_score: c.persistence_score, glint_penalty: c.glint_penalty,
-            max_ratio: c.max_ratio, min_glint: c.min_glint, glint_suspect: c.glint_suspect,
-            persistence: c.persistence, passes: null, observations,
-            detections: c.detections.map(d => ({
-                date: d.date, max_b12: d.max_b12, pixels: d.pixels,
-                raw_lon: d.lon, raw_lat: d.lat, b12_corrected: d.max_b12,
-            })),
-        },
-    };
-}
-
 function crossDateCluster(allDetections, obs) {
     if (allDetections.length === 0) return [];
 
@@ -1456,7 +1322,11 @@ function crossDateCluster(allDetections, obs) {
     });
 
     // Wrap s2-flares cluster results into GeoJSON Features with burnoff-specific
-    // persistence, terminal naming, and detection detail fields.
+    // persistence, terminal naming, and detection detail fields. Index the raw
+    // detections by date+coord once so the per-cluster metadata lookups stay O(1).
+    const origByKey = new Map();
+    for (const o of allDetections) origByKey.set(`${o.date}|${o.flare_lon ?? o.lon}|${o.flare_lat ?? o.lat}`, o);
+
     const features = [];
     for (const cl of clusters) {
         const terminal = findNearestTerminal(cl.lat, cl.lon);
@@ -1472,11 +1342,7 @@ function crossDateCluster(allDetections, obs) {
             const bids = new Set();
             for (const d of clusterDets) {
                 // Find original detection with matching date/lon/lat to get block metadata
-                const orig = allDetections.find(o =>
-                    o.date === d.date &&
-                    (o.flare_lon ?? o.lon) === d.lon &&
-                    (o.flare_lat ?? o.lat) === d.lat
-                );
+                const orig = origByKey.get(`${d.date}|${d.lon}|${d.lat}`);
                 if (orig) {
                     const bid = orig.block_id || `${orig.mgrs}_${orig.block_row}_${orig.block_col}`;
                     if (bid) bids.add(bid);
@@ -1499,11 +1365,7 @@ function crossDateCluster(allDetections, obs) {
         // Map cluster detections back to burnoff's detail format, pulling extra
         // fields (cog_b12, epsg, utm_bounds) from the original detection records
         const detailDets = cl.detections.map(d => {
-            const orig = allDetections.find(o =>
-                o.date === d.date &&
-                (o.flare_lon ?? o.lon) === d.lon &&
-                (o.flare_lat ?? o.lat) === d.lat
-            );
+            const orig = origByKey.get(`${d.date}|${d.lon}|${d.lat}`);
             return {
                 date: d.date, max_b12: d.max_b12, pixels: d.pixels,
                 cog_b12: orig?.cog_b12, epsg: orig?.epsg, utm_bounds: orig?.utm_bounds,
@@ -1537,54 +1399,6 @@ function crossDateCluster(allDetections, obs) {
         });
     }
     return features;
-}
-
-// ---------------------------------------------------------------------------
-// VNF spatial clustering (reuses grid-merge pattern from crossDateCluster)
-// ---------------------------------------------------------------------------
-
-function enrichVNFFeatures(features) {
-    const result = [];
-    for (const feat of features) {
-        const p = feat.properties;
-        const [lon, lat] = feat.geometry.coordinates;
-
-        if (VNF_AVG_RH_MIN > 0 && p.avg_rh < VNF_AVG_RH_MIN) continue;
-
-        const terminal = findNearestTerminal(lat, lon);
-        const facilityName = p.facility_name || '';
-        const facilityType = p.facility_type || '';
-        const typeCat = [p.type, p.category].filter(Boolean).join(' \u2014 ');
-        const name = facilityName || (terminal ? terminal.name : typeCat || `Flare #${p.flare_id}`);
-
-        const passes = p.total_dates;
-        const detection_count = p.detection_dates;
-        const observations = Math.max(p.clear_dates, detection_count);
-        const persistence = observations > 0 ? detection_count / observations : 0;
-
-        result.push({
-            type: 'Feature',
-            geometry: feat.geometry,
-            properties: {
-                name,
-                terminal: terminal?.name || null,
-                facility_type: facilityType,
-                facility_name: facilityName,
-                flare_id: p.flare_id,
-                type: p.type || '',
-                category: p.category || '',
-                country: p.country || '',
-                avg_rh: p.avg_rh,
-                max_rh: p.max_rh,
-                detection_count,
-                passes,
-                observations,
-                persistence,
-                detections: p.detections
-            }
-        });
-    }
-    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1653,10 +1467,8 @@ function updateDetectionSource() {
 
 function updateVNFSource() {
     if (!_vnfRawFeatures) return;
-    const dateRange = getSelectedDateRange();
-    const clustered = enrichVNFFeatures(_vnfRawFeatures);
+    const clustered = enrichVNFFeatures(_vnfRawFeatures, VNF_AVG_RH_MIN);
     const fc = { type: 'FeatureCollection', features: clustered };
-    _vnfFeatures = fc;
     const src = map.getSource('client-detections');
     if (src) src.setData(fc);
 }
@@ -1867,10 +1679,11 @@ function updateMapCentre() {
     const termEl = document.getElementById('map-terminal');
 
     let terminalName = null;
-    if (map.getZoom() >= MIN_TERMINAL_LABEL_ZOOM && terminalFeatures.length > 0) {
+    const terminals = getTerminals();
+    if (map.getZoom() >= MIN_TERMINAL_LABEL_ZOOM && terminals.length > 0) {
         const bounds = map.getBounds();
         const names = new Set();
-        for (const f of terminalFeatures) {
+        for (const f of terminals) {
             const [lon, lat] = f.geometry.coordinates;
             if (bounds.contains([lon, lat])) names.add(f.properties.name);
         }
@@ -1937,8 +1750,7 @@ map.on('load', () => {
 
     // LNG terminal dots
     fetch('terminals.geojson').then(r => r.json()).then(geojson => {
-        terminalFeatures = geojson.features;
-        buildTerminalGrid();
+        setTerminals(geojson.features);
         map.addSource('lng-terminals', { type: 'geojson', data: geojson });
         map.addLayer({
             id: 'lng-terminal-hitarea',
@@ -2159,6 +1971,15 @@ document.getElementById('about-modal').addEventListener('click', function(e) {
     if (e.target === this || !e.target.closest('a')) this.classList.add('hidden');
 });
 
+// Re-open the About modal via the panel subtitle (it's otherwise dismiss-only).
+const _aboutTrigger = document.querySelector('#title-panel > p');
+if (_aboutTrigger) {
+    _aboutTrigger.style.cursor = 'help';
+    _aboutTrigger.title = 'About burnoff';
+    _aboutTrigger.addEventListener('click', () =>
+        document.getElementById('about-modal').classList.remove('hidden'));
+}
+
 document.getElementById('download-btn').addEventListener('click', downloadFlareCSV);
 document.getElementById('open-image-btn').addEventListener('click', () => {
     if (!currentFeature || !selectedDetection) return;
@@ -2238,7 +2059,7 @@ async function navigateToFlare(flareId) {
     if (!fc.features.length) { _suppressHashUpdate = false; return; }
 
     const raw = fc.features[0];
-    const enriched = enrichVNFFeatures([raw]);
+    const enriched = enrichVNFFeatures([raw], VNF_AVG_RH_MIN);
     if (!enriched.length) { _suppressHashUpdate = false; return; }
 
     const feature = enriched[0];
