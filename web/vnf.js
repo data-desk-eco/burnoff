@@ -1,7 +1,8 @@
 // VNF (VIIRS Nightfire) data module — queries a Parquet file (local or remote)
 // via vendored DuckDB-WASM. Zero npm dependencies.
 
-let db = null;
+import { openDuckDB } from './duckdb.js';
+
 let conn = null;
 let _initPromise = null;
 let _ready = false;
@@ -26,36 +27,10 @@ export function resetVNF() {
     _ready = false;
     _parquetUrl = null;
     conn = null;
-    db = null;
 }
 
 async function _init(url) {
-    const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
-
-    // Use vendored EH (exception handling) bundle — all modern browsers support it.
-    // Resolve to absolute URLs since the worker runs in a Blob context.
-    const base = new URL('.', import.meta.url).href;
-    const mainModule = base + 'vendor/duckdb/duckdb-eh.wasm';
-    const mainWorker = base + 'vendor/duckdb/duckdb-browser-eh.worker.js';
-
-    const workerBlob = new Blob([`importScripts("${mainWorker}");`], { type: 'text/javascript' });
-    const worker = new Worker(URL.createObjectURL(workerBlob));
-    db = new duckdb.AsyncDuckDB({ log: () => {} }, worker);
-    await db.instantiate(mainModule);
-
-    conn = await db.connect();
-
-    // For remote URLs, enable httpfs caching so row-group reads are efficient
-    if (url.startsWith('https://')) {
-        await conn.query(`SET enable_http_metadata_cache=true`);
-        await conn.query(`SET enable_object_cache=true`);
-    } else {
-        // Local dev: fetch entire file and register as buffer
-        const resp = await fetch(url);
-        const buf = await resp.arrayBuffer();
-        await db.registerFileBuffer(url, new Uint8Array(buf));
-    }
-
+    ({ conn } = await openDuckDB(url));
     _ready = true;
 }
 

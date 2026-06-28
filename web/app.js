@@ -9,6 +9,7 @@ import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { MAP_STYLE, magmaColor } from './map-style.js';
 import { MODE, scaleT, scaleColor, chartNorm, buildLegendHTML, s2ColorExpr, vnfColorExpr, s2RadiusExpr, vnfRadiusExpr, formatDate } from './render.js';
 import { setTerminals, getTerminals, findNearestTerminal, archiveFeature, enrichVNFFeatures, DEG_TO_RAD } from './clustering.js';
+import { GeoTIFF } from './s2/vendor/geotiff-esm.js';
 
 // ---------------------------------------------------------------------------
 // Mode state: 'vnf' or 's2'
@@ -359,12 +360,13 @@ function onAwarenessDetect() {
         return;
     }
 
-    // Helper: look for a peer's job to assist with
+    // Helper: look for a peer's job to assist with. Pick the lowest peer id so
+    // every helper converges on the same job regardless of iteration order.
     const states = getActiveStates();
     const myId = mesh.localPeerId;
-    let activeJob = null;
+    let activeJob = null, activeId = Infinity;
     states.forEach((state, id) => {
-        if (id !== myId && state.detecting && state.job) activeJob = state.job;
+        if (id !== myId && state.detecting && state.job && id < activeId) { activeId = id; activeJob = state.job; }
     });
 
     if (activeJob && _helpingJobId !== activeJob.id) {

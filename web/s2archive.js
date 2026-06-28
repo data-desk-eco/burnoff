@@ -6,6 +6,7 @@
 // from memory (bbox + date-overlap filter). Zero npm dependencies.
 
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
+import { openDuckDB } from './duckdb.js';
 
 let conn = null, _initPromise = null, _base = '', _all = null, _tiles = null, _rings = null, _tilesPromise = null;
 
@@ -71,14 +72,7 @@ export function initS2Archive(base) {
 
 async function _init() {
     loadTiles();   // fire-and-forget; isCovered assumes archived until the listing lands
-    const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
-    const b = new URL('.', import.meta.url).href;
-    const blob = new Blob([`importScripts("${b}vendor/duckdb/duckdb-browser-eh.worker.js");`], { type: 'text/javascript' });
-    const db = new duckdb.AsyncDuckDB({ log: () => {} }, new Worker(URL.createObjectURL(blob)));
-    await db.instantiate(b + 'vendor/duckdb/duckdb-eh.wasm');
-    conn = await db.connect();
-    await conn.query(`SET enable_http_metadata_cache=true`);
-    await conn.query(`SET enable_object_cache=true`);
+    ({ conn } = await openDuckDB());   // archive is always remote (https)
     loadAll();   // prime the full-archive cache now so the first viewport (or a
                  // switch back from VNF) never has to wait on the parquet read
 }

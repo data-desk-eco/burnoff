@@ -369,7 +369,9 @@ export class SyncManager {
 
     destroy() {
         if (this._awarenessInterval) clearInterval(this._awarenessInterval);
-        if (this._batchTimer) clearTimeout(this._batchTimer);
+        // Flush any batched live updates before tearing the timer down so a
+        // teardown mid-batch doesn't silently drop them.
+        if (this._batchTimer) { clearTimeout(this._batchTimer); this._batchTimer = null; this._flushLiveUpdates(); }
         this._pingIntervals.forEach(id => clearInterval(id));
         this._pingTimers.forEach(id => clearTimeout(id));
     }
