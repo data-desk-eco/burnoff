@@ -964,8 +964,11 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     document.getElementById('info').classList.add('visible');
 
     const isVnf = currentMode === 'vnf';
+    const title = props.terminal
+        ? `Near ${props.name.replace(/\s*Terminal\b/gi, '').trim()}`
+        : props.name;
     document.getElementById('info-name').textContent =
-        props.name || (isVnf ? `Flare #${props.flare_id}` : 'Unknown facility');
+        title || (isVnf ? `Flare #${props.flare_id}` : 'Unknown facility');
 
     const sub = document.getElementById('info-subtitle');
     if (sub) {
