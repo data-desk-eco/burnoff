@@ -10,36 +10,30 @@
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { openDuckDB } from './duckdb.js';
 
-let conn = null, _initPromise = null, _base = '', _tiles = null, _rings = null, _tilesPromise = null, _clusterTiles = null;
+let conn = null, _initPromise = null, _base = '', _tiles = null, _rings = null, _tilesPromise = null, _clusterTiles = null, _clusterBboxPromise = null;
 const _tileCache = new Map();   // mgrs id -> Promise<cluster[]>
 const overlaps = ([w, s, e, n], [tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts;
 
 export function isReady() { return !!conn; }
 
 // MGRS 100km-square id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
-// the archive is partitioned by Sentinel-2 granule, so its tile set is the coverage
-// footprint. We draw the nominal 100 km MGRS square, NOT the wider 109,800 m granule:
-// edge clusters that overhang their own square still land inside a neighbour's square,
-// because overlapping granules are each archived separately, so the union of squares
-// covers all. (Nominal squares also tile edge-to-edge without overlapping.)
+// Used only for the coverage OUTLINE overlay: the nominal 100 km squares tile
+// edge-to-edge without overlap, so their union draws the scanned footprint cleanly.
+// (Cluster LOADING does NOT use these squares — a cluster's anchor can sit well
+// outside its own tile's square, because the cluster inherits its anchor detection's
+// S2 *granule* tile and granule footprints overhang the nominal square by ~10 km.
+// Loading filters on each tile's TRUE data bbox instead; see loadClusterBboxes.)
 const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
 const MGRS_ROWS = 'ABCDEFGHJKLMNPQRSTUV';                 // 100km northing letters, period 2,000,000 m
 const MGRS_BANDS = 'CDEFGHJKLMNPQRSTUVWX';                // 8° latitude bands from -80°
-// granule overhang: S2 granules are 109,800 m, not 100,000 m, so a detection (hence a
-// cluster anchor) can sit up to (109800−100000)/2 = 4,900 m OUTSIDE its own tile's
-// nominal square — most visibly across a UTM zone seam (Yamal LNG at 72°E). The
-// coverage OUTLINE wants the edge-to-edge nominal squares (pad 0); the cluster-LOADING
-// filter must use the granule footprint (pad 4,900 m) or it skips the very tile holding
-// an overhanging cluster once the viewport zooms past the nominal square.
-const GRANULE_PAD = 4900;
-function mgrsTileRing(id, pad = 0) {
+function mgrsTileRing(id) {
     const [, z, band, col, row] = /^(\d+)([C-X])([A-Z])([A-Z])$/.exec(id);
     const zone = +z, isNorth = band >= 'N';
     const east = (MGRS_COLS[(zone - 1) % 3].indexOf(col) + 1) * 1e5;
     let north = (MGRS_ROWS.indexOf(row) + (zone % 2 ? 0 : 15)) * 1e5;  // even zones start the row letters at 'F' (≡ −5, i.e. +15 mod 20)
     const ref = wgs84ToUtm((zone - 1) * 6 - 177, -80 + 8 * MGRS_BANDS.indexOf(band) + 4, zone, isNorth)[1];
     north += Math.round((ref - north) / 2e6) * 2e6;                    // resolve 2,000,000 m ambiguity via band
-    const [e0, e1, n0, n1] = [east - pad, east + 1e5 + pad, north - pad, north + 1e5 + pad];
+    const [e0, e1, n0, n1] = [east, east + 1e5, north, north + 1e5];
     const [sw, se, nw, ne] = [[e0, n0], [e1, n0], [e0, n1], [e1, n1]]
         .map(([e, n]) => utmToWgs84(e, n, zone, isNorth));
     return [sw, se, ne, nw, sw];   // [lng,lat] ring
@@ -81,10 +75,37 @@ function loadTiles() {
                 if (!token) break;
             }
             _clusterTiles = [...clusters].map(id => ({
-                id, key: `${_base}/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id, GRANULE_PAD)) }));
+                id, key: `${_base}/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id)) }));
             _rings = [...ids].map(mgrsTileRing);
             _tiles = _rings.map(ringBbox);
         } catch { _tiles = null; _rings = null; _clusterTiles = null; }
+    })();
+}
+
+// Refine each cluster tile's bbox to its TRUE data extent (min/max lon/lat of the
+// clusters it holds), read once from the parquet footer statistics — DuckDB answers
+// min/max from metadata alone, so this is footer-only range reads, not full scans.
+// Replaces the old nominal-square + fixed-pad guess, which under-covered granule
+// overhang (a cluster anchor can sit ~10 km outside its tile's square) and so dropped
+// edge clusters once the viewport zoomed past the square. On query failure the nominal
+// square set in loadTiles remains as a (smaller) fallback. Runs after conn is ready.
+function loadClusterBboxes() {
+    return _clusterBboxPromise ??= (async () => {
+        await loadTiles();
+        if (!conn || !_clusterTiles?.length) return;
+        try {
+            const list = _clusterTiles.map(t => `'${t.key}'`).join(',');
+            const res = await conn.query(`
+                SELECT regexp_extract(filename, 'mgrs=([0-9A-Z]+)', 1) AS mgrs,
+                       min(lon) AS w, min(lat) AS s, max(lon) AS e, max(lat) AS n
+                FROM read_parquet([${list}], filename = true) GROUP BY 1`);
+            const by = new Map();
+            for (let i = 0; i < res.numRows; i++) {
+                const r = res.get(i);
+                by.set(String(r.mgrs), [Number(r.w), Number(r.s), Number(r.e), Number(r.n)]);
+            }
+            for (const t of _clusterTiles) t.bbox = by.get(t.id) ?? t.bbox;
+        } catch (err) { console.error('S2 archive cluster-bbox stats failed:', err); }
     })();
 }
 
@@ -132,7 +153,7 @@ function loadTile(t) {
 
 /** Clusters from every archived tile the viewport bbox overlaps (loaded lazily). */
 async function loadViewport(bbox) {
-    await loadTiles();   // the per-tile file list comes from the bucket listing
+    await loadClusterBboxes();   // tile list (listing) + true per-tile data bboxes (footer stats)
     const tiles = (_clusterTiles || []).filter(t => overlaps(bbox, t.bbox));
     return (await Promise.all(tiles.map(loadTile))).flat();
 }
