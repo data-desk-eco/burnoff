@@ -3,7 +3,7 @@
 // pure-archive session never fetches them. These bindings stay null until then.
 let LWWMap, Store, PeerMesh, geohash3, SyncManager, validateDetection;
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isReady as vnfReady } from './vnf.js';
-import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageMask, whenCovered } from './s2archive.js?v=10';
+import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageMask, whenCovered } from './s2archive.js?v=11';
 import { clusterDetections } from './s2/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { MAP_STYLE, magmaColor } from './map-style.js';
