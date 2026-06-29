@@ -3,13 +3,16 @@
 // The archive co-produces a derived cluster view partitioned by MGRS tile,
 // `clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
 // nested `detections` list). We enumerate those per-tile objects from the bucket
-// listing, range-read them with vendored DuckDB-WASM, load every cluster once, then
-// serve each viewport from memory (bbox + date-overlap filter). Zero npm dependencies.
+// listing, then range-read only the tiles a viewport overlaps with vendored
+// DuckDB-WASM — each tile's parquet is loaded once, lazily, and cached. Viewports
+// are then served from those cached tiles (bbox + date-overlap filter). Zero npm deps.
 
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { openDuckDB } from './duckdb.js';
 
-let conn = null, _initPromise = null, _base = '', _all = null, _tiles = null, _rings = null, _tilesPromise = null, _clusterKeys = null;
+let conn = null, _initPromise = null, _base = '', _tiles = null, _rings = null, _tilesPromise = null, _clusterTiles = null;
+const _tileCache = new Map();   // mgrs id -> Promise<cluster[]>
+const overlaps = ([w, s, e, n], [tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts;
 
 export function isReady() { return !!conn; }
 
@@ -35,9 +38,9 @@ const ringArea = r => r.slice(1).reduce((a, c, i) => a + (r[i][0] * c[1] - c[0] 
 const asHole = r => ringArea(r) > 0 ? r.slice().reverse() : r;   // holes wind clockwise
 
 /** True if the viewport bbox overlaps any archived MGRS tile. Unknown coverage ⇒ true (assume archived). */
-export function isCovered([w, s, e, n]) {
+export function isCovered(bbox) {
     if (!_tiles) return true;
-    return _tiles.some(([tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts);
+    return _tiles.some(t => overlaps(bbox, t));
 }
 
 /** Resolves once the coverage footprint (MGRS tile listing) has been fetched. */
@@ -69,10 +72,11 @@ function loadTiles() {
                 token = xml.match(/<NextContinuationToken>([^<]+)</)?.[1] ?? '';
                 if (!token) break;
             }
-            _clusterKeys = [...clusters].map(id => `${_base}/clusters/mgrs=${id}/data.parquet`);
+            _clusterTiles = [...clusters].map(id => ({
+                id, key: `${_base}/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id)) }));
             _rings = [...ids].map(mgrsTileRing);
             _tiles = _rings.map(ringBbox);
-        } catch { _tiles = null; _rings = null; _clusterKeys = null; }
+        } catch { _tiles = null; _rings = null; _clusterTiles = null; }
     })();
 }
 
@@ -85,24 +89,19 @@ export function initS2Archive(base) {
 async function _init() {
     loadTiles();   // fire-and-forget; isCovered assumes archived until the listing lands
     ({ conn } = await openDuckDB());   // archive is always remote (https)
-    loadAll();   // prime the full-archive cache now so the first viewport (or a
-                 // switch back from VNF) never has to wait on the parquet read
 }
 
 const num = v => v == null ? null : Number(v);
 
-/** Load every cluster row once (the view is one small global object) and cache it. */
-function loadAll() {
-    return _all ??= (async () => {
-        await loadTiles();   // the cluster file list comes from the same bucket listing
-        if (!_clusterKeys?.length) return [];
-        const files = _clusterKeys.map(k => `'${k}'`).join(', ');
+/** Load one MGRS tile's cluster parquet once, lazily, and cache it by tile id. */
+function loadTile(t) {
+    if (!_tileCache.has(t.id)) _tileCache.set(t.id, (async () => {
         const res = await conn.query(`
             SELECT lon, lat, max_b12, avg_b12, detection_count, date_count,
                    CAST(first_date AS VARCHAR) AS first_date, CAST(last_date AS VARCHAR) AS last_date,
                    persistence, seasonal, ratio_score, persistence_score, glint_penalty,
                    total_score, max_ratio, min_glint, glint_suspect, to_json(detections) AS detections
-            FROM read_parquet([${files}])`);
+            FROM read_parquet('${t.key}')`);
         const out = [];
         for (let i = 0; i < res.numRows; i++) {
             const r = res.get(i);
@@ -119,18 +118,27 @@ function loadAll() {
             });
         }
         return out;
-    })();
+    })());
+    return _tileCache.get(t.id);
+}
+
+/** Clusters from every archived tile the viewport bbox overlaps (loaded lazily). */
+async function loadViewport(bbox) {
+    await loadTiles();   // the per-tile file list comes from the bucket listing
+    const tiles = (_clusterTiles || []).filter(t => overlaps(bbox, t.bbox));
+    return (await Promise.all(tiles.map(loadTile))).flat();
 }
 
 /**
- * Precomputed clusters intersecting a viewport bbox + date window. The view is
- * clustered over the whole archive, so the date window is an overlap filter on each
+ * Precomputed clusters intersecting a viewport bbox + date window. Only the archive
+ * tiles the viewport overlaps are range-read (and cached), so a far-out or
+ * uncovered viewport fetches nothing. The date window is an overlap filter on each
  * cluster's [first_date, last_date]; the published scalar scores are passed through.
  */
 export async function queryS2Archive(bbox, startDate, endDate) {
     if (!conn) throw new Error('S2 archive not initialized');
     const [w, s, e, n] = bbox;
-    return (await loadAll()).filter(c =>
+    return (await loadViewport(bbox)).filter(c =>
         c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n &&
         c.last_date >= startDate && c.first_date <= endDate);
 }
@@ -140,7 +148,7 @@ export async function availableQuartersS2(bbox) {
     if (!conn) return new Set();
     const [w, s, e, n] = bbox;
     const qs = new Set();
-    for (const c of await loadAll()) {
+    for (const c of await loadViewport(bbox)) {
         if (c.lon < w || c.lon > e || c.lat < s || c.lat > n) continue;
         for (const d of c.detections) {
             const q = Math.floor((+d.date.slice(5, 7) - 1) / 3) + 1;

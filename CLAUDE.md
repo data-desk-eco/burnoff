@@ -38,13 +38,15 @@ framing — is hand-rolled using web standards.
 
 **S2 mode:** The default data source reads the precomputed *cluster view*
 straight from the CloudFerro public parquet archive (s2-flares `box.sh publish`).
-The archive co-produces a single derived object, `clusters/data.parquet` — one
-row per cluster (scalar score columns + a nested `detections` list).
-`web/s2archive.js` range-reads that one object with DuckDB-WASM, loads every
-cluster once, then serves each viewport from memory (bbox + date-overlap filter);
-`archiveFeature` maps a row straight to the Feature shape `crossDateCluster`
-emits, so the avg-B12 slider gates client-side but the server-side clustering is
-not re-run. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
+The archive co-produces a derived cluster view partitioned by MGRS tile,
+`clusters/mgrs=<tile>/data.parquet` — one row per cluster (scalar score columns +
+a nested `detections` list). `web/s2archive.js` enumerates those per-tile objects
+from the bucket listing, then range-reads with DuckDB-WASM **only the tiles the
+viewport overlaps** — each tile's parquet is loaded once, lazily, and cached;
+viewports are served from those cached tiles (bbox + date-overlap filter), so a
+far-out or uncovered viewport fetches nothing. `archiveFeature` maps a row straight
+to the Feature shape `crossDateCluster` emits, so the avg-B12 slider gates
+client-side but the server-side clustering is not re-run. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
 button) is the fallback for areas not yet archived: it runs the s2-flares rust core
 compiled to wasm (`web/s2/wasm/`), the SAME binary methodology as the server-side
 archive — there is no JS detector port (it drifted from the core and was removed; the
