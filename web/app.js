@@ -3,7 +3,7 @@
 // pure-archive session never fetches them. These bindings stay null until then.
 let LWWMap, Store, PeerMesh, geohash3, SyncManager, validateDetection;
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isReady as vnfReady } from './vnf.js';
-import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageTiles, whenCovered } from './s2archive.js?v=13';
+import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageTiles, whenCovered } from './s2archive.js?v=14';
 import { clusterDetections } from './s2/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { MAP_STYLE, magmaColor } from './map-style.js';
@@ -1758,9 +1758,10 @@ map.on('moveend', () => {
 map.on('load', () => {
     updateMapCentre();
 
-    // Coverage outline: a thin yellow border around each archived MGRS tile. Sits
-    // just above the satellite basemap (below borders/labels/detections). Populated
-    // once the archive's tile listing lands; gated to s2 mode in switchMode.
+    // Coverage outline: a thin border around each scanned AOI box (the published
+    // coverage.geojson — the real ~4km scan extents, not whole MGRS tiles). Sits just
+    // above the satellite basemap (below borders/labels/detections). Populated once
+    // coverage.geojson lands; gated to s2 mode in switchMode.
     if (S2_ARCHIVE) {
         map.addSource('coverage-tiles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addLayer({

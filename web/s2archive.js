@@ -10,27 +10,23 @@
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { openDuckDB } from './duckdb.js';
 
-let conn = null, _initPromise = null, _base = '', _tiles = null, _rings = null, _tilesPromise = null, _clusterTiles = null;
+let conn = null, _initPromise = null, _base = '', _tiles = null, _coverage = null, _tilesPromise = null, _clusterTiles = null;
 const _tileCache = new Map();   // mgrs id -> Promise<cluster[]>
 const overlaps = ([w, s, e, n], [tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts;
 
 export function isReady() { return !!conn; }
 
 // MGRS 100km-square id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
-// the archive is partitioned by Sentinel-2 granule, so its tile set is the coverage
-// footprint. We draw the nominal 100 km MGRS square, NOT the wider 109,800 m granule:
-// edge clusters that overhang their own square still land inside a neighbour's square,
-// because overlapping granules are each archived separately, so the union of squares
-// covers all. (Nominal squares also tile edge-to-edge without overlapping.)
+// Used only to bound which per-tile cluster parquet a viewport overlaps (range-read
+// gating); the coverage *display* + isCovered() come from the published coverage.geojson
+// (the real scanned AOI boxes), not these squares.
 const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
 const MGRS_ROWS = 'ABCDEFGHJKLMNPQRSTUV';                 // 100km northing letters, period 2,000,000 m
 const MGRS_BANDS = 'CDEFGHJKLMNPQRSTUVWX';                // 8° latitude bands from -80°
-// granule overhang: S2 granules are 109,800 m, not 100,000 m, so a detection (hence a
-// cluster anchor) can sit up to (109800−100000)/2 = 4,900 m OUTSIDE its own tile's
-// nominal square — most visibly across a UTM zone seam (Yamal LNG at 72°E). The
-// coverage OUTLINE wants the edge-to-edge nominal squares (pad 0); the cluster-LOADING
-// filter must use the granule footprint (pad 4,900 m) or it skips the very tile holding
-// an overhanging cluster once the viewport zooms past the nominal square.
+// granule overhang: S2 granules are 109,800 m, so a cluster anchor can sit up to
+// (109800−100000)/2 = 4,900 m outside its tile's nominal square (most visibly across a
+// UTM zone seam, e.g. Yamal LNG at 72°E). Pad the range-read footprint by that, else a
+// viewport zoomed past the nominal square skips the tile holding an overhanging cluster.
 const GRANULE_PAD = 4900;
 function mgrsTileRing(id, pad = 0) {
     const [, z, band, col, row] = /^(\d+)([C-X])([A-Z])([A-Z])$/.exec(id);
@@ -47,34 +43,33 @@ function mgrsTileRing(id, pad = 0) {
 const ringBbox = r => [Math.min(...r.map(c => c[0])), Math.min(...r.map(c => c[1])),
                        Math.max(...r.map(c => c[0])), Math.max(...r.map(c => c[1]))];
 
-/** True if the viewport bbox overlaps any archived MGRS tile. Unknown coverage ⇒ true (assume archived). */
+/** True if the viewport bbox overlaps a scanned AOI box. Unknown coverage ⇒ true (assume archived). */
 export function isCovered(bbox) {
     if (!_tiles) return true;
     return _tiles.some(t => overlaps(bbox, t));
 }
 
-/** Resolves once the coverage footprint (MGRS tile listing) has been fetched. */
+/** Resolves once the coverage geojson has been fetched. */
 export function whenCovered() { return _tilesPromise || Promise.resolve(); }
 
-/** One polygon Feature per archived MGRS tile, for the coverage outline overlay.
- *  Null until the tile listing lands. */
+/** The published scanned-AOI boxes (coverage.geojson) for the coverage overlay.
+ *  Null until it lands / if absent. */
 export function coverageTiles() {
-    if (!_rings || !_rings.length) return null;
-    return { type: 'FeatureCollection', features: _rings.map(r => ({
-        type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [r] } })) };
+    return _coverage && _coverage.features.length ? _coverage : null;
 }
 
-/** Bucket listing at init: the `detections/mgrs=…` partitions are the coverage
- *  footprint. Pages through every key (ListObjectsV2 caps a response at 1000) so the
- *  coverage hint stays complete as the archive grows past one page. */
+/** Init fetch: (1) page the `clusters/mgrs=…` listing (ListObjectsV2 caps at
+ *  1000/response) to know which per-tile parquet a viewport can range-read; (2) load
+ *  the published coverage.geojson — the real scanned AOI boxes — for the overlay + the
+ *  isCovered() test. Independent: a missing coverage.geojson leaves data loading intact
+ *  (isCovered then falls back to assume-covered). */
 function loadTiles() {
     return _tilesPromise ??= (async () => {
         try {
-            const ids = new Set(), clusters = new Set();
+            const clusters = new Set();
             for (let token = ''; ;) {
                 const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000`
                     + (token && `&continuation-token=${encodeURIComponent(token)}`))).text();
-                for (const m of xml.matchAll(/detections\/mgrs=(\d+[C-X][A-Z]{2})/g)) ids.add(m[1]);
                 for (const m of xml.matchAll(/clusters\/mgrs=(\d+[C-X][A-Z]{2})/g)) clusters.add(m[1]);
                 if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
                 token = xml.match(/<NextContinuationToken>([^<]+)</)?.[1] ?? '';
@@ -82,9 +77,11 @@ function loadTiles() {
             }
             _clusterTiles = [...clusters].map(id => ({
                 id, key: `${_base}/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id, GRANULE_PAD)) }));
-            _rings = [...ids].map(mgrsTileRing);
-            _tiles = _rings.map(ringBbox);
-        } catch { _tiles = null; _rings = null; _clusterTiles = null; }
+        } catch { _clusterTiles = null; }
+        try {
+            _coverage = await (await fetch(`${_base}/coverage.geojson`)).json();
+            _tiles = _coverage.features.map(f => ringBbox(f.geometry.coordinates[0]));
+        } catch { _coverage = null; _tiles = null; }
     })();
 }
 
