@@ -36,8 +36,32 @@ INDEX_CSV_NAME = "multiyear_flare_month_summary_all_run48.csv"
 TERMINALS_GEOJSON = os.path.join(PROJECT_ROOT, "web", "terminals.geojson")
 ACCUMULATIONS_GEOJSON = os.path.join(PROJECT_ROOT, "web", "accumulations.geojson")
 
-sys.path.insert(0, os.path.join(PROJECT_ROOT, ".claude", "skills", "_lib"))
-from common import load_env  # noqa: E402
+# -- Credentials --------------------------------------------------------------
+
+def load_env(keys, secret="eog-env", project="data-desk-web"):
+    """Load keys from env -> .env -> gcloud secret. Exits if any are missing."""
+    env = {k: os.environ[k] for k in keys if k in os.environ}
+    def absorb(text):
+        for line in text.splitlines():
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                env.setdefault(k.removeprefix("export ").strip(), v.strip().strip("\"'"))
+    if os.path.exists(".env"):
+        absorb(open(".env").read())
+    if any(k not in env for k in keys):
+        import subprocess
+        try:
+            absorb(subprocess.check_output(
+                ["gcloud", "secrets", "versions", "access", "latest",
+                 "--secret", secret, "--project", project],
+                text=True, stderr=subprocess.DEVNULL))
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+    missing = [k for k in keys if k not in env]
+    if missing:
+        sys.exit(f"missing credentials: {', '.join(missing)}")
+    return env
 
 
 # -- EOG Authentication -------------------------------------------------------
@@ -108,27 +132,36 @@ def authenticate():
 
 
 def verify_auth(session):
-    """Verify authentication by requesting the profiles directory."""
-    resp = session.get(f"{PROFILES_URL}/", allow_redirects=False)
-    if resp.status_code in (301, 302):
-        print("Authentication failed — still being redirected to login.", file=sys.stderr)
-        print("Check EOG_EMAIL and EOG_PASSWORD in .env", file=sys.stderr)
-        sys.exit(1)
-    if not resp.ok:
-        print(f"Warning: Profiles directory returned HTTP {resp.status_code}", file=sys.stderr)
-    return resp.text
+    """Confirm auth by range-probing one profile — the directory listing has
+    20k+ entries and is pathologically slow to fetch, so never touch it."""
+    probe = next(iter(load_profile_ids()), 1)
+    url = f"{PROFILES_URL}/site_{probe}_multiyear_vnf_series.csv"
+    resp = session.get(url, headers={"Range": "bytes=0-511"},
+                       allow_redirects=False, timeout=30)
+    if resp.status_code in (301, 302) or "Date_Mscan" not in resp.text[:600]:
+        sys.exit("Authentication failed — check EOG_EMAIL / EOG_PASSWORD")
 
 
-# -- Directory scraping -------------------------------------------------------
+# -- Flare-ID resolution ------------------------------------------------------
 
-def scrape_flare_ids(html):
-    """Parse directory listing HTML and return set of all flare IDs."""
-    # Match links like site_12345_multiyear_vnf_series.csv
-    pattern = re.compile(r"site_(\d+)_multiyear_vnf_series\.csv")
-    ids = set()
-    for m in pattern.finditer(html):
-        ids.add(int(m.group(1)))
-    return ids
+def load_profile_ids():
+    """All flare IDs with an existing on-disk profile."""
+    if not os.path.isdir(PROFILES_DIR):
+        return set()
+    return {int(m.group(1)) for f in os.listdir(PROFILES_DIR)
+            if (m := re.match(r"site_(\d+)\.csv$", f))}
+
+
+def load_index_ids():
+    """All flare IDs catalogued in the multiyear index CSV."""
+    index_csv = os.path.join(INDEX_DIR, INDEX_CSV_NAME)
+    if not os.path.exists(index_csv):
+        return set()
+    import duckdb
+    rows = duckdb.connect().execute(
+        f"SELECT DISTINCT CAST(id AS INTEGER) FROM "
+        f"read_csv('{index_csv}', auto_detect=true, ignore_errors=true)").fetchall()
+    return {r[0] for r in rows}
 
 
 # -- Haversine ----------------------------------------------------------------
@@ -294,18 +327,22 @@ def filter_facility_adjacent(locs, term_coords, accum_coords, r_term, r_accum):
 
 # -- Profile download ---------------------------------------------------------
 
-def download_profile(session, flare_id):
-    """Download a single VNF profile CSV. Returns (flare_id, success)."""
+def download_profile(session, flare_id, retries=5):
+    """Download one VNF profile CSV, retrying on EOG connection resets / throttling.
+    Writes atomically (tmp + rename) so a kill can't leave a torn file."""
     url = f"{PROFILES_URL}/site_{flare_id}_multiyear_vnf_series.csv"
-    try:
-        resp = session.get(url, timeout=120)
-        if resp.ok and "Date_Mscan" in resp.text[:500]:
-            path = os.path.join(PROFILES_DIR, f"site_{flare_id}.csv")
-            with open(path, "w") as f:
-                f.write(resp.text)
-            return flare_id, True
-    except requests.RequestException as e:
-        print(f"\n  Warning: flare {flare_id}: {e}", file=sys.stderr)
+    for attempt in range(retries):
+        try:
+            resp = session.get(url, timeout=120)
+            if resp.ok and "Date_Mscan" in resp.text[:500]:
+                tmp = os.path.join(PROFILES_DIR, f".site_{flare_id}.tmp")
+                with open(tmp, "w") as f:
+                    f.write(resp.text)
+                os.replace(tmp, os.path.join(PROFILES_DIR, f"site_{flare_id}.csv"))
+                return flare_id, True
+        except requests.RequestException:
+            pass
+        time.sleep(2 * (attempt + 1))
     return flare_id, False
 
 
@@ -354,27 +391,28 @@ def main():
         "--radius-accum", type=float, default=10,
         help="Radius in km for accumulation matching (default: 10, requires --near-facilities)",
     )
+    parser.add_argument(
+        "--limit", type=int, default=0, metavar="N",
+        help="Only download the first N profiles (0 = all; for testing)",
+    )
     args = parser.parse_args()
 
     os.makedirs(PROFILES_DIR, exist_ok=True)
 
     # 1. Authenticate
     print("Authenticating with EOG...")
-    session, listing_html = authenticate()
-    if not listing_html or "site_" not in listing_html:
-        listing_html = verify_auth(session)
+    session, _ = authenticate()
+    verify_auth(session)
     print("  Authenticated")
 
     # 2. Optionally fetch index
     if args.fetch_index:
         fetch_index(session)
 
-    # 3. Scrape directory listing for all flare IDs
-    if "site_" not in listing_html:
-        resp = session.get(f"{PROFILES_URL}/", timeout=60)
-        listing_html = resp.text
-    all_ids = scrape_flare_ids(listing_html)
-    print(f"  {len(all_ids)} flares in directory listing")
+    # 3. Resolve flare IDs from the index CSV + existing profiles (both instant;
+    #    the on-server directory listing is 20k+ entries and far too slow to scrape)
+    all_ids = load_index_ids() | load_profile_ids()
+    print(f"  {len(all_ids)} flares (index + on-disk)")
 
     # 4. Optionally filter to facility-adjacent flares
     if args.near_facilities:
@@ -416,15 +454,19 @@ def main():
         to_download = [fid for fid in to_download if fid not in fresh]
         print(f"  {skipped} profiles fresh (< {args.max_age} days), {len(to_download)} to download")
 
+    if args.limit:
+        to_download = to_download[:args.limit]
+
     if not to_download:
         print("All profiles up to date.")
         return
 
-    # 6. Download
+    # 6. Download (EOG resets connections under load, so keep concurrency modest;
+    #    download_profile retries with backoff to ride out the resets)
     print(f"Downloading {len(to_download)} profiles...")
     ok = 0
     fail = 0
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futures = {pool.submit(download_profile, session, fid): fid for fid in to_download}
         for future in as_completed(futures):
             _, success = future.result()
