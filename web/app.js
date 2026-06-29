@@ -545,7 +545,10 @@ function initQuarterPicker() {
 
 function toggleQuarter(btn) {
     const wasActive = btn.classList.contains('active');
-    const activeCount = document.querySelectorAll('.quarter-btn.active').length;
+    // count only quarters that have data here — keep at least one *available* one
+    // selected, else deselecting past the last usable quarter empties the map while
+    // unavailable (no-data) quarters stay phantom-active and uncliackable.
+    const activeCount = document.querySelectorAll('.quarter-btn.active:not(.unavailable)').length;
     if (wasActive && activeCount <= 1) return;
     btn.classList.toggle('active');
     if (currentMode === 'vnf') {
