@@ -16,11 +16,15 @@ const overlaps = ([w, s, e, n], [tw, ts, te, tn]) => w <= te && e >= tw && s <= 
 
 export function isReady() { return !!conn; }
 
-// MGRS 100km-square id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
-// the archive is partitioned by MGRS tile, so its tile set is the coverage footprint.
+// MGRS tile id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
+// the archive is partitioned by Sentinel-2 granule, so its tile set is the coverage
+// footprint. an S2 granule is 109,800 m, not the bare 100 km MGRS square: it overhangs
+// 4,900 m beyond the square on every side. We draw that full granule footprint so
+// edge clusters (legitimately up to 4.9 km past the square) fall inside the box.
 const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
 const MGRS_ROWS = 'ABCDEFGHJKLMNPQRSTUV';                 // 100km northing letters, period 2,000,000 m
 const MGRS_BANDS = 'CDEFGHJKLMNPQRSTUVWX';                // 8° latitude bands from -80°
+const GRANULE_OVERHANG = 4900;                            // (109800 − 100000) / 2
 function mgrsTileRing(id) {
     const [, z, band, col, row] = /^(\d+)([C-X])([A-Z])([A-Z])$/.exec(id);
     const zone = +z, isNorth = band >= 'N';
@@ -28,7 +32,8 @@ function mgrsTileRing(id) {
     let north = (MGRS_ROWS.indexOf(row) + (zone % 2 ? 0 : 15)) * 1e5;  // even zones start the row letters at 'F' (≡ −5, i.e. +15 mod 20)
     const ref = wgs84ToUtm((zone - 1) * 6 - 177, -80 + 8 * MGRS_BANDS.indexOf(band) + 4, zone, isNorth)[1];
     north += Math.round((ref - north) / 2e6) * 2e6;                    // resolve 2,000,000 m ambiguity via band
-    const [sw, se, nw, ne] = [[east, north], [east + 1e5, north], [east, north + 1e5], [east + 1e5, north + 1e5]]
+    const b = GRANULE_OVERHANG, [w0, e0, s0, n0] = [east - b, east + 1e5 + b, north - b, north + 1e5 + b];
+    const [sw, se, nw, ne] = [[w0, s0], [e0, s0], [w0, n0], [e0, n0]]
         .map(([e, n]) => utmToWgs84(e, n, zone, isNorth));
     return [sw, se, ne, nw, sw];   // [lng,lat] ring
 }
