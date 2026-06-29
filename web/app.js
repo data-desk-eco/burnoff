@@ -457,6 +457,11 @@ function getDetectedQuarters() {
 // data source isn't ready / zoomed-out — leave everything enabled. Uncovered S2
 // viewports fall through to the detect branch (same coverage test that reveals the
 // Detect button) so quarters stay selectable for the local-worker fallback.
+function setQuarterHint(text) {
+    const el = document.getElementById('quarter-hint');
+    if (el) el.textContent = text;
+}
+
 async function updateQuarterIndicators() {
     const btns = document.querySelectorAll('.quarter-btn');
     const key = btn => `${btn.dataset.year}_${btn.dataset.quarter}`;
@@ -475,9 +480,13 @@ async function updateQuarterIndicators() {
             } catch (err) { console.error('quarter availability error:', err); }
         }
         btns.forEach(b => b.classList.toggle('unavailable', !!avail && !avail.has(key(b))));
+        // every selected quarter is unavailable here → the map is blank; say why.
+        const blank = !!avail && !Array.from(btns).some(b => b.classList.contains('active') && avail.has(key(b)));
+        setQuarterHint(blank ? `No ${isVnf ? 'VNF' : 'archive'} data for the selected quarters here` : '');
         return;
     }
 
+    setQuarterHint('');
     btns.forEach(b => b.classList.remove('unavailable'));
     const quarters = getDetectedQuarters();
     btns.forEach(b => b.classList.toggle('detected', quarters.has(key(b))));
@@ -723,6 +732,8 @@ function switchMode(mode) {
 
     // Update events header columns
     const cfg = MODE[mode];
+    const subEl = document.querySelector('#title-panel > p');
+    if (subEl) subEl.textContent = cfg.subtitle;
     const col2 = document.getElementById('events-col2');
     const col3 = document.getElementById('events-col3');
     if (col2) col2.textContent = cfg.col2;

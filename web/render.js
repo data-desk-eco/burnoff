@@ -8,6 +8,7 @@ export const RH_TO_MCM = 0.0315;
 
 export const MODE = {
     s2: {
+        subtitle: 'Sentinel-2 flare detection',
         label: 'B12 reflectance',
         prop: 'max_b12',
         col2: 'B12', col3: 'px',
@@ -24,6 +25,7 @@ export const MODE = {
         radiusZooms: [[0, 4, 4], [6, 6, 6], [10, 10, 8], [14, 12, 10]],
     },
     vnf: {
+        subtitle: 'VIIRS Nightfire flares',
         label: 'Radiant heat (MW)',
         prop: 'max_rh',
         col2: 'RH', col3: 'MCM/d',
