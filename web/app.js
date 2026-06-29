@@ -1738,7 +1738,7 @@ map.on('load', () => {
         map.addSource('coverage-tiles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addLayer({
             id: 'coverage-outline', type: 'line', source: 'coverage-tiles',
-            paint: { 'line-color': '#ffff00', 'line-width': 1 }
+            paint: { 'line-color': '#fff', 'line-width': 1 }
         }, 'country-borders');
         updateCoverageMask();
         whenCovered().then(updateCoverageMask);
