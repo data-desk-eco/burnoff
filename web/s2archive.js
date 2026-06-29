@@ -1,14 +1,15 @@
 // S2 archive reader — reads the precomputed Sentinel-2 SWIR flare *cluster view*
 // straight from the CloudFerro public parquet archive (s2-flares `box.sh archive`).
-// The archive co-produces a single derived view, `clusters/data.parquet`: one row per
-// cluster (scalar score columns + a nested `detections` list). We range-read that one
-// object with vendored DuckDB-WASM, load every cluster once, then serve each viewport
-// from memory (bbox + date-overlap filter). Zero npm dependencies.
+// The archive co-produces a derived cluster view partitioned by MGRS tile,
+// `clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
+// nested `detections` list). We enumerate those per-tile objects from the bucket
+// listing, range-read them with vendored DuckDB-WASM, load every cluster once, then
+// serve each viewport from memory (bbox + date-overlap filter). Zero npm dependencies.
 
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { openDuckDB } from './duckdb.js';
 
-let conn = null, _initPromise = null, _base = '', _all = null, _tiles = null, _rings = null, _tilesPromise = null;
+let conn = null, _initPromise = null, _base = '', _all = null, _tiles = null, _rings = null, _tilesPromise = null, _clusterKeys = null;
 
 export function isReady() { return !!conn; }
 
@@ -58,18 +59,20 @@ export function coverageMask() {
 function loadTiles() {
     return _tilesPromise ??= (async () => {
         try {
-            const ids = new Set();
+            const ids = new Set(), clusters = new Set();
             for (let token = ''; ;) {
                 const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000`
                     + (token && `&continuation-token=${encodeURIComponent(token)}`))).text();
                 for (const m of xml.matchAll(/detections\/mgrs=(\d+[C-X][A-Z]{2})/g)) ids.add(m[1]);
+                for (const m of xml.matchAll(/clusters\/mgrs=(\d+[C-X][A-Z]{2})/g)) clusters.add(m[1]);
                 if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
                 token = xml.match(/<NextContinuationToken>([^<]+)</)?.[1] ?? '';
                 if (!token) break;
             }
+            _clusterKeys = [...clusters].map(id => `${_base}/clusters/mgrs=${id}/data.parquet`);
             _rings = [...ids].map(mgrsTileRing);
             _tiles = _rings.map(ringBbox);
-        } catch { _tiles = null; _rings = null; }
+        } catch { _tiles = null; _rings = null; _clusterKeys = null; }
     })();
 }
 
@@ -91,12 +94,15 @@ const num = v => v == null ? null : Number(v);
 /** Load every cluster row once (the view is one small global object) and cache it. */
 function loadAll() {
     return _all ??= (async () => {
+        await loadTiles();   // the cluster file list comes from the same bucket listing
+        if (!_clusterKeys?.length) return [];
+        const files = _clusterKeys.map(k => `'${k}'`).join(', ');
         const res = await conn.query(`
             SELECT lon, lat, max_b12, avg_b12, detection_count, date_count,
                    CAST(first_date AS VARCHAR) AS first_date, CAST(last_date AS VARCHAR) AS last_date,
                    persistence, seasonal, ratio_score, persistence_score, glint_penalty,
                    total_score, max_ratio, min_glint, glint_suspect, to_json(detections) AS detections
-            FROM read_parquet('${_base}/clusters/data.parquet')`);
+            FROM read_parquet([${files}])`);
         const out = [];
         for (let i = 0; i < res.numRows; i++) {
             const r = res.get(i);
