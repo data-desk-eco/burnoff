@@ -58,6 +58,13 @@
             </div>
             <input type="range" id="intensity-range" min="0" max="1.5" step="0.05" value="0.85">
         </div>
+        <div class="intensity-slider">
+            <div class="cluster-slider-header">
+                <span class="label-sm">Minimum persistence</span>
+                <span class="cluster-slider-value" id="persistence-value">25%</span>
+            </div>
+            <input type="range" id="persistence-range" min="0" max="1" step="0.05" value="0.25">
+        </div>
         <div class="quarter-picker" id="quarter-picker"></div>
         <button id="detect-btn" class="detect-btn s2-only">Detect</button>
         <div id="detect-progress" class="detect-progress hidden s2-only">
@@ -129,6 +136,6 @@
 
     <script src="vendor/pmtiles.js"></script>
     <script src="vendor/maplibre-gl.js"></script>
-    <script type="module" src="app.js?v=13"></script>
+    <script type="module" src="app.js?v=14"></script>
 </body>
 </html>

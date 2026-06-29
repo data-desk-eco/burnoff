@@ -1272,6 +1272,7 @@ let MERGE_DISTANCE_M = 135;
 let S2_MERGE_DISTANCE_M = 135;
 let CLUSTER_AVG_B12_MIN = MODE.s2.filter.default;
 let VNF_AVG_RH_MIN = MODE.vnf.filter.default;
+let CLUSTER_PERSISTENCE_MIN = 0.25;   // display-only min persistence gate (all modes)
 
 // `obs` (optional) overrides the persistence source: an array of
 // {block_id, date, cloudFree} records (the S2-archive path). When omitted, the
@@ -1453,7 +1454,16 @@ function ensureDetectionLayer() {
                 'circle-stroke-opacity': 1
             }
         });
+        applyPersistenceFilter();
     }
+}
+
+// Display-only persistence gate: hide clusters below the slider threshold without
+// re-clustering. Every feature builder (archive/cluster/VNF) sets `persistence`.
+function applyPersistenceFilter() {
+    if (!map.getLayer('client-detection-circles')) return;
+    map.setFilter('client-detection-circles',
+        ['>=', ['coalesce', ['get', 'persistence'], 0], CLUSTER_PERSISTENCE_MIN]);
 }
 
 function updateDetectionSource() {
@@ -2007,6 +2017,12 @@ document.getElementById('intensity-range').addEventListener('input', e => {
     else CLUSTER_AVG_B12_MIN = val;
     document.getElementById('intensity-value').textContent = modeConf().formatFilter(val);
     debouncedRecluster();
+});
+
+document.getElementById('persistence-range').addEventListener('input', e => {
+    CLUSTER_PERSISTENCE_MIN = parseFloat(e.target.value);
+    document.getElementById('persistence-value').textContent = `${Math.round(CLUSTER_PERSISTENCE_MIN * 100)}%`;
+    applyPersistenceFilter();   // display-only: just re-filter, no recluster
 });
 
 document.getElementById('collapse-toggle').addEventListener('click', () => {
