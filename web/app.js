@@ -1773,6 +1773,7 @@ map.on('load', () => {
 
     // LNG terminal dots
     fetch('terminals.geojson').then(r => r.json()).then(geojson => {
+        geojson.features = geojson.features.filter(f => f.properties.type === 'export');
         setTerminals(geojson.features);
         map.addSource('lng-terminals', { type: 'geojson', data: geojson });
         map.addLayer({
