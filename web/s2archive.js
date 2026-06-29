@@ -25,14 +25,22 @@ export function isReady() { return !!conn; }
 const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
 const MGRS_ROWS = 'ABCDEFGHJKLMNPQRSTUV';                 // 100km northing letters, period 2,000,000 m
 const MGRS_BANDS = 'CDEFGHJKLMNPQRSTUVWX';                // 8° latitude bands from -80°
-function mgrsTileRing(id) {
+// granule overhang: S2 granules are 109,800 m, not 100,000 m, so a detection (hence a
+// cluster anchor) can sit up to (109800−100000)/2 = 4,900 m OUTSIDE its own tile's
+// nominal square — most visibly across a UTM zone seam (Yamal LNG at 72°E). The
+// coverage OUTLINE wants the edge-to-edge nominal squares (pad 0); the cluster-LOADING
+// filter must use the granule footprint (pad 4,900 m) or it skips the very tile holding
+// an overhanging cluster once the viewport zooms past the nominal square.
+const GRANULE_PAD = 4900;
+function mgrsTileRing(id, pad = 0) {
     const [, z, band, col, row] = /^(\d+)([C-X])([A-Z])([A-Z])$/.exec(id);
     const zone = +z, isNorth = band >= 'N';
     const east = (MGRS_COLS[(zone - 1) % 3].indexOf(col) + 1) * 1e5;
     let north = (MGRS_ROWS.indexOf(row) + (zone % 2 ? 0 : 15)) * 1e5;  // even zones start the row letters at 'F' (≡ −5, i.e. +15 mod 20)
     const ref = wgs84ToUtm((zone - 1) * 6 - 177, -80 + 8 * MGRS_BANDS.indexOf(band) + 4, zone, isNorth)[1];
     north += Math.round((ref - north) / 2e6) * 2e6;                    // resolve 2,000,000 m ambiguity via band
-    const [sw, se, nw, ne] = [[east, north], [east + 1e5, north], [east, north + 1e5], [east + 1e5, north + 1e5]]
+    const [e0, e1, n0, n1] = [east - pad, east + 1e5 + pad, north - pad, north + 1e5 + pad];
+    const [sw, se, nw, ne] = [[e0, n0], [e1, n0], [e0, n1], [e1, n1]]
         .map(([e, n]) => utmToWgs84(e, n, zone, isNorth));
     return [sw, se, ne, nw, sw];   // [lng,lat] ring
 }
@@ -73,7 +81,7 @@ function loadTiles() {
                 if (!token) break;
             }
             _clusterTiles = [...clusters].map(id => ({
-                id, key: `${_base}/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id)) }));
+                id, key: `${_base}/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id, GRANULE_PAD)) }));
             _rings = [...ids].map(mgrsTileRing);
             _tiles = _rings.map(ringBbox);
         } catch { _tiles = null; _rings = null; _clusterTiles = null; }
