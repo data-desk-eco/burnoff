@@ -3,7 +3,7 @@
 // pure-archive session never fetches them. These bindings stay null until then.
 let LWWMap, Store, PeerMesh, geohash3, SyncManager, validateDetection;
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isReady as vnfReady } from './vnf.js';
-import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageMask, whenCovered } from './s2archive.js?v=11';
+import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageTiles, whenCovered } from './s2archive.js?v=12';
 import { clusterDetections } from './s2/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { MAP_STYLE, magmaColor } from './map-style.js';
@@ -784,12 +784,12 @@ function switchMode(mode) {
     updateCoverageMask();
 }
 
-// Refresh the coverage-spotlight overlay's data + visibility (s2 mode only).
+// Refresh the coverage-outline overlay's data + visibility (s2 mode only).
 function updateCoverageMask() {
-    if (!map.getLayer('coverage-dark')) return;
-    const mask = coverageMask();
-    if (mask) map.getSource('coverage-mask')?.setData(mask);
-    map.setLayoutProperty('coverage-dark', 'visibility', currentMode === 's2' ? 'visible' : 'none');
+    if (!map.getLayer('coverage-outline')) return;
+    const tiles = coverageTiles();
+    if (tiles) map.getSource('coverage-tiles')?.setData(tiles);
+    map.setLayoutProperty('coverage-outline', 'visibility', currentMode === 's2' ? 'visible' : 'none');
 }
 
 function updateLegend() {
@@ -1731,15 +1731,14 @@ map.on('moveend', () => {
 map.on('load', () => {
     updateMapCentre();
 
-    // Coverage spotlight: dark fill over the whole globe with the archived MGRS
-    // tiles punched out as holes, so only covered ground stays lit. Sits just
-    // above the satellite basemap (below borders/labels/detections). Populated
+    // Coverage outline: a thin yellow border around each archived MGRS tile. Sits
+    // just above the satellite basemap (below borders/labels/detections). Populated
     // once the archive's tile listing lands; gated to s2 mode in switchMode.
     if (S2_ARCHIVE) {
-        map.addSource('coverage-mask', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+        map.addSource('coverage-tiles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
         map.addLayer({
-            id: 'coverage-dark', type: 'fill', source: 'coverage-mask',
-            paint: { 'fill-color': '#000', 'fill-opacity': 0.72, 'fill-antialias': false }
+            id: 'coverage-outline', type: 'line', source: 'coverage-tiles',
+            paint: { 'line-color': '#ffff00', 'line-width': 1 }
         }, 'country-borders');
         updateCoverageMask();
         whenCovered().then(updateCoverageMask);

@@ -19,10 +19,9 @@ export function isReady() { return !!conn; }
 // MGRS 100km-square id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
 // the archive is partitioned by Sentinel-2 granule, so its tile set is the coverage
 // footprint. We draw the nominal 100 km MGRS square, NOT the wider 109,800 m granule:
-// nominal squares tile edge-to-edge without overlapping, which the coverage mask needs
-// (overlapping holes break earcut triangulation -> jagged dark spikes). Edge clusters
-// that overhang their own square still land inside a neighbour's square, because
-// overlapping granules are each archived separately, so the union of squares covers all.
+// edge clusters that overhang their own square still land inside a neighbour's square,
+// because overlapping granules are each archived separately, so the union of squares
+// covers all. (Nominal squares also tile edge-to-edge without overlapping.)
 const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
 const MGRS_ROWS = 'ABCDEFGHJKLMNPQRSTUV';                 // 100km northing letters, period 2,000,000 m
 const MGRS_BANDS = 'CDEFGHJKLMNPQRSTUVWX';                // 8° latitude bands from -80°
@@ -39,8 +38,6 @@ function mgrsTileRing(id) {
 }
 const ringBbox = r => [Math.min(...r.map(c => c[0])), Math.min(...r.map(c => c[1])),
                        Math.max(...r.map(c => c[0])), Math.max(...r.map(c => c[1]))];
-const ringArea = r => r.slice(1).reduce((a, c, i) => a + (r[i][0] * c[1] - c[0] * r[i][1]), 0);
-const asHole = r => ringArea(r) > 0 ? r.slice().reverse() : r;   // holes wind clockwise
 
 /** True if the viewport bbox overlaps any archived MGRS tile. Unknown coverage ⇒ true (assume archived). */
 export function isCovered(bbox) {
@@ -51,14 +48,12 @@ export function isCovered(bbox) {
 /** Resolves once the coverage footprint (MGRS tile listing) has been fetched. */
 export function whenCovered() { return _tilesPromise || Promise.resolve(); }
 
-/** A whole-world dark polygon with every archived MGRS tile punched out as a hole.
- *  Drives the "globe darkened except covered tiles" spotlight overlay. Null until tiles load. */
-export function coverageMask() {
+/** One polygon Feature per archived MGRS tile, for the coverage outline overlay.
+ *  Null until the tile listing lands. */
+export function coverageTiles() {
     if (!_rings || !_rings.length) return null;
-    const world = [[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]];
-    return { type: 'FeatureCollection', features: [{
-        type: 'Feature', properties: {},
-        geometry: { type: 'Polygon', coordinates: [world, ..._rings.map(asHole)] } }] };
+    return { type: 'FeatureCollection', features: _rings.map(r => ({
+        type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [r] } })) };
 }
 
 /** Bucket listing at init: the `detections/mgrs=…` partitions are the coverage
