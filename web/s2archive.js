@@ -22,7 +22,7 @@ function mgrsTileRing(id) {
     const [, z, band, col, row] = /^(\d+)([C-X])([A-Z])([A-Z])$/.exec(id);
     const zone = +z, isNorth = band >= 'N';
     const east = (MGRS_COLS[(zone - 1) % 3].indexOf(col) + 1) * 1e5;
-    let north = (MGRS_ROWS.indexOf(row) + (zone % 2 ? 0 : 5)) * 1e5;   // even zones offset +500km
+    let north = (MGRS_ROWS.indexOf(row) + (zone % 2 ? 0 : 15)) * 1e5;  // even zones start the row letters at 'F' (≡ −5, i.e. +15 mod 20)
     const ref = wgs84ToUtm((zone - 1) * 6 - 177, -80 + 8 * MGRS_BANDS.indexOf(band) + 4, zone, isNorth)[1];
     north += Math.round((ref - north) / 2e6) * 2e6;                    // resolve 2,000,000 m ambiguity via band
     const [sw, se, nw, ne] = [[east, north], [east + 1e5, north], [east, north + 1e5], [east + 1e5, north + 1e5]]
