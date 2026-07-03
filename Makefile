@@ -2,6 +2,8 @@
 
 terminals: web/terminals.geojson
 
+# gem's prelude flng row (T100000130339) is ~165 km sse of the vessel's true mooring
+# despite claiming "exact" accuracy; override with the vnf-derived flare position
 web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
 	@duckdb -c "\
 	COPY ( \
@@ -11,7 +13,8 @@ web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
 	      'type', 'Feature', \
 	      'geometry', json_object( \
 	        'type', 'Point', \
-	        'coordinates', json_array(CAST(Longitude AS DOUBLE), CAST(Latitude AS DOUBLE)) \
+	        'coordinates', CASE ProjectID WHEN 'T100000130339' THEN json_array(123.3158, -13.7847) \
+	          ELSE json_array(CAST(Longitude AS DOUBLE), CAST(Latitude AS DOUBLE)) END \
 	      ), \
 	      'properties', json_object( \
 	        'name', TerminalName, \
