@@ -1,0 +1,595 @@
+{
+ "version": 8,
+ "name": "Data Desk Dark",
+ "metadata": {
+  "generator": "data-desk design pipeline",
+  "source": "ir/cartography.json + pipeline/vendor/dark-matter.json"
+ },
+ "sources": {
+  "carto": {
+   "type": "vector",
+   "url": "https://tiles.basemaps.cartocdn.com/vector/carto.streets/v1/tiles.json"
+  },
+  "terrain": {
+   "type": "raster-dem",
+   "tiles": [
+    "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+   ],
+   "tileSize": 256,
+   "encoding": "terrarium"
+  }
+ },
+ "sprite": "https://tiles.basemaps.cartocdn.com/gl/dark-matter-gl-style/sprite",
+ "glyphs": "https://tiles.basemaps.cartocdn.com/fonts/{fontstack}/{range}.pbf",
+ "layers": [
+  {
+   "id": "background",
+   "type": "background",
+   "layout": {
+    "visibility": "visible"
+   },
+   "paint": {
+    "background-color": "#1C1C1C",
+    "background-opacity": 1
+   }
+  },
+  {
+   "id": "landcover",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "landcover",
+   "filter": [
+    "any",
+    [
+     "==",
+     "class",
+     "wood"
+    ],
+    [
+     "==",
+     "class",
+     "grass"
+    ],
+    [
+     "==",
+     "subclass",
+     "recreation_ground"
+    ]
+   ],
+   "paint": {
+    "fill-color": "#1C1C1C",
+    "fill-opacity": 1,
+    "fill-outline-color": "#1C1C1C"
+   }
+  },
+  {
+   "id": "park_national_park",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "park",
+   "minzoom": 9,
+   "filter": [
+    "all",
+    [
+     "==",
+     "class",
+     "national_park"
+    ]
+   ],
+   "layout": {
+    "visibility": "visible"
+   },
+   "paint": {
+    "fill-color": "#1C1C1C",
+    "fill-opacity": 1,
+    "fill-translate-anchor": "map",
+    "fill-outline-color": "#1C1C1C"
+   }
+  },
+  {
+   "id": "park_nature_reserve",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "park",
+   "minzoom": 0,
+   "filter": [
+    "all",
+    [
+     "==",
+     "class",
+     "nature_reserve"
+    ]
+   ],
+   "layout": {
+    "visibility": "visible"
+   },
+   "paint": {
+    "fill-color": "#1C1C1C",
+    "fill-antialias": true,
+    "fill-opacity": {
+     "stops": [
+      [
+       6,
+       0.7
+      ],
+      [
+       9,
+       0.9
+      ]
+     ]
+    },
+    "fill-outline-color": "#1C1C1C"
+   }
+  },
+  {
+   "id": "landuse_residential",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "landuse",
+   "minzoom": 6,
+   "filter": [
+    "any",
+    [
+     "==",
+     "class",
+     "residential"
+    ]
+   ],
+   "paint": {
+    "fill-color": "#1C1C1C",
+    "fill-opacity": {
+     "stops": [
+      [
+       6,
+       0.6
+      ],
+      [
+       9,
+       1
+      ]
+     ]
+    },
+    "fill-outline-color": "#1C1C1C"
+   }
+  },
+  {
+   "id": "landuse",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "landuse",
+   "filter": [
+    "any",
+    [
+     "==",
+     "class",
+     "cemetery"
+    ],
+    [
+     "==",
+     "class",
+     "stadium"
+    ]
+   ],
+   "paint": {
+    "fill-color": "#1C1C1C",
+    "fill-outline-color": "#1C1C1C"
+   }
+  },
+  {
+   "id": "waterway",
+   "type": "line",
+   "source": "carto",
+   "source-layer": "waterway",
+   "paint": {
+    "line-color": "#050505",
+    "line-width": {
+     "stops": [
+      [
+       8,
+       0.5
+      ],
+      [
+       9,
+       1
+      ],
+      [
+       15,
+       2
+      ],
+      [
+       16,
+       3
+      ]
+     ]
+    },
+    "line-blur": 0
+   }
+  },
+  {
+   "id": "boundary_county",
+   "type": "line",
+   "source": "carto",
+   "source-layer": "boundary",
+   "minzoom": 9,
+   "maxzoom": 24,
+   "filter": [
+    "all",
+    [
+     "==",
+     "admin_level",
+     6
+    ],
+    [
+     "==",
+     "maritime",
+     0
+    ]
+   ],
+   "paint": {
+    "line-color": "#404040",
+    "line-width": {
+     "stops": [
+      [
+       4,
+       0.5
+      ],
+      [
+       7,
+       1
+      ]
+     ]
+    },
+    "line-blur": 0
+   }
+  },
+  {
+   "id": "boundary_state",
+   "type": "line",
+   "source": "carto",
+   "source-layer": "boundary",
+   "minzoom": 4,
+   "filter": [
+    "all",
+    [
+     "==",
+     "admin_level",
+     4
+    ],
+    [
+     "==",
+     "maritime",
+     0
+    ]
+   ],
+   "paint": {
+    "line-color": "#404040",
+    "line-width": {
+     "stops": [
+      [
+       4,
+       0.5
+      ],
+      [
+       7,
+       1
+      ],
+      [
+       8,
+       1
+      ],
+      [
+       9,
+       1.2
+      ]
+     ]
+    },
+    "line-blur": 0
+   }
+  },
+  {
+   "id": "water",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "water",
+   "minzoom": 0,
+   "maxzoom": 24,
+   "filter": [
+    "all",
+    [
+     "==",
+     "$type",
+     "Polygon"
+    ]
+   ],
+   "layout": {
+    "visibility": "visible"
+   },
+   "paint": {
+    "fill-color": "#050505",
+    "fill-antialias": true,
+    "fill-translate-anchor": "map",
+    "fill-opacity": 1,
+    "fill-outline-color": "#000000"
+   }
+  },
+  {
+   "id": "water_shadow",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "water",
+   "minzoom": 0,
+   "filter": [
+    "all",
+    [
+     "==",
+     "$type",
+     "Polygon"
+    ]
+   ],
+   "layout": {
+    "visibility": "visible"
+   },
+   "paint": {
+    "fill-color": "#050505",
+    "fill-antialias": true,
+    "fill-translate-anchor": "map",
+    "fill-opacity": 1,
+    "fill-translate": {
+     "stops": [
+      [
+       0,
+       [
+        0,
+        2
+       ]
+      ],
+      [
+       6,
+       [
+        0,
+        1
+       ]
+      ],
+      [
+       14,
+       [
+        0,
+        1
+       ]
+      ],
+      [
+       17,
+       [
+        0,
+        2
+       ]
+      ]
+     ]
+    },
+    "fill-outline-color": "#000000"
+   }
+  },
+  {
+   "id": "aeroway-runway",
+   "type": "line",
+   "source": "carto",
+   "source-layer": "aeroway",
+   "minzoom": 12,
+   "filter": [
+    "all",
+    [
+     "==",
+     "class",
+     "runway"
+    ]
+   ],
+   "layout": {
+    "line-cap": "square"
+   },
+   "paint": {
+    "line-width": {
+     "stops": [
+      [
+       11,
+       1
+      ],
+      [
+       13,
+       4
+      ],
+      [
+       14,
+       6
+      ],
+      [
+       15,
+       8
+      ],
+      [
+       16,
+       10
+      ]
+     ]
+    },
+    "line-color": "#111",
+    "line-blur": 0
+   }
+  },
+  {
+   "id": "aeroway-taxiway",
+   "type": "line",
+   "source": "carto",
+   "source-layer": "aeroway",
+   "minzoom": 13,
+   "filter": [
+    "all",
+    [
+     "==",
+     "class",
+     "taxiway"
+    ]
+   ],
+   "paint": {
+    "line-color": "#111",
+    "line-width": {
+     "stops": [
+      [
+       13,
+       0.5
+      ],
+      [
+       14,
+       1
+      ],
+      [
+       15,
+       2
+      ],
+      [
+       16,
+       4
+      ]
+     ]
+    },
+    "line-blur": 0
+   }
+  },
+  {
+   "id": "building",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "building",
+   "layout": {
+    "visibility": "visible"
+   },
+   "paint": {
+    "fill-color": "#1C1C1C",
+    "fill-antialias": true,
+    "fill-outline-color": "#1C1C1C"
+   }
+  },
+  {
+   "id": "building-top",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "building",
+   "layout": {
+    "visibility": "visible"
+   },
+   "paint": {
+    "fill-translate": {
+     "base": 1,
+     "stops": [
+      [
+       14,
+       [
+        0,
+        0
+       ]
+      ],
+      [
+       16,
+       [
+        -2,
+        -2
+       ]
+      ]
+     ]
+    },
+    "fill-outline-color": "#1C1C1C",
+    "fill-color": "#1C1C1C",
+    "fill-opacity": {
+     "base": 1,
+     "stops": [
+      [
+       13,
+       0
+      ],
+      [
+       16,
+       1
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "id": "boundary_country_inner",
+   "type": "line",
+   "source": "carto",
+   "source-layer": "boundary",
+   "minzoom": 0,
+   "filter": [
+    "all",
+    [
+     "==",
+     "admin_level",
+     2
+    ],
+    [
+     "==",
+     "maritime",
+     0
+    ]
+   ],
+   "layout": {
+    "line-cap": "round",
+    "line-join": "round"
+   },
+   "paint": {
+    "line-color": "#404040",
+    "line-opacity": 1,
+    "line-width": {
+     "stops": [
+      [
+       3,
+       1
+      ],
+      [
+       6,
+       1.5
+      ]
+     ]
+    },
+    "line-offset": 0,
+    "line-blur": 0
+   }
+  },
+  {
+   "id": "hillshade-nw",
+   "type": "hillshade",
+   "source": "terrain",
+   "paint": {
+    "hillshade-exaggeration": 0.4,
+    "hillshade-shadow-color": "#000000",
+    "hillshade-highlight-color": "#ffffff",
+    "hillshade-accent-color": "#ffffff",
+    "hillshade-illumination-direction": 315,
+    "hillshade-illumination-anchor": "map"
+   }
+  },
+  {
+   "id": "water-hillshade-mask",
+   "type": "fill",
+   "source": "carto",
+   "source-layer": "water",
+   "paint": {
+    "fill-color": "#0E0E0E",
+    "fill-opacity": 1
+   }
+  },
+  {
+   "id": "coastline",
+   "type": "line",
+   "source": "carto",
+   "source-layer": "water",
+   "paint": {
+    "line-color": "#353535",
+    "line-width": 0.8,
+    "line-opacity": 1
+   }
+  }
+ ],
+ "id": "voyager",
+ "owner": "Carto"
+}

@@ -6,9 +6,10 @@ import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isRea
 import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageTiles, whenCovered } from './s2archive.js?v=14';
 import { clusterDetections } from './s2/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
-import { MAP_STYLE, magmaColor } from './map-style.js';
-import { MODE, scaleT, scaleColor, chartNorm, buildLegendHTML, s2ColorExpr, vnfColorExpr, s2RadiusExpr, vnfRadiusExpr, formatDate } from './render.js';
-import { setTerminals, getTerminals, findNearestTerminal, archiveFeature, enrichVNFFeatures, DEG_TO_RAD } from './clustering.js';
+import { MODE, RAMP, scaleT, rampRGB, chartNorm, buildKeyHTML, loadMarks, markIconExpr, ICON_SIZE, formatDate } from './render.js';
+import { addMarking } from './vendor/dd/markings.js';
+import { drawWorldmap, setBoxes } from './worldmap.js';
+import { setTerminals, findNearestTerminal, archiveFeature, enrichVNFFeatures, DEG_TO_RAD } from './clustering.js';
 import { GeoTIFF } from './s2/vendor/geotiff-esm.js';
 
 // ---------------------------------------------------------------------------
@@ -168,10 +169,10 @@ function getActiveStates() {
     return syncManager ? syncManager.getActiveStates() : new Map();
 }
 
-// Initialize map
+// Initialize map — data desk dark basemap; grayscale satellite fades in on zoom
 const map = new maplibregl.Map({
     container: 'map',
-    style: MAP_STYLE,
+    style: 'vendor/dd/style.dark.json',
     center: [51.52, 25.92],
     zoom: 12,
     minZoom: 1.5,
@@ -179,6 +180,41 @@ const map = new maplibregl.Map({
 });
 
 map.on('style.load', () => map.setProjection({ type: 'globe' }));
+
+// Markings (vendor/dd): loaded on demand; styleimagemissing catches any id
+// referenced before its image arrives, so layers can be added without awaiting.
+const _marksLoading = new Set();
+function ensureMark(id) {
+    const m = id.match(/^(flare|triangle|square)-(#[0-9A-Fa-f]{6})$/);
+    if (!m || _marksLoading.has(id)) return;
+    _marksLoading.add(id);
+    addMarking(map, m[1], { color: m[2], base: new URL('vendor/dd/markings/', location.href) })
+        .catch(() => _marksLoading.delete(id));
+}
+map.on('styleimagemissing', e => ensureMark(e.id));
+
+// Mollweide world maps: viewport box in the main panel (pdf:83), archive
+// coverage boxes in the intro panel (pdf:86).
+const geomBbox = f => {
+    let w = 180, s = 90, e = -180, n = -90;
+    for (const [x, y] of f.geometry.coordinates.flat(f.geometry.type === 'MultiPolygon' ? 2 : 1)) {
+        w = Math.min(w, x); e = Math.max(e, x); s = Math.min(s, y); n = Math.max(n, y);
+    }
+    return [w, s, e, n];
+};
+function updateWorldBox() {
+    setBoxes(document.getElementById('world-map'), [getViewportBbox()]);
+}
+fetch('assets/land.json').then(r => r.json()).then(land => {
+    drawWorldmap(document.getElementById('world-map'), land);
+    updateWorldBox();
+    const modal = document.getElementById('modal-worldmap');
+    drawWorldmap(modal, land);
+    if (S2_ARCHIVE) whenCovered().then(() => {
+        const tiles = coverageTiles();
+        if (tiles) setBoxes(modal, tiles.features.map(geomBbox), 0.06);
+    });
+});
 
 let currentFeature = null;
 let selectedDetection = null;
@@ -253,20 +289,9 @@ function sanitizeDetections(key, dets) {
 }
 
 // Peer count indicator
-let _lastPeerCount = 0;
 function updatePeerStatus() {
-    const states = getActiveStates();
-    let peers = states.size - 1;
-    const el = document.getElementById('peer-status');
-    if (!el) return;
-    if (peers > 0) {
-        el.textContent = `${peers} peer${peers !== 1 ? 's' : ''} connected`;
-        el.classList.add('active');
-    } else {
-        el.textContent = 'No peers';
-        el.classList.remove('active');
-    }
-    if (peers !== _lastPeerCount) _lastPeerCount = peers;
+    const el = document.getElementById('peer-count');
+    if (el) el.textContent = Math.max(0, getActiveStates().size - 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -511,44 +536,39 @@ function updateDetectButton(quarters) {
 // Quarter picker
 // ---------------------------------------------------------------------------
 
+// Quarter grid (pdf:83): Q1-Q4 header columns, one dot row per year — active
+// dots 8px, inactive 3px, unavailable/detected greyed (pdf:81 active/inactive).
 function initQuarterPicker() {
     const container = document.getElementById('quarter-picker');
     const now = new Date();
     const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-    const currentQuarter = Math.floor(currentMonth / 3) + 1;
-
-    const years = [currentYear - 3, currentYear - 2, currentYear - 1, currentYear];
+    const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
     container.innerHTML = '';
 
-    for (const year of years) {
-        const row = document.createElement('div');
-        row.className = 'quarter-row';
+    const span = (cls, text) => {
+        const el = document.createElement('span');
+        el.className = cls;
+        if (text) el.textContent = text;
+        container.appendChild(el);
+    };
+    for (let q = 1; q <= 4; q++) span('dd-secondary', `Q${q}`);
+    span('');
 
-        const label = document.createElement('span');
-        label.className = 'quarter-year';
-        label.textContent = year;
-        row.appendChild(label);
-
+    for (const year of [currentYear - 3, currentYear - 2, currentYear - 1, currentYear]) {
         const maxQ = (year === currentYear) ? currentQuarter : 4;
         for (let q = 1; q <= 4; q++) {
-            if (q > maxQ) {
-                const spacer = document.createElement('span');
-                spacer.className = 'quarter-spacer';
-                row.appendChild(spacer);
-                continue;
-            }
+            if (q > maxQ) { span(''); continue; }
             const btn = document.createElement('button');
             btn.className = 'quarter-btn';
-            btn.textContent = `Q${q}`;
+            btn.innerHTML = '<span class="dd-dot"></span>';
+            btn.title = `Q${q} ${year}`;
             btn.dataset.year = year;
             btn.dataset.quarter = q;
             if (year >= currentYear - 1) btn.classList.add('active');
             btn.addEventListener('click', () => toggleQuarter(btn));
-            row.appendChild(btn);
+            container.appendChild(btn);
         }
-
-        container.appendChild(row);
+        span('quarter-year dd-secondary', year);
     }
 }
 
@@ -665,7 +685,7 @@ function updateS2Controls() {
         map.getZoom() >= MIN_DETECT_ZOOM && !isCovered(getViewportBbox()) && !_isDetecting;
     // Outside archive coverage the Detect/P2P path is live — load the CRDT lazily.
     if (show) ensureDetect();
-    for (const sel of ['#peer-status', '#detect-btn', '.cluster-slider'])
+    for (const sel of ['#peer-status', '#detect-area', '.cluster-slider'])
         document.querySelector(sel).style.setProperty('display', show ? '' : 'none');
 }
 
@@ -732,8 +752,7 @@ function switchMode(mode) {
 
     // Update events header columns
     const cfg = MODE[mode];
-    const subEl = document.querySelector('#title-panel > p');
-    if (subEl) subEl.textContent = cfg.subtitle;
+    document.getElementById('mode-subtitle').textContent = cfg.subtitle;
     const col2 = document.getElementById('events-col2');
     const col3 = document.getElementById('events-col3');
     if (col2) col2.textContent = cfg.col2;
@@ -750,7 +769,7 @@ function switchMode(mode) {
         clSlider.style.display = '';
         MERGE_DISTANCE_M = S2_MERGE_DISTANCE_M;
         clRange.min = '0'; clRange.max = '200'; clRange.step = '5'; clRange.value = MERGE_DISTANCE_M;
-        document.getElementById('cluster-value').textContent = MERGE_DISTANCE_M === 0 ? 'Off' : `${MERGE_DISTANCE_M} m`;
+        document.getElementById('cluster-value').textContent = MERGE_DISTANCE_M === 0 ? 'Off' : `${MERGE_DISTANCE_M}m`;
     }
 
     const intRange = document.getElementById('intensity-range');
@@ -795,28 +814,18 @@ function switchMode(mode) {
 
     updateS2Controls();
     updateCirclePaint();
-    updateCoverageMask();
 }
 
-// Refresh the coverage-outline overlay's data + visibility (s2 mode only).
-function updateCoverageMask() {
-    if (!map.getLayer('coverage-outline')) return;
-    const tiles = coverageTiles();
-    if (tiles) map.getSource('coverage-tiles')?.setData(tiles);
-    map.setLayoutProperty('coverage-outline', 'visibility', currentMode === 's2' ? 'visible' : 'none');
-}
-
+// Key panel: intensity ramp + infrastructure sections, collapsible, with the
+// OGIM rows doubling as layer toggles (inactive rows grey out).
+const _keyState = { open: { ramp: true, infra: true }, ogim: false, pipes: false };
 function updateLegend() {
-    const legend = document.querySelector('.legend');
-    if (!legend) return;
-    legend.innerHTML = buildLegendHTML(modeConf(), _ogimVisible);
+    document.getElementById('key-panel').innerHTML = buildKeyHTML(modeConf(), _keyState);
 }
 
 function updateCirclePaint() {
     if (!map.getLayer('client-detection-circles')) return;
-    const isVnf = currentMode === 'vnf';
-    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', isVnf ? vnfColorExpr : s2ColorExpr);
-    map.setPaintProperty('client-detection-circles', 'circle-radius', isVnf ? vnfRadiusExpr : s2RadiusExpr);
+    map.setLayoutProperty('client-detection-circles', 'icon-image', markIconExpr(modeConf()));
 }
 
 function modeConf() { return MODE[currentMode] || MODE.s2; }
@@ -833,14 +842,12 @@ function copernicusUrl(date) {
 
 function setCirclesGreyed() {
     if (!map.getLayer('client-detection-circles')) return;
-    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', '#bbb');
-    map.setPaintProperty('client-detection-circles', 'circle-stroke-opacity', 0.6);
+    map.setPaintProperty('client-detection-circles', 'icon-opacity', 0.35);
 }
 
 function setCirclesDefault() {
     if (!map.getLayer('client-detection-circles')) return;
-    map.setPaintProperty('client-detection-circles', 'circle-stroke-color', currentMode === 'vnf' ? vnfColorExpr : s2ColorExpr);
-    map.setPaintProperty('client-detection-circles', 'circle-stroke-opacity', 1);
+    map.setPaintProperty('client-detection-circles', 'icon-opacity', 1);
 }
 
 function renderIntensityChart(detections, onSelectDate) {
@@ -864,15 +871,15 @@ function renderIntensityChart(detections, onSelectDate) {
     const cfg = modeConf();
 
     let svg = `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">`;
-    svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
+    svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="#808080" stroke-width="1"/>`;
 
     const firstYear = new Date(minDate).getFullYear();
     const lastYear = new Date(maxDate).getFullYear();
     for (let y = firstYear + 1; y <= lastYear; y++) {
         const jan1 = new Date(y, 0, 1).getTime();
         const x = margin.left + ((jan1 - minDate) / dateRange) * innerW;
-        svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
-        svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="middle">${y}</text>`;
+        svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="#4D4D4D" stroke-width="0.5"/>`;
+        svg += `<text x="${x}" y="${height - 2}" fill="#808080" font-size="8" text-anchor="middle">${y}</text>`;
     }
 
     sorted.forEach((det, i) => {
@@ -882,7 +889,7 @@ function renderIntensityChart(detections, onSelectDate) {
         if (cfg.sentinel && val >= cfg.sentinel) return;
         const t = Math.max(0, Math.min(1, chartNorm(cfg, val)));
         const y = margin.top + innerH - t * innerH;
-        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="3.5" fill="${scaleColor(cfg, val)}" data-idx="${i}" stroke="rgba(0,0,0,0.3)" stroke-width="0.5"/>`;
+        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2.5" fill="#FFFFFF" data-idx="${i}"/>`;
     });
 
     svg += '</svg>';
@@ -928,13 +935,6 @@ function quarterMetrics(props, dets, qKeys) {
     return { detection_count, observations, persistence };
 }
 
-function formatMetrics(props) {
-    if (!props.observations) return '';
-    const pct = Math.round(props.persistence * 100);
-    return `<span class="sub-hi">${pct}%</span> persistence<br>` +
-        `<span class="sub-hi">${props.detection_count}</span> detections, <span class="sub-hi">${props.observations}</span> clear observations`;
-}
-
 function showInfo(feature, { skipAutoSelect = false } = {}) {
     currentFeature = feature;
     selectedDetection = null;
@@ -961,7 +961,9 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
         map.setLayoutProperty('selection-highlight', 'visibility', 'visible');
     }
 
-    document.getElementById('info').classList.add('visible');
+    const infoEl = document.getElementById('info');
+    infoEl.classList.add('visible');
+    infoEl.classList.remove('collapsed');
 
     const isVnf = currentMode === 'vnf';
     const title = props.terminal
@@ -970,15 +972,16 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
     document.getElementById('info-name').textContent =
         title || (isVnf ? `Flare #${props.flare_id}` : 'Unknown facility');
 
-    const sub = document.getElementById('info-subtitle');
-    if (sub) {
-        if (isVnf || props.terminal || props.total_score != null) {
-            sub.innerHTML = formatMetrics(metrics) ||
-                `${metrics.detection_count} detection${metrics.detection_count !== 1 ? 's' : ''}`;
-        } else {
-            sub.textContent = '';
-        }
-    }
+    // Info rows under the heading (pdf:84): Detections / Persistence / Passes /
+    // Cloud-free. Passes is null for archive clusters (no total-pass figure).
+    const cfLabel = props.passes && metrics.observations != null
+        ? `Cloud-free (${Math.round(metrics.observations / props.passes * 100)}%)` : 'Cloud-free obs.';
+    document.getElementById('info-stats').innerHTML = [
+        ['Detections', metrics.detection_count],
+        ['Persistence', metrics.persistence != null ? `${Math.round(metrics.persistence * 100)}%` : '—'],
+        ['Passes', props.passes ?? '—'],
+        [cfLabel, metrics.observations ?? '—'],
+    ].map(([k, v]) => `<div><span class="dd-secondary">${k}</span><span>${v}</span></div>`).join('');
 
     // Card shows only detections in the selected quarter window (parsed above).
     let detections = allDets.filter(d => dateInActiveQuarters(d.date, qKeys));
@@ -1001,7 +1004,7 @@ function showInfo(feature, { skipAutoSelect = false } = {}) {
             const url = det.cog_b12;
             isL1C = !url || typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif');
         }
-        item.className = 'event-item' + (isL1C ? ' l1c-only' : '');
+        item.className = 'dd-row event-item' + (isL1C ? ' l1c-only' : '');
         item.dataset.date = det.date;
         item.innerHTML = `
             <span class="event-date">${formatDate(det.date)}</span>
@@ -1087,7 +1090,7 @@ function showHeatFootprint(det) {
     const canvas = document.createElement('canvas');
     canvas.width = size; canvas.height = size;
     const ctx = canvas.getContext('2d');
-    const [r, g, b] = magmaColor(scaleT(isVnf ? MODE.vnf : MODE.s2, val));
+    const [r, g, b] = rampRGB(scaleT(isVnf ? MODE.vnf : MODE.s2, val));
     const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
     grad.addColorStop(0, `rgba(${r},${g},${b},0.85)`);
     grad.addColorStop(0.3, `rgba(${r},${g},${b},0.5)`);
@@ -1105,7 +1108,7 @@ function showHeatFootprint(det) {
         paint: { 'raster-opacity': 1, 'raster-resampling': 'linear' } }, 'client-detection-circles');
 
     setCirclesGreyed();
-    map.setPaintProperty('basemap', 'raster-brightness-max', 0.25);
+    map.setPaintProperty('satellite', 'raster-brightness-max', 0.25);
 }
 
 function closeInfo() {
@@ -1189,7 +1192,7 @@ async function loadImageryForDetection(det) {
                 imgData.data[i * 4 + 3] = 0;
             } else {
                 const t = Math.min(1, (v - threshold) / (ceiling - threshold));
-                const [r, g, b] = magmaColor(t);
+                const [r, g, b] = rampRGB(t);
                 imgData.data[i * 4] = r;
                 imgData.data[i * 4 + 1] = g;
                 imgData.data[i * 4 + 2] = b;
@@ -1229,7 +1232,7 @@ async function loadImageryForDetection(det) {
 
         setCirclesGreyed();
         document.querySelector('.event-item.active')?.classList.remove('loading');
-        map.setPaintProperty('basemap', 'raster-brightness-max', 0.25);
+        map.setPaintProperty('satellite', 'raster-brightness-max', 0.25);
     } catch (err) {
         console.error('Failed to load COG:', err);
         document.querySelector('.event-item.active')?.classList.remove('loading');
@@ -1238,7 +1241,7 @@ async function loadImageryForDetection(det) {
 
 function closeImagery() {
     clearCogLayers();
-    map.setPaintProperty('basemap', 'raster-brightness-max', 1);
+    map.setPaintProperty('satellite', 'raster-brightness-max', 0.75);
     if (currentFeature) setCirclesGreyed();
     else setCirclesDefault();
 }
@@ -1456,19 +1459,17 @@ function ensureDetectionLayer() {
         });
     }
     if (!map.getLayer('client-detection-circles')) {
-        const circleRadius = currentMode === 'vnf' ? vnfRadiusExpr : s2RadiusExpr;
-        const colorScale = currentMode === 'vnf' ? vnfColorExpr : s2ColorExpr;
+        // flare markings stepped through the intensity ramp (missing images
+        // resolve via the styleimagemissing handler)
         map.addLayer({
             id: 'client-detection-circles',
-            type: 'circle',
+            type: 'symbol',
             source: 'client-detections',
-            paint: {
-                'circle-radius': circleRadius,
-                'circle-color': 'transparent',
-                'circle-opacity': 0,
-                'circle-stroke-color': colorScale,
-                'circle-stroke-width': 2,
-                'circle-stroke-opacity': 1
+            layout: {
+                'icon-image': markIconExpr(modeConf()),
+                'icon-size': ICON_SIZE,
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true
             }
         });
         applyPersistenceFilter();
@@ -1565,7 +1566,7 @@ function launchDetectWorker(job) {
             _isDetecting = false;
             _preSessionKeys = null;
             bar.style.width = '100%';
-            bar.style.background = 'rgba(255,80,80,0.4)';
+            bar.style.background = '#F52E2E';
             text.textContent = 'Error: ' + msg.message;
             setTimeout(resetDetectUI, 3000);
         }
@@ -1576,7 +1577,7 @@ function launchDetectWorker(job) {
         _preSessionKeys = null;
         console.error('Worker error:', err);
         bar.style.width = '100%';
-        bar.style.background = 'rgba(255,80,80,0.4)';
+        bar.style.background = '#F52E2E';
         text.textContent = 'Worker error';
         setTimeout(resetDetectUI, 3000);
     };
@@ -1684,7 +1685,7 @@ function finishDetection(stats, job) {
     updateQuarterIndicators();
 
     document.getElementById('detect-bar').style.width = '100%';
-    document.getElementById('detect-bar').style.background = 'rgba(255,255,255,0.1)';
+    document.getElementById('detect-bar').style.background = '#808080';
 
     if (sessionClusters.length === 0) {
         document.getElementById('detect-text').textContent = stats
@@ -1697,51 +1698,7 @@ function finishDetection(stats, job) {
     setTimeout(resetDetectUI, 3000);
 }
 
-// Map load handler
-const MIN_TERMINAL_LABEL_ZOOM = 12;
-
-function updateMapCentre() {
-    const c = map.getCenter();
-    const locEl = document.getElementById('map-centre');
-    const termEl = document.getElementById('map-terminal');
-
-    let terminalName = null;
-    const terminals = getTerminals();
-    if (map.getZoom() >= MIN_TERMINAL_LABEL_ZOOM && terminals.length > 0) {
-        const bounds = map.getBounds();
-        const names = new Set();
-        for (const f of terminals) {
-            const [lon, lat] = f.geometry.coordinates;
-            if (bounds.contains([lon, lat])) names.add(f.properties.name);
-        }
-        if (names.size > 0) {
-            const arr = [...names];
-            terminalName = arr.length > 3
-                ? arr.slice(0, 3).join(', ') + ', \u2026'
-                : arr.join(', ');
-        }
-    }
-
-    // Google Earth camera distance from visible map extent.
-    // GE field of view is 35°, so visible_height = 2 * d * tan(17.5°).
-    const bounds = map.getBounds();
-    const visibleM = (bounds.getNorth() - bounds.getSouth()) * 111320;
-    const geD = Math.round(visibleM / (2 * Math.tan(17.5 * Math.PI / 180)));
-    const geH = map.getBearing().toFixed(1);
-    const geT = map.getPitch().toFixed(1);
-    const geUrl = `https://earth.google.com/web/@${c.lat.toFixed(6)},${c.lng.toFixed(6)},0a,${geD}d,35y,${geH}h,${geT}t,0r`;
-
-    if (terminalName) {
-        locEl.style.display = 'none';
-        termEl.innerHTML = `<a href="${geUrl}" target="_blank" rel="noopener">${terminalName}</a>`;
-    } else {
-        locEl.style.display = '';
-        locEl.innerHTML = `<a href="${geUrl}" target="_blank" rel="noopener">${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}</a>`;
-        termEl.textContent = '';
-    }
-}
-
-map.on('move', updateMapCentre);
+map.on('move', updateWorldBox);
 
 let _quarterIndicatorTimeout;
 map.on('moveend', () => {
@@ -1756,21 +1713,26 @@ map.on('moveend', () => {
 });
 
 map.on('load', () => {
-    updateMapCentre();
 
-    // Coverage outline: a thin border around each scanned AOI box (the published
-    // coverage.geojson — the real ~4km scan extents, not whole MGRS tiles). Sits just
-    // above the satellite basemap (below borders/labels/detections). Populated once
-    // coverage.geojson lands; gated to s2 mode in switchMode.
-    if (S2_ARCHIVE) {
-        map.addSource('coverage-tiles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-        map.addLayer({
-            id: 'coverage-outline', type: 'line', source: 'coverage-tiles',
-            paint: { 'line-color': '#fff', 'line-width': 1 }
-        }, 'country-borders');
-        updateCoverageMask();
-        whenCovered().then(updateCoverageMask);
-    }
+    // Grayscale, underexposed satellite imagery fades in over the dark basemap
+    // once facilities resolve (guidelines: gradient-map grayscale, approximated
+    // with full desaturation + lowered brightness ceiling).
+    map.addSource('satellite', {
+        type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256
+    });
+    map.addLayer({
+        id: 'satellite', type: 'raster', source: 'satellite', minzoom: 7,
+        paint: {
+            'raster-saturation': -1,
+            'raster-brightness-max': 0.75,
+            'raster-opacity': ['interpolate', ['linear'], ['zoom'], 7.5, 0, 9, 1]
+        }
+    });
+
+    // Preload the marking images every layer references.
+    [`flare-${RAMP[0]}`, `flare-${RAMP[1]}`, `flare-${RAMP[2]}`, 'triangle-#FFFFFF', 'square-#FFFFFF'].forEach(ensureMark);
 
     // Detections restored from IndexedDB + peers via onChange callback.
     scheduleDetectionUpdate();
@@ -1790,37 +1752,16 @@ map.on('load', () => {
                 'circle-opacity': 0
             }
         });
-        // Generate X icon via canvas
-        const xSize = 32;
-        const xCanvas = document.createElement('canvas');
-        xCanvas.width = xSize;
-        xCanvas.height = xSize;
-        const xCtx = xCanvas.getContext('2d');
-        const pad = 6;
-        xCtx.strokeStyle = '#ffffff';
-        xCtx.lineWidth = 3;
-        xCtx.lineCap = 'round';
-        xCtx.beginPath();
-        xCtx.moveTo(pad, pad);
-        xCtx.lineTo(xSize - pad, xSize - pad);
-        xCtx.moveTo(xSize - pad, pad);
-        xCtx.lineTo(pad, xSize - pad);
-        xCtx.stroke();
-        const xData = xCtx.getImageData(0, 0, xSize, xSize);
-        map.addImage('x-icon', { width: xSize, height: xSize, data: xData.data });
-
+        // Triangle marking = structure (LNG terminals)
         map.addLayer({
             id: 'lng-terminal-dots',
             type: 'symbol',
             source: 'lng-terminals',
             layout: {
-                'icon-image': 'x-icon',
-                'icon-size': ['interpolate', ['linear'], ['zoom'], 0, 0.4, 6, 0.55, 12, 0.85],
+                'icon-image': 'triangle-#FFFFFF',
+                'icon-size': ['interpolate', ['linear'], ['zoom'], 0, 0.5, 6, 0.65, 12, 0.9],
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true
-            },
-            paint: {
-                'icon-opacity': 1
             }
         });
 
@@ -1844,40 +1785,6 @@ map.on('load', () => {
     // OGIM infrastructure overlay (PMTiles vector tiles)
     try {
         // Canvas icons for wells and facilities
-        const ogimCanvas = document.createElement('canvas');
-        const ogimCtxOpts = { willReadFrequently: true };
-
-        // × icon for wells
-        const ws = 16;
-        ogimCanvas.width = ws; ogimCanvas.height = ws;
-        const wctx = ogimCanvas.getContext('2d', ogimCtxOpts);
-        wctx.clearRect(0, 0, ws, ws);
-        wctx.strokeStyle = 'white';
-        wctx.lineWidth = 2;
-        wctx.lineCap = 'round';
-        const wp = 4;
-        wctx.beginPath();
-        wctx.moveTo(wp, wp); wctx.lineTo(ws - wp, ws - wp);
-        wctx.moveTo(ws - wp, wp); wctx.lineTo(wp, ws - wp);
-        wctx.stroke();
-        map.addImage('ogim-well-x', { width: ws, height: ws, data: wctx.getImageData(0, 0, ws, ws).data });
-
-        // ◆ icon for facilities
-        const fs = 16;
-        ogimCanvas.width = fs; ogimCanvas.height = fs;
-        const fctx = ogimCanvas.getContext('2d');
-        fctx.clearRect(0, 0, fs, fs);
-        fctx.fillStyle = 'rgba(255, 200, 100, 0.8)';
-        const mid = fs / 2, fr = 5;
-        fctx.beginPath();
-        fctx.moveTo(mid, mid - fr);
-        fctx.lineTo(mid + fr, mid);
-        fctx.lineTo(mid, mid + fr);
-        fctx.lineTo(mid - fr, mid);
-        fctx.closePath();
-        fctx.fill();
-        map.addImage('ogim-facility-diamond', { width: fs, height: fs, data: fctx.getImageData(0, 0, fs, fs).data });
-
         map.addSource('ogim', {
             type: 'vector',
             url: `pmtiles://${OGIM_URL}`,
@@ -1894,8 +1801,8 @@ map.on('load', () => {
             minzoom: 6,
             layout: { visibility: 'none' },
             paint: {
-                'line-color': 'rgba(255, 255, 255, 0.3)',
-                'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 14, 2]
+                'line-color': '#808080',
+                'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 14, 1.5]
             }
         }, ogimBefore);
 
@@ -1907,10 +1814,10 @@ map.on('load', () => {
             minzoom: 6,
             layout: {
                 visibility: 'none',
-                'icon-image': 'ogim-facility-diamond',
+                'icon-image': 'square-#FFFFFF',
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true,
-                'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.4, 12, 0.7, 16, 1]
+                'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.4, 12, 0.6, 16, 0.9]
             },
             paint: { 'icon-opacity': 0.8 }
         }, ogimBefore);
@@ -1923,12 +1830,12 @@ map.on('load', () => {
             minzoom: 8,
             layout: {
                 visibility: 'none',
-                'icon-image': 'ogim-well-x',
+                'icon-image': 'square-#FFFFFF',
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true,
-                'icon-size': ['interpolate', ['linear'], ['zoom'], 8, 0.4, 12, 0.6, 16, 0.8]
+                'icon-size': ['interpolate', ['linear'], ['zoom'], 8, 0.25, 12, 0.4, 16, 0.6]
             },
-            paint: { 'icon-opacity': 0.6 }
+            paint: { 'icon-opacity': 0.5 }
         }, ogimBefore);
     } catch (e) {
         console.warn('OGIM layers not available:', e.message);
@@ -1939,18 +1846,24 @@ map.on('load', () => {
         data: { type: 'FeatureCollection', features: [] }
     });
 
+    // Selection: heavy-stroke empty highlight box around the resolved poi
+    const hb = document.createElement('canvas');
+    hb.width = hb.height = 56;
+    const hctx = hb.getContext('2d');
+    hctx.strokeStyle = '#ffffff';
+    hctx.lineWidth = 4;
+    hctx.strokeRect(2, 2, 52, 52);
+    map.addImage('highlight-box', hctx.getImageData(0, 0, 56, 56), { pixelRatio: 2 });
+
     map.addLayer({
         id: 'selection-highlight',
-        type: 'circle',
+        type: 'symbol',
         source: 'selection-highlight',
-        layout: { visibility: 'none' },
-        paint: {
-            'circle-radius': ['interpolate', ['exponential', 1.5], ['zoom'], 0, 8, 6, 12, 10, 18, 14, 22],
-            'circle-color': 'transparent',
-            'circle-opacity': 0,
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 2.5,
-            'circle-stroke-opacity': 1
+        layout: {
+            visibility: 'none',
+            'icon-image': 'highlight-box',
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true
         }
     });
 
@@ -1995,18 +1908,21 @@ map.on('load', () => {
 
 });
 
+// Intro panel: Enter (or the overlay) dismisses; the ⓘ button reopens (pdf:82).
 document.getElementById('about-modal').addEventListener('click', function(e) {
-    if (e.target === this || !e.target.closest('a')) this.classList.add('hidden');
+    if (e.target === this) this.classList.add('hidden');
+});
+document.getElementById('enter-btn').addEventListener('click', () =>
+    document.getElementById('about-modal').classList.add('hidden'));
+document.getElementById('info-btn').addEventListener('click', () =>
+    document.getElementById('about-modal').classList.remove('hidden'));
+document.getElementById('methods-toggle').addEventListener('click', function() {
+    this.querySelector('.chev').classList.toggle('down');
+    document.getElementById('methods-list').classList.toggle('hidden');
 });
 
-// Re-open the About modal via the panel subtitle (it's otherwise dismiss-only).
-const _aboutTrigger = document.querySelector('#title-panel > p');
-if (_aboutTrigger) {
-    _aboutTrigger.style.cursor = 'help';
-    _aboutTrigger.title = 'About burnoff';
-    _aboutTrigger.addEventListener('click', () =>
-        document.getElementById('about-modal').classList.remove('hidden'));
-}
+// Key needs the inline marking svgs before first render.
+loadMarks().then(updateLegend);
 
 document.getElementById('download-btn').addEventListener('click', downloadFlareCSV);
 document.getElementById('open-image-btn').addEventListener('click', () => {
@@ -2047,18 +1963,26 @@ document.getElementById('persistence-range').addEventListener('input', e => {
 document.getElementById('collapse-toggle').addEventListener('click', () => {
     document.getElementById('title-panel').classList.toggle('collapsed');
 });
+document.getElementById('info-collapse').addEventListener('click', () => {
+    document.getElementById('info').classList.toggle('collapsed');
+});
 
-// OGIM infrastructure toggle (delegated — legend is rebuilt on mode switch)
-let _ogimVisible = false;
-document.querySelector('.legend').addEventListener('change', e => {
-    if (e.target.id !== 'ogim-toggle') return;
-    _ogimVisible = e.target.checked;
-    const vis = _ogimVisible ? 'visible' : 'none';
-    for (const id of ['ogim-pipelines', 'ogim-facilities', 'ogim-wells']) {
-        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis);
+// Key panel: section collapse + OGIM layer toggles (delegated — rebuilt on mode switch)
+document.getElementById('key-panel').addEventListener('click', e => {
+    const head = e.target.closest('.key-head');
+    if (head) {
+        _keyState.open[head.dataset.sec] = !_keyState.open[head.dataset.sec];
+        return updateLegend();
     }
-    const items = document.getElementById('ogim-legend-items');
-    if (items) items.style.display = _ogimVisible ? '' : 'none';
+    const t = e.target.closest('.key-toggle');
+    if (!t) return;
+    const name = t.dataset.layer;
+    const on = (_keyState[name] = !_keyState[name]);
+    const ids = name === 'ogim' ? ['ogim-facilities', 'ogim-wells'] : ['ogim-pipelines'];
+    for (const id of ids) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    }
+    updateLegend();
 });
 
 // Mode toggle

@@ -87,8 +87,10 @@ Tests use `node:test` and `node:assert`.
 web/
   app.js              Main thread orchestrator: map setup, mode switching, UI,
                       info card, lazy CRDT wiring (ensureDetect)
-  map-style.js        MapLibre base style + magma colour ramp
-  render.js           Mode config + colour/radius/legend expression builders
+  render.js           Mode config + marking/ramp/key builders (data desk design)
+  worldmap.js         Mollweide world-map widget (panel viewport box, intro coverage)
+  vendor/dd/          Vendored data desk design system dist (map.css, style.dark.json,
+                      markings, palette) from ~/Tools/design
   clustering.js       Terminal grid + archive/VNF feature builders
   duckdb.js           Shared DuckDB-WASM bootstrap (openDuckDB) for vnf + archive
   vnf.js              VNF data module: DuckDB-WASM Parquet queries

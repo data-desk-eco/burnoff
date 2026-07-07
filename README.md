@@ -62,8 +62,9 @@ Structure
 
   web/
     app.js            Orchestrator: map, mode switching, info card, lazy CRDT wiring
-    map-style.js      MapLibre base style + magma ramp
-    render.js         Mode config + colour/radius/legend expressions
+    render.js         Mode config + marking/ramp/key builders (data desk design)
+    worldmap.js       Mollweide world-map widget
+    vendor/dd/        Vendored data desk design system dist (~/Tools/design)
     clustering.js     Terminal grid + archive/VNF feature builders
     duckdb.js         Shared DuckDB-WASM bootstrap
     s2archive.js      S2 cluster-archive reader (DuckDB-WASM)
