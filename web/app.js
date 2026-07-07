@@ -8,7 +8,7 @@ import { clusterDetections } from './s2/cluster.js';
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { MODE, RAMP, scaleT, rampRGB, chartNorm, buildKeyHTML, loadMarks, markIconExpr, ICON_SIZE, formatDate } from './render.js';
 import { addMarking } from './vendor/dd/markings.js';
-import { drawWorldmap, setBoxes } from './worldmap.js';
+import { drawWorldmap, setBoxes } from './vendor/dd/worldmap.js';
 import { setTerminals, findNearestTerminal, archiveFeature, enrichVNFFeatures, DEG_TO_RAD } from './clustering.js';
 import { GeoTIFF } from './s2/vendor/geotiff-esm.js';
 
@@ -185,7 +185,7 @@ map.on('style.load', () => map.setProjection({ type: 'globe' }));
 // referenced before its image arrives, so layers can be added without awaiting.
 const _marksLoading = new Set();
 function ensureMark(id) {
-    const m = id.match(/^(flare|triangle|square)-(#[0-9A-Fa-f]{6})$/);
+    const m = id.match(/^(flare|triangle|square|highlight)-(#[0-9A-Fa-f]{6})$/);
     if (!m || _marksLoading.has(id)) return;
     _marksLoading.add(id);
     addMarking(map, m[1], { color: m[2], base: new URL('vendor/dd/markings/', location.href) })
@@ -205,14 +205,12 @@ const geomBbox = f => {
 function updateWorldBox() {
     setBoxes(document.getElementById('world-map'), [getViewportBbox()]);
 }
-fetch('assets/land.json').then(r => r.json()).then(land => {
-    drawWorldmap(document.getElementById('world-map'), land);
-    updateWorldBox();
-    const modal = document.getElementById('modal-worldmap');
-    drawWorldmap(modal, land);
+drawWorldmap(document.getElementById('world-map')).then(updateWorldBox);
+const _modalMap = document.getElementById('modal-worldmap');
+drawWorldmap(_modalMap).then(() => {
     if (S2_ARCHIVE) whenCovered().then(() => {
         const tiles = coverageTiles();
-        if (tiles) setBoxes(modal, tiles.features.map(geomBbox), 0.06);
+        if (tiles) setBoxes(_modalMap, tiles.features.map(geomBbox), 0.06);
     });
 });
 
@@ -559,7 +557,7 @@ function initQuarterPicker() {
         for (let q = 1; q <= 4; q++) {
             if (q > maxQ) { span(''); continue; }
             const btn = document.createElement('button');
-            btn.className = 'quarter-btn';
+            btn.className = 'dd-dot-btn quarter-btn';
             btn.innerHTML = '<span class="dd-dot"></span>';
             btn.title = `Q${q} ${year}`;
             btn.dataset.year = year;
@@ -1732,7 +1730,7 @@ map.on('load', () => {
     });
 
     // Preload the marking images every layer references.
-    [`flare-${RAMP[0]}`, `flare-${RAMP[1]}`, `flare-${RAMP[2]}`, 'triangle-#FFFFFF', 'square-#FFFFFF'].forEach(ensureMark);
+    [`flare-${RAMP[0]}`, `flare-${RAMP[1]}`, `flare-${RAMP[2]}`, 'triangle-#FFFFFF', 'square-#FFFFFF', 'highlight-#FFFFFF'].forEach(ensureMark);
 
     // Detections restored from IndexedDB + peers via onChange callback.
     scheduleDetectionUpdate();
@@ -1846,22 +1844,15 @@ map.on('load', () => {
         data: { type: 'FeatureCollection', features: [] }
     });
 
-    // Selection: heavy-stroke empty highlight box around the resolved poi
-    const hb = document.createElement('canvas');
-    hb.width = hb.height = 56;
-    const hctx = hb.getContext('2d');
-    hctx.strokeStyle = '#ffffff';
-    hctx.lineWidth = 4;
-    hctx.strokeRect(2, 2, 52, 52);
-    map.addImage('highlight-box', hctx.getImageData(0, 0, 56, 56), { pixelRatio: 2 });
-
+    // Selection: heavy-stroke empty highlight box marking around the resolved poi
     map.addLayer({
         id: 'selection-highlight',
         type: 'symbol',
         source: 'selection-highlight',
         layout: {
             visibility: 'none',
-            'icon-image': 'highlight-box',
+            'icon-image': 'highlight-#FFFFFF',
+            'icon-size': 1.2,
             'icon-allow-overlap': true,
             'icon-ignore-placement': true
         }
@@ -1917,7 +1908,7 @@ document.getElementById('enter-btn').addEventListener('click', () =>
 document.getElementById('info-btn').addEventListener('click', () =>
     document.getElementById('about-modal').classList.remove('hidden'));
 document.getElementById('methods-toggle').addEventListener('click', function() {
-    this.querySelector('.chev').classList.toggle('down');
+    this.querySelector('.dd-chevron').classList.toggle('dd-chevron-down');
     document.getElementById('methods-list').classList.toggle('hidden');
 });
 

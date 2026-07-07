@@ -21,8 +21,7 @@ a { color: inherit; text-decoration: underline; }
 .dd-heading a { text-decoration: none; }
 .dd-subtitle { margin-top: 8px; }
 .chev-btn { background: none; border: none; color: var(--dd-ui-text); cursor: pointer; padding: 2px 0; align-self: flex-start; }
-.chev-btn svg, .chev { transition: transform 0.15s; }
-.collapsed .chev-btn svg, .chev.down { transform: rotate(180deg); }
+.collapsed .dd-chevron { transform: rotate(180deg); }
 
 /* --- main panel --- */
 
@@ -36,21 +35,15 @@ a { color: inherit; text-decoration: underline; }
 .mode-row { display: flex; justify-content: space-between; align-items: baseline; }
 .mode-btn { background: none; border: none; color: var(--dd-ui-text); font: inherit; cursor: pointer; }
 .mode-btn:not(.active) { color: var(--dd-ui-inactive); }
-.vdiv { width: 1px; align-self: stretch; background: var(--dd-ui-border); }
 
 .quarters { display: grid; grid-template-columns: repeat(4, 22px) 1fr; row-gap: 9px; align-items: center; justify-items: center; }
 .quarters .quarter-year { justify-self: end; }
-.quarter-btn { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; background: none; border: none; cursor: pointer; padding: 0; }
-.quarter-btn .dd-dot { pointer-events: none; }
 .quarter-btn.active .dd-dot { width: 8px; height: 8px; }
 .quarter-btn.unavailable .dd-dot, .quarter-btn.detected .dd-dot { background: var(--dd-ui-inactive); }
 .quarter-btn.unavailable, .quarter-btn.detected { pointer-events: none; }
 .quarter-hint { margin-top: 11px; }
 .quarter-hint:empty { display: none; }
 
-.slider-label { margin-bottom: 11px; }
-.slider-row { display: flex; align-items: center; gap: 26px; }
-.slider-row .dd-slider { flex: 1; cursor: pointer; }
 .slider-value { min-width: 30px; text-align: right; }
 
 .main-panel { max-height: calc(100vh - 20px); overflow-y: auto; }

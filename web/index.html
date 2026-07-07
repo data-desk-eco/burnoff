@@ -31,7 +31,7 @@
 
     <div class="dd-panel dd-panel-l dd-gap dd-gap-l main-panel" id="title-panel">
         <div class="dd-head">
-            <button class="chev-btn" id="collapse-toggle" title="Contract"><svg width="8" height="4" viewBox="0 0 8 4"><path d="M0.5 3.5 4 0.5l3.5 3" fill="none" stroke="currentColor"/></svg></button>
+            <button class="chev-btn" id="collapse-toggle" title="Contract"><span class="dd-chevron"></span></button>
             <div class="dd-head-text">
                 <div class="dd-heading"><a href="https://github.com/data-desk-eco/burnoff" target="_blank" rel="noopener">Burnoff</a><button class="dd-info-btn" id="info-btn" title="About burnoff">i</button></div>
                 <div class="dd-subtitle" id="mode-subtitle">Sentinel-2 Flare Detection</div>
@@ -41,7 +41,7 @@
         <div class="mode-row">
             <div class="dd-toggle">
                 <button class="mode-btn active" data-mode="s2">S2</button>
-                <span class="vdiv"></span>
+                <span class="dd-toggle-divider"></span>
                 <button class="mode-btn" data-mode="vnf">VNF</button>
             </div>
             <div class="peers" id="peer-status"><span class="dd-secondary">Peers Connected:</span> <span id="peer-count">0</span></div>
@@ -52,16 +52,16 @@
         </div>
         <div class="dd-gap sliders">
             <div class="slider-group cluster-slider">
-                <div class="slider-label">Cluster distance</div>
-                <div class="slider-row"><input type="range" class="dd-slider" id="cluster-range" min="0" max="200" step="5" value="135"><span class="slider-value" id="cluster-value">135m</span></div>
+                <div class="dd-slider-label">Cluster distance</div>
+                <div class="dd-slider-row"><input type="range" class="dd-slider" id="cluster-range" min="0" max="200" step="5" value="135"><span class="slider-value" id="cluster-value">135m</span></div>
             </div>
             <div class="slider-group">
-                <div class="slider-label">Minimum intensity</div>
-                <div class="slider-row"><input type="range" class="dd-slider" id="intensity-range" min="0" max="1.5" step="0.05" value="0.85"><span class="slider-value" id="intensity-value">0.85</span></div>
+                <div class="dd-slider-label">Minimum intensity</div>
+                <div class="dd-slider-row"><input type="range" class="dd-slider" id="intensity-range" min="0" max="1.5" step="0.05" value="0.85"><span class="slider-value" id="intensity-value">0.85</span></div>
             </div>
             <div class="slider-group">
-                <div class="slider-label">Minimum persistence</div>
-                <div class="slider-row"><input type="range" class="dd-slider" id="persistence-range" min="0" max="1" step="0.05" value="0.25"><span class="slider-value" id="persistence-value">25%</span></div>
+                <div class="dd-slider-label">Minimum persistence</div>
+                <div class="dd-slider-row"><input type="range" class="dd-slider" id="persistence-range" min="0" max="1" step="0.05" value="0.25"><span class="slider-value" id="persistence-value">25%</span></div>
             </div>
         </div>
         <div class="detect-area s2-only" id="detect-area">
@@ -101,7 +101,7 @@
                 <p>Click any detection to view the underlying data and flare analysis, and compare to <a href="https://eogdata.mines.edu/products/vnf/global_gas_flare.html" target="_blank">VIIRS Nightfire</a> data using <em>VNF</em> mode.</p>
             </div>
             <div class="methods">
-                <div class="key-head" id="methods-toggle"><svg class="chev down" width="8" height="4" viewBox="0 0 8 4"><path d="M0.5 3.5 4 0.5l3.5 3" fill="none" stroke="currentColor"/></svg><span class="dd-secondary">Methods &amp; data</span></div>
+                <div class="key-head" id="methods-toggle"><span class="dd-chevron dd-chevron-down"></span><span class="dd-secondary">Methods &amp; data</span></div>
                 <div class="methods-list dd-secondary hidden" id="methods-list">
                     <p>Faruolo et al. (2024) <a href="https://doi.org/10.1088/1748-9326/ad82fb" target="_blank">The DAFI v2 algorithm for gas flare detection</a></p>
                     <p>Elvidge et al. (2013) <a href="https://doi.org/10.3390/rs5094423" target="_blank">VIIRS Nightfire: Satellite pyrometry at night</a></p>
@@ -114,7 +114,7 @@
 
     <div class="dd-panel dd-panel-l info-panel custom-scroll" id="info">
         <div class="dd-head">
-            <button class="chev-btn" id="info-collapse" title="Contract"><svg width="8" height="4" viewBox="0 0 8 4"><path d="M0.5 3.5 4 0.5l3.5 3" fill="none" stroke="currentColor"/></svg></button>
+            <button class="chev-btn" id="info-collapse" title="Contract"><span class="dd-chevron"></span></button>
             <div class="dd-head-text">
                 <div class="dd-heading"><span id="info-name">-</span><span class="close-btn" title="Close">&times;</span></div>
                 <div class="info-stats" id="info-stats"></div>

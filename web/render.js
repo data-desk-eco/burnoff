@@ -5,6 +5,7 @@
 // and the slider state and feeds them in.
 
 import { map as ddPalette } from './vendor/dd/palette.js';
+import { markSVG } from './vendor/dd/markings.js';
 
 export const DD = ddPalette.adjusted;
 export const RAMP = [DD.red, DD.orange, DD.white]; // low → high intensity
@@ -83,14 +84,13 @@ export const ICON_SIZE = ['interpolate', ['linear'], ['zoom'], 2, 0.55, 10, 0.8,
 
 // --- key (legend) ---
 
-// inline svg text per marking, fetched once; tinted via css color on the wrapper
+// inline svg text per marking (dd markSVG), tinted via css color on the wrapper
 const MARKS = {};
 export function loadMarks(names = ['flare', 'triangle', 'square']) {
-    return Promise.all(names.map(async n =>
-        MARKS[n] ??= await (await fetch(`vendor/dd/markings/${n}.svg`)).text()));
+    return Promise.all(names.map(async n => MARKS[n] = await markSVG(n)));
 }
 
-const CHEV = open => `<svg class="chev${open ? '' : ' down'}" width="8" height="4" viewBox="0 0 8 4"><path d="M0.5 3.5 4 0.5l3.5 3" fill="none" stroke="currentColor"/></svg>`;
+const CHEV = open => `<span class="dd-chevron${open ? '' : ' dd-chevron-down'}"></span>`;
 const mark = (name, color) => `<span style="color:${color};display:flex">${MARKS[name] || ''}</span>`;
 const row = (icon, label, layer, on = true) =>
     `<div class="dd-key-row${on ? '' : ' dd-inactive'}${layer ? ' key-toggle' : ''}"${layer ? ` data-layer="${layer}"` : ''}>${icon}${label}</div>`;
