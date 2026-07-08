@@ -96,7 +96,8 @@ const row = (icon, label, layer, on = true) =>
     `<div class="dd-key-row${on ? '' : ' dd-inactive'}${layer ? ' key-toggle' : ''}"${layer ? ` data-layer="${layer}"` : ''}>${icon}${label}</div>`;
 
 // Build key HTML: intensity ramp section + infrastructure section (pdf:85).
-// state: { open: {ramp, infra}, ogim, pipes }
+// state: { open, ogim, pipes } — one chevron collapses the whole legend;
+// both group labels toggle it too
 export function buildKeyHTML(cfg, state) {
     const stops = [...cfg.stops].reverse();
     const ramp = stops.map((v, i) =>
@@ -106,10 +107,10 @@ export function buildKeyHTML(cfg, state) {
         row(mark('triangle', DD.white), 'LNG') +
         row(mark('square', DD.white), 'OGIM infra.', 'ogim', state.ogim) +
         row(line, 'Pipelines', 'pipes', state.pipes);
-    const section = (id, label, items) =>
-        `<div class="key-section"><div class="key-head" data-sec="${id}">${CHEV(state.open[id])}<span class="dd-secondary">${label}</span></div>` +
-        (state.open[id] ? `<div class="key-items">${items}</div>` : '') + '</div>';
-    return section('ramp', cfg.label, ramp) + section('infra', 'Infrastructure', infra);
+    const section = (label, items, chev = '') =>
+        `<div class="key-section"><div class="key-head">${chev}<span class="dd-secondary">${label}</span></div>` +
+        (state.open ? `<div class="key-items">${items}</div>` : '') + '</div>';
+    return section(cfg.label, ramp, CHEV(state.open)) + section('Infrastructure', infra);
 }
 
 export function formatDate(dateStr) {

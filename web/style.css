@@ -23,7 +23,6 @@ a { color: inherit; text-decoration: underline; }
 /* --- main panel --- */
 
 .main-panel { top: 0; left: 0; width: 250px; }
-#title-panel.collapsed { padding: 15px 15px 15px 30px; gap: 0; }
 #title-panel.collapsed > :not(.dd-head) { display: none; }
 #title-panel:not(.mode-s2) .s2-only { display: none; }
 
@@ -62,7 +61,6 @@ a { color: inherit; text-decoration: underline; }
 
 .info-panel { top: 0; right: 0; width: 270px; max-height: calc(100vh - 20px); overflow-y: auto; display: none; }
 .info-panel.visible { display: flex; flex-direction: column; gap: 30px; }
-#info.collapsed { padding: 15px 15px 15px 30px; }
 #info.collapsed > :not(.dd-head), #info.collapsed .info-stats { display: none; }
 .info-stats { margin-top: 11px; display: flex; flex-direction: column; gap: 6px; }
 .info-stats div { display: flex; justify-content: space-between; }
@@ -95,6 +93,11 @@ a { color: inherit; text-decoration: underline; }
 .methods-list { margin-top: 15px; }
 .methods-list p + p { margin-top: 6px; }
 .enter-btn { padding: 5px 6px; }
+
+/* dd key rule: groups go side by side rather than overlap the main panel */
+@media (max-height: 960px) and (min-width: 769px) {
+    .key-panel { flex-direction: row; gap: 38px; }
+}
 
 /* --- mobile --- */
 

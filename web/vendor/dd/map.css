@@ -23,7 +23,6 @@
 }
 .dd-panel{position:absolute;margin:10px;padding:15px;background:#000000;border:1px solid #808080;color:#FFFFFF;font:400 11px/1.4 Inter,sans-serif;font-feature-settings:"calt","tnum","ss01","ss02"}
 .dd-panel-l{padding:30px}
-.dd-panel-contracted{padding:15px;padding-left:30px}
 .dd-gap{display:flex;flex-direction:column;gap:25px}
 .dd-gap-l{gap:38px}
 .dd-heading{display:flex;align-items:baseline;gap:6px;width:100%;border-bottom:1px solid #808080}

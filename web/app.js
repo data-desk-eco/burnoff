@@ -803,7 +803,7 @@ function switchMode(mode) {
 
 // Key panel: intensity ramp + infrastructure sections, collapsible, with the
 // OGIM rows doubling as layer toggles (inactive rows grey out).
-const _keyState = { open: { ramp: true, infra: true }, ogim: false, pipes: false };
+const _keyState = { open: true, ogim: false, pipes: false };
 function updateLegend() {
     document.getElementById('key-panel').innerHTML = buildKeyHTML(modeConf(), _keyState);
 }
@@ -1934,11 +1934,10 @@ for (const [ids, panel] of [[['collapse-toggle', 'collapse-title'], 'title-panel
         document.getElementById(id).addEventListener('click', () =>
             document.getElementById(panel).classList.toggle('collapsed'));
 
-// Key panel: section collapse + OGIM layer toggles (delegated — rebuilt on mode switch)
+// Key panel: whole-legend collapse + OGIM layer toggles (delegated — rebuilt on mode switch)
 document.getElementById('key-panel').addEventListener('click', e => {
-    const head = e.target.closest('.key-head');
-    if (head) {
-        _keyState.open[head.dataset.sec] = !_keyState.open[head.dataset.sec];
+    if (e.target.closest('.key-head')) {
+        _keyState.open = !_keyState.open;
         return updateLegend();
     }
     const t = e.target.closest('.key-toggle');
