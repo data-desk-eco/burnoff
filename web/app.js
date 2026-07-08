@@ -566,7 +566,7 @@ function initQuarterPicker() {
             btn.addEventListener('click', () => toggleQuarter(btn));
             container.appendChild(btn);
         }
-        span('quarter-year dd-secondary', year);
+        span('dd-secondary', year);
     }
 }
 
@@ -683,7 +683,7 @@ function updateS2Controls() {
         map.getZoom() >= MIN_DETECT_ZOOM && !isCovered(getViewportBbox()) && !_isDetecting;
     // Outside archive coverage the Detect/P2P path is live — load the CRDT lazily.
     if (show) ensureDetect();
-    for (const sel of ['#peer-status', '#detect-area', '.cluster-slider'])
+    for (const sel of ['#peer-status', '#detect-area'])
         document.querySelector(sel).style.setProperty('display', show ? '' : 'none');
 }
 
@@ -757,19 +757,6 @@ function switchMode(mode) {
     if (col3) col3.textContent = cfg.col3;
 
     // Reconfigure sliders for current mode
-    const clSlider = document.querySelector('.cluster-slider');
-    const clRange = document.getElementById('cluster-range');
-    // clustering is server-side in archive mode, so the merge-distance slider is
-    // inert there; only the local-worker detect fallback (no archive) honours it.
-    if (mode === 'vnf' || S2_ARCHIVE) {
-        clSlider.style.display = 'none';
-    } else {
-        clSlider.style.display = '';
-        MERGE_DISTANCE_M = S2_MERGE_DISTANCE_M;
-        clRange.min = '0'; clRange.max = '200'; clRange.step = '5'; clRange.value = MERGE_DISTANCE_M;
-        document.getElementById('cluster-value').textContent = MERGE_DISTANCE_M === 0 ? 'Off' : `${MERGE_DISTANCE_M}m`;
-    }
-
     const intRange = document.getElementById('intensity-range');
     const intValue = document.getElementById('intensity-value');
     const flt = cfg.filter;
@@ -1286,8 +1273,8 @@ function downloadFlareCSV() {
 // Cross-date clustering (Union-Find, runs on main thread for live updates)
 // ---------------------------------------------------------------------------
 
-let MERGE_DISTANCE_M = 135;
-let S2_MERGE_DISTANCE_M = 135;
+// fixed to the bulk pipeline's cluster default (s2-flares core ClusterOptions)
+const MERGE_DISTANCE_M = 135;
 let CLUSTER_AVG_B12_MIN = MODE.s2.filter.default;
 let VNF_AVG_RH_MIN = MODE.vnf.filter.default;
 let CLUSTER_PERSISTENCE_MIN = 0.25;   // display-only min persistence gate (all modes)
@@ -1335,7 +1322,7 @@ function crossDateCluster(allDetections, obs) {
     // cloud-free denominator for both the persistence metric and persistence_score.
     const clusters = clusterDetections(allDetections, {
         mergeDistance: MERGE_DISTANCE_M,
-        minDates: MERGE_DISTANCE_M === 0 ? 1 : 4,
+        minDates: 4,
         minAvgB12: CLUSTER_AVG_B12_MIN,
         observations: obsByDate,
     });
@@ -1349,13 +1336,11 @@ function crossDateCluster(allDetections, obs) {
     const features = [];
     for (const cl of clusters) {
         const terminal = findNearestTerminal(cl.lat, cl.lon);
-        const name = MERGE_DISTANCE_M === 0
-            ? (terminal ? terminal.name : (cl.detections[0]?.date || ''))
-            : (terminal ? terminal.name : `${cl.detection_count} detection${cl.detection_count !== 1 ? 's' : ''}`);
+        const name = terminal ? terminal.name : `${cl.detection_count} detection${cl.detection_count !== 1 ? 's' : ''}`;
 
         // Burnoff persistence: detections / block-level observations
         let passes = null, observations = null, persistence = cl.persistence;
-        if (MERGE_DISTANCE_M > 0) {
+        {
             // Collect block IDs from the original detections that belong to this cluster
             const clusterDets = cl.detections;
             const bids = new Set();
@@ -1763,7 +1748,8 @@ map.on('load', () => {
             }
         });
 
-        const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'terminal-popup', offset: 10 });
+        // labels attach up-and-right of the marking (dd cartography label rule)
+        const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'dd-popup', anchor: 'bottom-left', offset: 10 });
 
         map.on('mousemove', 'lng-terminal-hitarea', e => {
             map.getCanvas().style.cursor = 'pointer';
@@ -1771,7 +1757,7 @@ map.on('load', () => {
             const p = f.properties;
             const cap = p.capacity_mtpa ? `${p.capacity_mtpa} mtpa` : '\u2014';
             popup.setLngLat(e.lngLat)
-                .setHTML(`<strong>${p.name}</strong><br>${p.country} \u00b7 ${p.type}<br>${cap}`)
+                .setHTML(`<span class="dd-title">${p.name}</span><br>${p.country} \u00b7 ${p.type}<br>${cap}`)
                 .addTo(map);
         });
         map.on('mouseleave', 'lng-terminal-hitarea', () => {
@@ -1920,7 +1906,6 @@ document.getElementById('open-image-btn').addEventListener('click', () => {
     if (!currentFeature || !selectedDetection) return;
     window.open(copernicusUrl(selectedDetection.date), '_blank');
 });
-document.querySelector('.close-btn').addEventListener('click', closeInfo);
 document.getElementById('detect-btn').addEventListener('click', startDetection);
 
 let _sliderTimer = 0;
@@ -1928,14 +1913,6 @@ function debouncedRecluster() {
     clearTimeout(_sliderTimer);
     _sliderTimer = setTimeout(() => { updateCurrentSource(); reselectCurrentFeature(); }, 80);
 }
-
-document.getElementById('cluster-range').addEventListener('input', e => {
-    const val = parseInt(e.target.value);
-    MERGE_DISTANCE_M = val;
-    S2_MERGE_DISTANCE_M = val;
-    document.getElementById('cluster-value').textContent = val === 0 ? 'Off' : `${val} m`;
-    debouncedRecluster();
-});
 
 document.getElementById('intensity-range').addEventListener('input', e => {
     const val = parseFloat(e.target.value);
@@ -1951,12 +1928,11 @@ document.getElementById('persistence-range').addEventListener('input', e => {
     applyPersistenceFilter();   // display-only: just re-filter, no recluster
 });
 
-document.getElementById('collapse-toggle').addEventListener('click', () => {
-    document.getElementById('title-panel').classList.toggle('collapsed');
-});
-document.getElementById('info-collapse').addEventListener('click', () => {
-    document.getElementById('info').classList.toggle('collapsed');
-});
+// chevron and heading text both toggle expand/contract (dd heading rule)
+for (const [ids, panel] of [[['collapse-toggle', 'collapse-title'], 'title-panel'], [['info-collapse', 'info-name'], 'info']])
+    for (const id of ids)
+        document.getElementById(id).addEventListener('click', () =>
+            document.getElementById(panel).classList.toggle('collapsed'));
 
 // Key panel: section collapse + OGIM layer toggles (delegated — rebuilt on mode switch)
 document.getElementById('key-panel').addEventListener('click', e => {

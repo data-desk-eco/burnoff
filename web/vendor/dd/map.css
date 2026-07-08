@@ -28,6 +28,9 @@
 .dd-gap-l{gap:38px}
 .dd-heading{display:flex;align-items:baseline;gap:6px;width:100%;border-bottom:1px solid #808080}
 .dd-heading .dd-info-btn{margin-left:auto}
+.dd-head{display:flex;gap:11px}
+.dd-head-text{flex:1;min-width:0}
+.dd-chevron-btn{align-self:flex-start;padding:2px 0;background:none;border:none;color:inherit;cursor:pointer;margin-left:-19px}
 .dd-subtitle{color:#FFFFFF}
 .dd-intro-heading{font-size:32px;font-weight:700;letter-spacing:-0.03em}
 .dd-intro-body{font-size:14px}
@@ -38,7 +41,7 @@
 .dd-btn-pair>*{flex:1}
 .dd-row{display:flex;justify-content:space-between;padding:0 6px;border-left:1px solid #808080;border-right:1px solid #808080}
 .dd-row.dd-active{background:#FFFFFF;color:#000000}
-.dd-toggle{display:flex;gap:11px;padding:0 6px}
+.dd-toggle{display:flex;gap:11px}
 .dd-toggle-divider{width:1px;align-self:stretch;background:#808080}
 .dd-inactive{color:#4D4D4D}
 .dd-dot{width:3px;height:3px;border-radius:50%;background:#FFFFFF}
@@ -49,6 +52,8 @@
 .dd-dot-btn.dd-active .dd-dot{width:8px;height:8px}
 .dd-dot-btn.dd-unavailable{pointer-events:none}
 .dd-dot-btn.dd-unavailable .dd-dot{background:#4D4D4D}
+.dd-dot-grid{display:grid;grid-template-columns:repeat(4,1fr) auto;row-gap:9px;align-items:center}
+.dd-dot-grid .dd-dot-btn{margin-left:-4px}
 .dd-chevron{display:inline-block;width:8px;height:4px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%208%204%22%3E%3Cpath%20d%3D%22M.5%203.5%204%20.5l3.5%203%22%20fill%3D%22none%22%20stroke%3D%22white%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%208%204%22%3E%3Cpath%20d%3D%22M.5%203.5%204%20.5l3.5%203%22%20fill%3D%22none%22%20stroke%3D%22white%22%2F%3E%3C%2Fsvg%3E") center/contain no-repeat;transition:transform 0.15s}
 .dd-chevron-down{transform:rotate(180deg)}
 .dd-slider{-webkit-appearance:none;appearance:none;background:none;border-bottom:1px solid #FFFFFF;height:1px;width:100%;cursor:pointer}
@@ -62,3 +67,7 @@
 .dd-key-row{display:flex;align-items:center;gap:9px}
 .dd-title{font-size:11px;text-decoration:underline}
 .dd-annotation{font-size:11px}
+.dd-popup .maplibregl-popup-content{background:none;border:none;border-radius:0;box-shadow:none;padding:0;color:#FFFFFF;font:400 11px/1.4 Inter,sans-serif;font-feature-settings:"calt","tnum","ss01","ss02"}
+.dd-popup .maplibregl-popup-tip{display:none}
+.dd-logo{position:absolute;right:10px;bottom:10px;width:29px;color:#FFFFFF}
+.dd-logo svg{display:block;width:100%;height:auto}
