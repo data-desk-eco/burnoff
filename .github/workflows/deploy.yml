@@ -22,7 +22,17 @@ jobs:
         run: |
           mkdir -p dist
           cp -r web/* dist/          # whole tracked web tree (modules, s2/ wasm, vendor)
-          sed -i "s/app\.js?v=[^\"]*/app.js?v=${GITHUB_SHA::8}/" dist/index.html
+          # stamp the sha into every first-party module specifier + the html asset
+          # tags, so a deploy can never pair a fresh module with a stale cached one
+          # (github pages caches for 10 min). vendor bundles keep their own paths —
+          # they only change when revendored.
+          V=${GITHUB_SHA::8}
+          find dist -path dist/vendor -prune -o -path dist/s2/vendor -prune -o \
+            \( -name '*.js' -o -name '*.html' \) -print0 | xargs -0 sed -i -E \
+            -e "s|(from ')(\.[^']+\.m?js)(')|\1\2?v=$V\3|g" \
+            -e "s|(import\(')(\.[^']+\.m?js)('\))|\1\2?v=$V\3|g" \
+            -e "s|(new Worker\(')([^'?]+\.js)(')|\1\2?v=$V\3|g" \
+            -e "s|\?v=[0-9a-z]+|?v=$V|g"
 
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

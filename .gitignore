@@ -9,3 +9,4 @@ web/vnf_nightly*.parquet
 .wrangler/
 web/vendor/.ok
 docs/
+__pycache__/

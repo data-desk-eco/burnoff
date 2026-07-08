@@ -1,15 +1,15 @@
 // Terminal grid + the pure feature-builders shared across modes: the S2 archive
 // view (archiveFeature), VNF (enrichVNFFeatures), and naming for the cross-date
 // clusterer (findNearestTerminal). Terminal features come from terminals.geojson
-// via setTerminals(). No app/CRDT state — crossDateCluster stays in app.js since it
-// reads the processedMap.
+// via setTerminals(). No app/CRDT state — crossDateCluster lives in detect.js
+// since it reads the processedMap.
 
 export const DEG_TO_RAD = Math.PI / 180;
 const R_EARTH = 6371000;
 const TERMINAL_MATCH_M = 7500;
 
 // Fast equirectangular distance — accurate to <0.1% under 1 km and below ~70° lat.
-export function fastDistM(lat1, lon1, lat2, lon2) {
+function fastDistM(lat1, lon1, lat2, lon2) {
     const dLat = (lat2 - lat1) * DEG_TO_RAD;
     const dLon = (lon2 - lon1) * DEG_TO_RAD * Math.cos(((lat1 + lat2) * 0.5) * DEG_TO_RAD);
     return R_EARTH * Math.sqrt(dLat * dLat + dLon * dLon);
@@ -39,8 +39,6 @@ export function setTerminals(features) {
     }
     _terminalGrid = g;
 }
-
-export function getTerminals() { return _terminals; }
 
 export function findNearestTerminal(lat, lon) {
     if (!_terminalGrid || _terminals.length === 0) return null;

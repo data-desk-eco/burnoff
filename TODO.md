@@ -11,8 +11,3 @@ it back on:
    it's green — in particular that the duckdb CLI install, EOG creds via Secret
    Manager (`eog-env`), and the `make vnf-upload` step all work in CI.
 3. Uncomment the `schedule:` cron in the workflow.
-
-## Loose ends
-
-- `scripts/backfill_nightly.py` (untracked) overlaps `backfill_vnf.py` (~2 km vs 5 km
-  match radius); fold into one if it's still wanted, else drop.

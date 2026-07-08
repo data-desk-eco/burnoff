@@ -69,7 +69,7 @@ for real cloud-free persistence metrics.
 ```bash
 make serve        # Dev server on :8000 + signaling on :4444
 make signal       # Signaling server only
-make test         # Run determinism tests
+make test         # Run determinism + P2P retry tests
 make vnf          # Build VNF parquet from EOG profile CSVs
 make vnf-upload   # Upload VNF parquet to the s2-flares archive (vnf/data.parquet)
 make deploy       # Deploy signaling worker to Cloudflare
@@ -84,13 +84,28 @@ Tests use `node:test` and `node:assert`.
 ## Key Files
 
 ```
+Burnoff doubles as the reference implementation for data desk full-screen web
+maps: the generic maplibre/dd scaffolding (map.js, quarters.js, render.js) is
+cleanly separated from the burnoff-specific modules (app.js, detect.js, card.js,
+clustering.js) so future remote-sensing maps can lift the shell wholesale.
+
+```
 web/
-  app.js              Main thread orchestrator: map setup, mode switching, UI,
-                      info card, lazy CRDT wiring (ensureDetect)
+  app.js              Burnoff orchestrator: mode switching (S2/VNF), map layers
+                      (detections, terminals, OGIM), legend, sliders, deep links
+  map.js              GENERIC dd map shell: dark basemap + globe + on-demand
+                      markings, satellite underlay, worldmap widgets, hover
+                      popups, panel collapse, viewport bbox helpers
+  quarters.js         GENERIC dd dot-grid quarter picker: selection state +
+                      date-window helpers
   render.js           Mode config + marking/ramp/key builders (data desk design)
-  worldmap.js         Mollweide world-map widget (panel viewport box, intro coverage)
+  card.js             Detection info card: metrics, intensity chart, event rows,
+                      COG/heat-footprint overlays, CSV export, keyboard nav
+  detect.js           Local detect + P2P subsystem: lazy CRDT wiring
+                      (ensureDetect), detect workers + distributed help,
+                      cross-date clusterer over the CRDT maps
   vendor/dd/          Vendored data desk design system dist (map.css, style.dark.json,
-                      markings, palette) from ~/Tools/design
+                      markings, palette, worldmap) from ~/Tools/design
   clustering.js       Terminal grid + archive/VNF feature builders
   duckdb.js           Shared DuckDB-WASM bootstrap (openDuckDB) for vnf + archive
   vnf.js              VNF data module: DuckDB-WASM Parquet queries
@@ -176,7 +191,7 @@ Cross-date clustering (main thread, grid-indexed):
   - Persistence metric: detections / observations per cluster
   - Cloud-free %: fraction of observations with ≤30% cloud (data quality indicator)
 
-Cluster quality score (vision-validated methodology, lib/score.js) — computed
+Cluster quality score (vision-validated methodology, web/s2/score.js) — computed
 and shown in the detail card, NOT yet a gate. The formula was tuned in
 ~/Research/permian-flaring against an unbiased 2,826-site aerial study (sql/30):
   - total_score = 0.50·ratio_score

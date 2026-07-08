@@ -55,9 +55,6 @@ vnf-backfill:
 
 vnf-backfill-deploy: vnf-backfill vnf-upload
 
-data/gem-extraction-tracker.xlsx:
-	curl -L -o $@ "https://globalenergymonitor.org/wp-content/uploads/2025/02/Global-Oil-and-Gas-Extraction-Tracker-Feb-2025.xlsx"
-
 vendor: web/vendor/.ok
 
 web/vendor/.ok:
