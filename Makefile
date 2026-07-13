@@ -77,7 +77,7 @@ test:
 help:
 	@echo "make serve      - Dev server on :8000 + signaling on :4444"
 	@echo "make signal     - Signaling server only"
-	@echo "make vendor     - Download vendored dependencies (MapLibre, geotiff, DuckDB, Inter)"
+	@echo "make vendor     - Vendor dependencies via cartograph (MapLibre, DuckDB, Inter, dd, cartograph)"
 	@echo "make test       - Run determinism tests"
 	@echo "make vnf        - Build VNF parquet from EOG profile CSVs"
 	@echo "make vnf-upload - Upload VNF parquet to the s2-flares archive (vnf/data.parquet)"

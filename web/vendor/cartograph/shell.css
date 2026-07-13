@@ -1,0 +1,114 @@
+/* generic full-screen map layout on top of ../dd/map.css (data desk design
+   system). spacing follows the 2026 guidelines ui examples (pdf:81-88).
+   apps layer their own css after this. */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; background: #000; }
+body { font: 400 11px/1.4 Inter, sans-serif; font-feature-settings: "calt", "tnum", "ss01", "ss02"; }
+#map { width: 100%; height: 100%; background: #000; }
+.maplibregl-ctrl, .maplibregl-ctrl-logo, .maplibregl-ctrl-attrib { display: none !important; }
+a { color: inherit; text-decoration: underline; }
+.hidden { display: none !important; }
+
+.custom-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+.custom-scroll::-webkit-scrollbar-track { background: transparent; }
+.custom-scroll::-webkit-scrollbar-thumb { background: var(--dd-ui-inactive); }
+
+/* --- shared panel furniture --- */
+
+.dd-heading { padding-bottom: 3px; }
+/* the heading's full-width rule IS the underline (dd heading rule) */
+.dd-heading a { text-decoration: none; }
+.dd-subtitle { margin-top: 8px; }
+.collapsed .dd-chevron { transform: rotate(180deg); }
+
+/* --- main panel --- */
+
+.cg-main { top: 0; left: 0; width: 250px; max-height: calc(100vh - 20px); overflow-y: auto; }
+.cg-main.collapsed > :not(.dd-head) { display: none; }
+#worldmap { width: 100%; display: block; }
+
+/* border + padding hang into the panel margins so the input text stays
+   aligned with the panel content (the dd hanging-chevron idiom) */
+.cg-search { width: calc(100% + 14px); margin: 0 -7px; padding: 4px 6px; background: none; border: 1px solid var(--dd-ui-border); color: var(--dd-ui-text); font: inherit; outline: none; }
+.cg-search::placeholder { color: var(--dd-ui-text-secondary); }
+.cg-search.miss { border-color: var(--dd-map-red); }
+
+.cg-filter .dd-toggle { flex-wrap: wrap; row-gap: 6px; }
+.cg-opt { background: none; border: none; color: var(--dd-ui-inactive); font: inherit; cursor: pointer; padding: 0; }
+.cg-opt.active { color: var(--dd-ui-text); }
+
+.cg-slider-val { min-width: 30px; text-align: right; }
+.cg-hint { margin-top: 11px; }
+.cg-hint:empty { display: none; }
+
+/* --- key --- */
+
+.cg-key { bottom: 0; left: 0; padding: 15px 15px 15px 30px; display: flex; flex-direction: column; gap: 25px; min-width: 105px; }
+/* hanging chevron per dd heading rule: -(chevron 8px + gap 11px) into the L padding */
+.cg-key-head { display: flex; align-items: center; gap: 11px; cursor: pointer; user-select: none; }
+.cg-key-head .dd-chevron { margin-left: -19px; }
+.cg-key-items { margin-top: 15px; display: flex; flex-direction: column; gap: 9px; }
+.cg-toggle { cursor: pointer; }
+.cg-swatch { width: 13px; display: flex; justify-content: center; flex-shrink: 0; }
+.cg-swatch svg { width: 11px; height: auto; flex-shrink: 0; }
+.dd-inactive .cg-swatch { opacity: 0.4; }
+.cg-ring { display: inline-block; border: 1.5px solid; border-radius: 50%; flex-shrink: 0; }
+.cg-dot { border: none; }
+
+/* dd key rule: sections go side by side rather than overlap the main panel */
+@media (max-height: 960px) and (min-width: 769px) {
+    .cg-key { flex-direction: row; gap: 38px; }
+}
+
+/* --- detail panel --- */
+
+.cg-detail { top: 0; right: 0; width: 290px; max-height: calc(100vh - 20px); overflow-y: auto; display: none; }
+.cg-detail.visible { display: flex; flex-direction: column; gap: 25px; }
+.cg-detail.collapsed > :not(.dd-head) { display: none; }
+.cg-detail-id { overflow-wrap: anywhere; }
+.cg-close { margin-left: auto; background: none; border: none; color: var(--dd-ui-text-secondary); font: 400 14px/1 Inter, sans-serif; cursor: pointer; }
+.cg-close:hover { color: var(--dd-ui-text); }
+.cg-overlap { white-space: nowrap; }
+.cg-nav { background: none; border: none; color: var(--dd-ui-text); font: inherit; cursor: pointer; padding: 0 3px; }
+
+/* --- data table drawer --- */
+
+/* border-left-width starts 0 (no sliver while shut) — setWidth toggles it */
+.cg-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 0; z-index: 5; overflow: hidden; display: flex; flex-direction: column; background: var(--dd-ui-background); border-left: 0 solid var(--dd-ui-border); color: var(--dd-ui-text); }
+.cg-drawer-handle { position: fixed; top: 50%; right: 0; transform: translateY(-50%); z-index: 6; padding: 12px 5px; background: var(--dd-ui-background); border: 1px solid var(--dd-ui-border); border-right: none; cursor: col-resize; user-select: none; touch-action: none; }
+.cg-drawer-handle span { writing-mode: vertical-rl; color: var(--dd-ui-text-secondary); }
+.cg-drawer-handle:hover span { color: var(--dd-ui-text); }
+.cg-drawer-head { display: flex; align-items: center; gap: 11px; padding: 10px 15px; border-bottom: 1px solid var(--dd-ui-border); flex-shrink: 0; }
+.cg-drawer-head .dd-toggle { flex: 1; min-width: 0; }
+.cg-drawer-q { width: 130px; margin: 0; flex-shrink: 0; }
+.cg-drawer-wrap { flex: 1; overflow: auto; }
+.cg-table { border-collapse: collapse; white-space: nowrap; }
+.cg-table th { position: sticky; top: 0; background: var(--dd-ui-background); color: var(--dd-ui-text-secondary); font-weight: 400; text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--dd-ui-border); cursor: pointer; user-select: none; }
+.cg-table td { padding: 3px 8px; }
+.cg-table tbody tr { cursor: pointer; }
+.cg-table tbody tr:hover { background: var(--dd-ui-hover); }
+.cg-table tbody tr.selected { background: var(--dd-ui-active-background); color: var(--dd-ui-active-text); }
+.cg-drawer-empty { padding: 20px; }
+.cg-drawer-foot { padding: 6px 15px; border-top: 1px solid var(--dd-ui-border); flex-shrink: 0; }
+
+/* --- about modal --- */
+
+.cg-modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+/* the badge is a tag, not heading text — drop the intro heading's bold
+   32px/-3% tracking metrics (which stay on-token for the title itself) */
+.dd-intro-heading .dd-secondary { font-size: 14px; font-weight: 400; letter-spacing: 0; margin-left: 4px; }
+.cg-modal-content { position: relative; width: 420px; max-width: calc(100vw - 40px); max-height: calc(100vh - 40px); overflow-y: auto; display: flex; flex-direction: column; gap: 38px; }
+.dd-intro-body p + p { margin-top: 14px; }
+.cg-enter { padding: 5px 6px; }
+
+/* --- mobile --- */
+
+@media (max-width: 768px) {
+    .cg-main { width: 210px; }
+    #worldmap { display: none; }
+    .cg-key { bottom: auto; top: 0; right: 0; left: auto; }
+    .cg-detail { top: auto; bottom: 0; left: 0; right: 0; width: 100%; max-height: 45vh; }
+    .dd-logo { display: none; }
+    .cg-drawer, .cg-drawer-handle { display: none; }
+}

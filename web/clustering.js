@@ -72,6 +72,7 @@ export function archiveFeature(c) {
         properties: {
             name: terminal ? terminal.name : `${c.detection_count} detection${c.detection_count !== 1 ? 's' : ''}`,
             terminal: terminal?.name || null,
+            lat: c.lat, lon: c.lon,   // exact coords for detail/highlight
             max_b12: c.max_b12, detection_count: c.detection_count, seasonal: c.seasonal,
             total_score: c.total_score, ratio_score: c.ratio_score,
             persistence_score: c.persistence_score, glint_penalty: c.glint_penalty,
@@ -111,6 +112,7 @@ export function enrichVNFFeatures(features, minRh) {
             properties: {
                 name,
                 terminal: terminal?.name || null,
+                lat, lon,   // exact coords for detail/highlight
                 facility_type: facilityType,
                 facility_name: facilityName,
                 flare_id: p.flare_id,

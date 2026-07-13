@@ -13,7 +13,7 @@ framing — is hand-rolled using web standards.
 ## Architecture
 
 ```
-  Browser (app.js)                         Browser (peer)
+  Browser (config.js)                         Browser (peer)
  ┌──────────────────────┐                 ┌──────────────────────┐
  │  MapLibre GL         │                 │  MapLibre GL         │
  │  ┌────────────────┐  │   WebRTC /      │  ┌────────────────┐  │
@@ -84,30 +84,32 @@ Tests use `node:test` and `node:assert`.
 ## Key Files
 
 ```
-Burnoff doubles as the reference implementation for data desk full-screen web
-maps: the generic maplibre/dd scaffolding (map.js, quarters.js, render.js) is
-cleanly separated from the burnoff-specific modules (app.js, detect.js, card.js,
-clustering.js) so future remote-sensing maps can lift the shell wholesale.
+Burnoff is a cartograph consumer (~/Tools/cartograph): config.js is the
+declarative map config passed to mount(); the shell, key, quarter picker,
+sliders, detail panel and permalinks are all cartograph's (vendored in
+web/vendor/cartograph/). Everything burnoff-specific lives in the hook
+modules config.js wires in.
 
 ```
 web/
-  app.js              Burnoff orchestrator: mode switching (S2/VNF), map layers
-                      (detections, terminals), legend, sliders, deep links
-  map.js              GENERIC dd map shell: dark basemap + globe + on-demand
-                      markings, satellite underlay, worldmap widgets, hover
-                      popups, panel collapse, viewport bbox helpers
-  quarters.js         GENERIC dd dot-grid quarter picker: selection state +
-                      date-window helpers
-  render.js           Mode config + marking/ramp/key builders (data desk design)
-  card.js             Detection info card: metrics, intensity chart, event rows,
-                      COG/heat-footprint overlays, CSV export, keyboard nav
+  config.js           The cartograph config + burnoff orchestration: mode
+                      switching (S2/VNF), viewport-driven queries, quarter
+                      availability, detect controls, deep-link resolve
+  render.js           Mode config + marking/ramp builders (data desk design)
+  card.js             Detection card as cartograph detail hooks: metrics,
+                      intensity chart, event rows, COG/heat-footprint overlays,
+                      CSV export, keyboard nav
   detect.js           Local detect + P2P subsystem: lazy CRDT wiring
                       (ensureDetect), detect workers + distributed help,
                       cross-date clusterer over the CRDT maps
+  vendor/cartograph/  Vendored cartograph core (mount, dd shell, key, quarters,
+                      sliders, detail, permalinks) from ~/Tools/cartograph
   vendor/dd/          Vendored data desk design system dist (map.css, style.dark.json,
                       markings, palette, worldmap) from ~/Tools/design
   clustering.js       Terminal grid + archive/VNF feature builders
-  duckdb.js           Shared DuckDB-WASM bootstrap (openDuckDB) for vnf + archive
+  duckdb.js           Shared DuckDB-WASM bootstrap (openDuckDB) for vnf +
+                      archive: remote row-group range reads, distinct from
+                      cartograph's fetch-whole data.js (unused here)
   vnf.js              VNF data module: DuckDB-WASM Parquet queries
   s2archive.js        S2 archive reader: DuckDB-WASM over the cluster parquet
   detect-worker.js    Module Web Worker: wasm block detector + COG I/O
@@ -120,10 +122,11 @@ web/
   rtc.js              WebRTC DataChannel mesh (raw RTCPeerConnection)   (lazy)
   store.js            IndexedDB persistence with batched flushes        (lazy)
   terminals.geojson   LNG terminal locations (Global Energy Monitor)
-  index.html          Entry point
-  style.css           UI styles
+  index.html          Entry point (~30 lines: meta config + vendor includes)
+  style.css           Burnoff-specific UI on top of cartograph's shell.css
 scripts/
-  build_vnf.py        Build VNF parquet from EOG profile CSVs + flare index
+  build_vnf.py        Build VNF parquet from EOG profile CSVs
+  vendor.sh           Thin wrapper over ~/Tools/cartograph/scripts/vendor.sh + flare index
 signal/
   server.js           WebSocket signaling relay for local dev (RFC 6455 over node:http)
   worker.js           Cloudflare Worker + Durable Object signaling relay (production)

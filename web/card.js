@@ -1,38 +1,32 @@
-// detection info card (pdf:84): header metrics, the intensity dot chart,
-// per-date event rows, the COG / heat-footprint imagery overlays, CSV export,
-// Copernicus deep link and keyboard navigation. owns the current selection
-// (feature + per-date detection).
+// detection card (pdf:84) as cartograph detail hooks: cardTitle/cardHtml build
+// the header + skeleton (metrics, intensity dot chart, per-date event rows,
+// action buttons), onCardShow wires them (COG / heat-footprint imagery
+// overlays, CSV export, keyboard nav) and onCardClose tears the imagery down.
+// owns the current selection (properties + per-date detection).
 
 import { openCOG } from './s2/cog.js';
 import { wgs84ToUtm, utmToWgs84, utmParams } from './s2/geo.js';
 import { rampRGB, scaleT, chartNorm, formatDate } from './render.js';
-import { activeQuarterKeys, dateInActiveQuarters } from './quarters.js';
-import { dimSatellite } from './map.js';
+import { showDetail, closeDetail } from './vendor/cartograph/detail.js';
+import { dimSatellite } from './vendor/cartograph/shell.js';
+import { dateInQuarters } from './vendor/cartograph/util.js';
 import { DEG_TO_RAD } from './clustering.js';
 
-// injected by initCard: the map, the active mode config, an isVnf() probe and
-// whether this build serves the precomputed archive (no COGs in cluster rows).
-let map, modeConf, isVnf, hasArchive;
+// injected by initCard: the map, the active mode config, an isVnf() probe,
+// whether this build serves the precomputed archive (no COGs in cluster rows)
+// and the active quarter-keys getter
+let map, modeConf, isVnf, hasArchive, quarterKeys;
 
-let currentFeature = null;
+let current = null;            // selected feature's properties
 let selectedDetection = null;
-let _suppressHash = false;   // avoid feedback loop during deep link nav
-
-export const getCurrentFeature = () => currentFeature;
-export const setHashSuppressed = v => { _suppressHash = v; };
+let _skipAuto = false;         // suppress auto COG load on card re-render
 
 export function initCard(deps) {
-    ({ map, modeConf, isVnf, hasArchive } = deps);
-    document.getElementById('download-btn').addEventListener('click', downloadFlareCSV);
-    document.getElementById('open-image-btn').addEventListener('click', () => {
-        if (!currentFeature || !selectedDetection) return;
-        window.open(copernicusUrl(selectedDetection.date), '_blank');
-    });
+    ({ map, modeConf, isVnf, hasArchive, quarterKeys } = deps);
 
-    // j/k / arrows step through the event rows; escape closes the card
+    // j/k / arrows step through the event rows (escape handled by cartograph)
     document.addEventListener('keydown', e => {
-        if (!document.getElementById('info').classList.contains('visible')) return;
-        if (e.key === 'Escape') { closeInfo(); return; }
+        if (!document.getElementById('detail').classList.contains('visible')) return;
         let dir = 0;
         if (e.key === 'ArrowDown' || e.key === 'j') dir = 1;
         else if (e.key === 'ArrowUp' || e.key === 'k') dir = -1;
@@ -49,32 +43,196 @@ export function initCard(deps) {
     });
 }
 
+const coords = p => [Number(p.lon), Number(p.lat)];
+const featureOf = p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: coords(p) }, properties: p });
+
+// detections arrive as objects from our builders or json strings via
+// queryRenderedFeatures
+function parseDets(p) {
+    let d = p.detections || [];
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch { d = []; } }
+    return d;
+}
+
+function greyCircles(grey) {
+    if (map.getLayer('detections'))
+        map.setPaintProperty('detections', 'icon-opacity', grey ? 0.35 : 1);
+}
+
 function copernicusUrl(date) {
     const from = `${date}T00:00:00.000Z`;
     const to = `${date}T23:59:59.999Z`;
     const { lat, lng } = map.getCenter();
     // maplibre renders 512px tiles, so its zoom is one level lower than the
-    // 256px slippy zoom copernicus browser (leaflet) expects for the same scale.
+    // 256px slippy zoom copernicus browser (leaflet) expects for the same scale
     const zoom = Math.round(map.getZoom()) + 1;
     return `https://browser.dataspace.copernicus.eu/?zoom=${zoom}&lat=${lat}&lng=${lng}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=6-SWIR&upsampling=NEAREST&downsampling=NEAREST&dateMode=SINGLE`;
 }
 
-function setCirclesGreyed() {
-    if (!map.getLayer('client-detection-circles')) return;
-    map.setPaintProperty('client-detection-circles', 'icon-opacity', 0.35);
-}
-
-function setCirclesDefault() {
-    if (!map.getLayer('client-detection-circles')) return;
-    map.setPaintProperty('client-detection-circles', 'icon-opacity', 1);
-}
-
-function renderIntensityChart(detections, onSelectDate) {
-    const container = document.getElementById('intensity-chart');
-    if (!detections?.length) {
-        container.innerHTML = '';
-        return;
+// quarter-aware card metrics. detections filter exactly to the selected
+// quarters (numerator); the cloud-free observation count has no per-date
+// breakdown — the archive carries only a cluster total — so the denominator is
+// scaled by the share of the cluster's active-quarter span the selection
+// covers. left as the published totals when every quarter, or none, is selected.
+function quarterMetrics(props, dets, qKeys) {
+    const detection_count = dets.filter(d => dateInQuarters(d.date, qKeys)).length;
+    let { observations, persistence } = props;
+    if (observations != null && dets.length) {
+        const qi = d => +d.date.slice(0, 4) * 4 + Math.floor((+d.date.slice(5, 7) - 1) / 3);
+        const idx = dets.map(qi), lo = Math.min(...idx), hi = Math.max(...idx);
+        let span = 0, sel = 0;
+        for (let i = lo; i <= hi; i++, span++)
+            if (!qKeys.size || qKeys.has(`${Math.floor(i / 4)}_${i % 4 + 1}`)) sel++;
+        if (sel < span) {
+            observations = Math.round(observations * sel / span);
+            persistence = observations > 0 ? Math.min(1, detection_count / observations) : 0;
+        }
     }
+    return { detection_count, observations, persistence };
+}
+
+// ── detail hooks ──
+
+export function cardTitle(p) {
+    const t = p.terminal
+        ? `Near ${String(p.name).replace(/\s*Terminal\b/gi, '').trim()}`
+        : p.name;
+    return { text: t || (isVnf() ? `Flare #${p.flare_id}` : 'Unknown facility') };
+}
+
+export function cardHtml(p) {
+    const cfg = modeConf();
+    const m = quarterMetrics(p, parseDets(p), quarterKeys());
+    const cfLabel = p.passes && m.observations != null
+        ? `Cloud-free (${Math.round(m.observations / p.passes * 100)}%)` : 'Cloud-free obs.';
+    const stats = [
+        ['Detections', m.detection_count],
+        ['Persistence', m.persistence != null ? `${Math.round(m.persistence * 100)}%` : '—'],
+        ['Passes', p.passes ?? '—'],
+        [cfLabel, m.observations ?? '—'],
+    ].map(([k, v]) => `<div><span class="dd-secondary">${k}</span><span>${v}</span></div>`).join('');
+    return `
+        <div class="info-stats">${stats}</div>
+        <div class="intensity-chart" id="intensity-chart"></div>
+        <div class="events">
+            <div class="events-header dd-secondary">
+                <span>Date</span>
+                <span class="col-right col-val">${cfg.col2}</span>
+                <span class="col-right col-count">${cfg.col3}</span>
+            </div>
+            <div class="events-list custom-scroll" id="events-list"></div>
+        </div>
+        ${isVnf() ? '' : `
+        <div class="dd-btn-pair panel-actions">
+            <button class="dd-btn" id="open-image-btn">Open Image</button>
+            <button class="dd-btn" id="download-btn">Download CSV</button>
+        </div>`}`;
+}
+
+export function onCardShow(p, el) {
+    current = p;
+    selectedDetection = null;
+    greyCircles(true);
+
+    const cfg = modeConf();
+    const vnf = isVnf();
+    // card shows only detections in the selected quarter window
+    const qKeys = quarterKeys();
+    const detections = parseDets(p).filter(d => dateInQuarters(d.date, qKeys));
+
+    const list = el.querySelector('#events-list');
+    const sorted = [...detections].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const dateToItem = new Map();
+    let firstItem = null;
+
+    for (const det of sorted) {
+        const item = document.createElement('div');
+        let isL1C = false;
+        // archive detections have no COG (cluster view only) but still carry a
+        // date + raw point — clickable for the intensity halo and "Open image"
+        if (!vnf && !hasArchive) {
+            const url = det.cog_b12;
+            isL1C = !url || typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif');
+        }
+        item.className = 'dd-row event-item' + (isL1C ? ' l1c-only' : '');
+        item.dataset.date = det.date;
+        item.innerHTML = `
+            <span class="event-date">${formatDate(det.date)}</span>
+            <span class="event-meta event-meta-val">${cfg.formatVal(det)}</span>
+            <span class="event-meta event-meta-count">${cfg.formatCount(det)}</span>`;
+        item.onclick = () => selectDetection(det, item);
+        list.appendChild(item);
+        dateToItem.set(det.date, { det, item });
+        if (!firstItem && !isL1C) firstItem = { det, item };
+    }
+
+    renderIntensityChart(el, detections, det => {
+        const entry = dateToItem.get(det.date);
+        if (entry) {
+            selectDetection(entry.det, entry.item);
+            entry.item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    });
+
+    const MAX_VISIBLE_ROWS = window.innerWidth <= 768 ? 4 : 10;
+    const items = list.querySelectorAll('.event-item');
+    if (items.length > 0) {
+        const rowH = items[0].offsetHeight;
+        list.style.maxHeight = (rowH * Math.min(items.length, MAX_VISIBLE_ROWS)) + 'px';
+    } else {
+        el.querySelector('#intensity-chart').innerHTML = '';
+        list.innerHTML = '<div class="events-empty">No detections</div>';
+    }
+
+    // vnf: auto-select highlights only (no COG); s2: auto-select loads the COG
+    if (firstItem && !_skipAuto) selectDetection(firstItem.det, firstItem.item);
+
+    el.querySelector('#download-btn')?.addEventListener('click', downloadFlareCSV);
+    el.querySelector('#open-image-btn')?.addEventListener('click', () => {
+        if (!current || !selectedDetection) return;
+        window.open(copernicusUrl(selectedDetection.date), '_blank');
+    });
+    document.activeElement?.blur();
+}
+
+export function onCardClose() {
+    current = null;
+    clearCogLayers();
+    dimSatellite(map, false);
+    greyCircles(false);
+}
+
+// ── selection maintenance across re-renders ──
+
+// re-filter the open card to the current quarter window (map reconciles async)
+export function refreshCard() {
+    if (current) reopen(current);
+}
+
+// re-open the card on the feature at the previous selection's coordinates
+// after a re-cluster (geojson sources keep the last data set on `_data`),
+// or close it
+export function reselectCurrentFeature() {
+    if (!current) return;
+    const features = map.getSource('detections')?._data?.features || [];
+    const [lon, lat] = coords(current);
+    const match = features.find(f =>
+        Math.abs(f.geometry.coordinates[0] - lon) < 1e-4 && Math.abs(f.geometry.coordinates[1] - lat) < 1e-4);
+    if (match) reopen(match.properties);
+    else closeDetail();
+}
+
+function reopen(p) {
+    _skipAuto = true;
+    showDetail(featureOf(p), true);
+    _skipAuto = false;
+}
+
+// ── intensity chart ──
+
+function renderIntensityChart(el, detections, onSelectDate) {
+    const container = el.querySelector('#intensity-chart');
+    if (!detections?.length) { container.innerHTML = ''; return; }
 
     const sorted = [...detections].sort((a, b) => new Date(a.date) - new Date(b.date));
     const margin = { top: 8, right: 8, bottom: 16, left: 8 };
@@ -115,167 +273,11 @@ function renderIntensityChart(detections, onSelectDate) {
     container.innerHTML = svg;
 
     container.querySelectorAll('.chart-dot').forEach(dot => {
-        dot.addEventListener('click', e => {
-            onSelectDate(sorted[parseInt(e.target.dataset.idx)]);
-        });
+        dot.addEventListener('click', e => onSelectDate(sorted[parseInt(e.target.dataset.idx)]));
     });
 }
 
-// Quarter-aware card metrics. Detections filter exactly to the selected quarters
-// (numerator). The cloud-free observation count has no per-date breakdown — the
-// archive carries only a cluster total — so the denominator is scaled by the share
-// of the cluster's active-quarter span the selection covers. Left as the published
-// totals when every quarter, or none, is selected.
-function quarterMetrics(props, dets, qKeys) {
-    const detection_count = dets.filter(d => dateInActiveQuarters(d.date, qKeys)).length;
-    let { observations, persistence } = props;
-    if (observations != null && dets.length) {
-        const qi = d => +d.date.slice(0, 4) * 4 + Math.floor((+d.date.slice(5, 7) - 1) / 3);
-        const idx = dets.map(qi), lo = Math.min(...idx), hi = Math.max(...idx);
-        let span = 0, sel = 0;
-        for (let i = lo; i <= hi; i++, span++)
-            if (!qKeys.size || qKeys.has(`${Math.floor(i / 4)}_${i % 4 + 1}`)) sel++;
-        if (sel < span) {
-            observations = Math.round(observations * sel / span);
-            persistence = observations > 0 ? Math.min(1, detection_count / observations) : 0;
-        }
-    }
-    return { detection_count, observations, persistence };
-}
-
-export function showInfo(feature, { skipAutoSelect = false } = {}) {
-    currentFeature = feature;
-    selectedDetection = null;
-    const vnf = isVnf();
-
-    // Update hash for VNF deep links
-    if (!_suppressHash && vnf && feature.properties.flare_id) {
-        history.replaceState(null, '', `#vnf/${feature.properties.flare_id}`);
-    }
-    const props = feature.properties;
-
-    // Parse detections once; the active quarter selection drives both the list
-    // below and the headline metrics (numerator exactly, observation denominator
-    // scaled) — deselecting a quarter updates both, not just the map.
-    let allDets = props.detections || [];
-    if (typeof allDets === 'string') { try { allDets = JSON.parse(allDets); } catch (e) { allDets = []; } }
-    const qKeys = activeQuarterKeys();
-    const metrics = quarterMetrics(props, allDets, qKeys);
-
-    setCirclesGreyed();
-
-    const selectionSource = map.getSource('selection-highlight');
-    if (selectionSource) selectionSource.setData(feature);
-    if (map.getLayer('selection-highlight')) {
-        map.setLayoutProperty('selection-highlight', 'visibility', 'visible');
-    }
-
-    const infoEl = document.getElementById('info');
-    infoEl.classList.add('visible');
-    infoEl.classList.remove('collapsed');
-
-    const title = props.terminal
-        ? `Near ${props.name.replace(/\s*Terminal\b/gi, '').trim()}`
-        : props.name;
-    document.getElementById('info-name').textContent =
-        title || (vnf ? `Flare #${props.flare_id}` : 'Unknown facility');
-
-    // Info rows under the heading (pdf:84): Detections / Persistence / Passes /
-    // Cloud-free. Passes is null for archive clusters (no total-pass figure).
-    const cfLabel = props.passes && metrics.observations != null
-        ? `Cloud-free (${Math.round(metrics.observations / props.passes * 100)}%)` : 'Cloud-free obs.';
-    document.getElementById('info-stats').innerHTML = [
-        ['Detections', metrics.detection_count],
-        ['Persistence', metrics.persistence != null ? `${Math.round(metrics.persistence * 100)}%` : '—'],
-        ['Passes', props.passes ?? '—'],
-        [cfLabel, metrics.observations ?? '—'],
-    ].map(([k, v]) => `<div><span class="dd-secondary">${k}</span><span>${v}</span></div>`).join('');
-
-    // Card shows only detections in the selected quarter window (parsed above).
-    const detections = allDets.filter(d => dateInActiveQuarters(d.date, qKeys));
-
-    const list = document.getElementById('events-list');
-    list.innerHTML = '';
-
-    const sorted = [...detections].sort((a, b) => new Date(b.date) - new Date(a.date));
-    const dateToItem = new Map();
-    let firstItem = null;
-
-    const cfg = modeConf();
-    sorted.forEach(det => {
-        const item = document.createElement('div');
-        let isL1C = false;
-        // Archive detections have no COG (cluster view only) but still carry a date
-        // + raw point — clickable for the intensity halo and external "Open image".
-        if (!vnf && !hasArchive) {
-            const url = det.cog_b12;
-            isL1C = !url || typeof url !== 'string' || !url.startsWith('http') || url.includes('.jp2') || !url.includes('.tif');
-        }
-        item.className = 'dd-row event-item' + (isL1C ? ' l1c-only' : '');
-        item.dataset.date = det.date;
-        item.innerHTML = `
-            <span class="event-date">${formatDate(det.date)}</span>
-            <span class="event-meta event-meta-val">${cfg.formatVal(det)}</span>
-            <span class="event-meta event-meta-count">${cfg.formatCount(det)}</span>
-        `;
-        item.onclick = () => selectDetection(det, item);
-        list.appendChild(item);
-
-        dateToItem.set(det.date, { det, item, isL1C });
-        if (!firstItem && !isL1C) firstItem = { det, item };
-    });
-
-    renderIntensityChart(detections, det => {
-        const entry = dateToItem.get(det.date);
-        if (entry) {
-            selectDetection(entry.det, entry.item);
-            entry.item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-    });
-
-    const MAX_VISIBLE_ROWS = window.innerWidth <= 768 ? 4 : 10;
-    const items = list.querySelectorAll('.event-item');
-    if (items.length > 0) {
-        const rowH = items[0].offsetHeight;
-        list.style.maxHeight = (rowH * Math.min(items.length, MAX_VISIBLE_ROWS)) + 'px';
-    }
-
-    // In VNF mode, auto-select first item (highlight only, no COG load)
-    // In S2 mode, auto-select first L2A item to load COG
-    if (firstItem && !skipAutoSelect) selectDetection(firstItem.det, firstItem.item);
-
-    // Mode-specific action buttons (no image/CSV export in VNF — data is EOG's)
-    const actions = document.querySelector('.panel-actions');
-    if (actions) actions.style.display = vnf ? 'none' : '';
-
-    document.activeElement?.blur();
-
-    if (detections.length === 0) {
-        document.getElementById('intensity-chart').innerHTML = '';
-        list.innerHTML = '<div class="events-empty">No detections</div>';
-    }
-}
-
-/** Re-filter the open card to the current quarter window (map reconciles async). */
-export function refreshCard() {
-    if (currentFeature) showInfo(currentFeature, { skipAutoSelect: true });
-}
-
-// Re-open the card on the feature at the previous selection's coordinates after a
-// re-cluster (geojson sources keep the last data set on `_data`), or close it.
-export function reselectCurrentFeature() {
-    if (!currentFeature) return;
-    const src = map.getSource('client-detections');
-    if (!src) return;
-    const features = src._data?.features || [];
-    const [lon, lat] = currentFeature.geometry.coordinates;
-    const match = features.find(f => {
-        const [fLon, fLat] = f.geometry.coordinates;
-        return Math.abs(fLon - lon) < 0.0001 && Math.abs(fLat - lat) < 0.0001;
-    });
-    if (match) showInfo(match, { skipAutoSelect: true });
-    else closeInfo();
-}
+// ── per-date imagery overlays ──
 
 function selectDetection(det, element) {
     document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
@@ -285,7 +287,7 @@ function selectDetection(det, element) {
     else loadImageryForDetection(det);
 }
 
-// Tear down the COG / heat-footprint image overlay (idempotent).
+// tear down the COG / heat-footprint image overlay (idempotent)
 function clearCogLayers() {
     if (map.getLayer('cog-border')) map.removeLayer('cog-border');
     if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
@@ -293,14 +295,14 @@ function clearCogLayers() {
     if (map.getSource('cog-source')) map.removeSource('cog-source');
 }
 
-// Magma radial-gradient footprint at a detection's point, sized by intensity, used
-// where there is no COG to render: VNF (sized on radiant heat) and S2 archive rows
-// (sized on B12, located at the per-date raw point).
+// magma radial-gradient footprint at a detection's point, sized by intensity,
+// used where there is no COG to render: vnf (sized on radiant heat) and s2
+// archive rows (sized on B12, located at the per-date raw point)
 function showHeatFootprint(det) {
     clearCogLayers();
-    if (!det || !currentFeature) return;
+    if (!det || !current) return;
     const vnf = isVnf();
-    const [cLon, cLat] = currentFeature.geometry.coordinates;
+    const [cLon, cLat] = coords(current);
     const lon = vnf ? cLon : (det.raw_lon ?? cLon);
     const lat = vnf ? cLat : (det.raw_lat ?? cLat);
     const val = vnf ? (det.rh_mw || 0) : (det.max_b12 || det.b12_corrected || 0);
@@ -323,30 +325,16 @@ function showHeatFootprint(det) {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
 
-    const coords = [
+    const corners = [
         [lon - dLon, lat + dLat], [lon + dLon, lat + dLat],
         [lon + dLon, lat - dLat], [lon - dLon, lat - dLat]
     ];
-    map.addSource('cog-source', { type: 'image', url: canvas.toDataURL(), coordinates: coords });
+    map.addSource('cog-source', { type: 'image', url: canvas.toDataURL(), coordinates: corners });
     map.addLayer({ id: 'cog-layer', type: 'raster', source: 'cog-source',
-        paint: { 'raster-opacity': 1, 'raster-resampling': 'linear' } }, 'client-detection-circles');
+        paint: { 'raster-opacity': 1, 'raster-resampling': 'linear' } }, 'detections');
 
-    setCirclesGreyed();
+    greyCircles(true);
     dimSatellite(map, true);
-}
-
-export function closeInfo() {
-    document.getElementById('info').classList.remove('visible');
-    closeImagery();
-    currentFeature = null;
-    setCirclesDefault();
-    if (map.getLayer('selection-highlight')) {
-        map.setLayoutProperty('selection-highlight', 'visibility', 'none');
-    }
-    // Clear deep link hash
-    if (!_suppressHash && location.hash.startsWith('#vnf/')) {
-        history.replaceState(null, '', location.pathname + location.search);
-    }
 }
 
 async function loadImageryForDetection(det) {
@@ -360,7 +348,7 @@ async function loadImageryForDetection(det) {
         return;
     }
 
-    const [flareLon, flareLat] = currentFeature.geometry.coordinates;
+    const [flareLon, flareLat] = coords(current);
     const { zone, isNorth } = utmParams(det.epsg);
     const buffer = 250;
     const [flareUtmX, flareUtmY] = wgs84ToUtm(flareLon, flareLat, zone, isNorth);
@@ -419,34 +407,19 @@ async function loadImageryForDetection(det) {
 
         clearCogLayers();
 
-        const coords = [[bounds[0], bounds[3]], [bounds[2], bounds[3]], [bounds[2], bounds[1]], [bounds[0], bounds[1]]];
+        const corners = [[bounds[0], bounds[3]], [bounds[2], bounds[3]], [bounds[2], bounds[1]], [bounds[0], bounds[1]]];
 
-        map.addSource('cog-source', {
-            type: 'image',
-            url: canvas.toDataURL(),
-            coordinates: coords
-        });
-
+        map.addSource('cog-source', { type: 'image', url: canvas.toDataURL(), coordinates: corners });
         map.addSource('cog-border', {
             type: 'geojson',
-            data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[...coords, coords[0]]] } }
+            data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[...corners, corners[0]]] } }
         });
+        map.addLayer({ id: 'cog-layer', type: 'raster', source: 'cog-source',
+            paint: { 'raster-opacity': 1, 'raster-resampling': 'nearest' } }, 'detections');
+        map.addLayer({ id: 'cog-border', type: 'line', source: 'cog-border',
+            paint: { 'line-color': '#ffffff', 'line-width': 1 } }, 'detections');
 
-        map.addLayer({
-            id: 'cog-layer',
-            type: 'raster',
-            source: 'cog-source',
-            paint: { 'raster-opacity': 1, 'raster-resampling': 'nearest' }
-        }, 'client-detection-circles');
-
-        map.addLayer({
-            id: 'cog-border',
-            type: 'line',
-            source: 'cog-border',
-            paint: { 'line-color': '#ffffff', 'line-width': 1 }
-        }, 'client-detection-circles');
-
-        setCirclesGreyed();
+        greyCircles(true);
         document.querySelector('.event-item.active')?.classList.remove('loading');
         dimSatellite(map, true);
     } catch (err) {
@@ -455,25 +428,16 @@ async function loadImageryForDetection(det) {
     }
 }
 
-function closeImagery() {
-    clearCogLayers();
-    dimSatellite(map, false);
-    if (currentFeature) setCirclesGreyed();
-    else setCirclesDefault();
-}
+// ── csv export ──
 
 function downloadFlareCSV() {
-    if (!currentFeature || isVnf()) return;
-    const props = currentFeature.properties;
-    const [lon, lat] = currentFeature.geometry.coordinates;
-
-    let detections = props.detections || [];
-    if (typeof detections === 'string') {
-        try { detections = JSON.parse(detections); } catch (e) { detections = []; }
-    }
+    if (!current || isVnf()) return;
+    const props = current;
+    const [lon, lat] = coords(current);
+    const detections = parseDets(props);
 
     const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'passes', 'observations']];
-    const persistStr = props.persistence != null ? props.persistence.toFixed(4) : '';
+    const persistStr = props.persistence != null ? Number(props.persistence).toFixed(4) : '';
     const passStr = props.passes != null ? String(props.passes) : '';
     const obsStr = props.observations != null ? String(props.observations) : '';
     for (const det of detections) {

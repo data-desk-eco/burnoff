@@ -1,11 +1,11 @@
-// Mode config + marking/colour/key builders — the single source of truth for how
-// detections look in each mode. Colours come from the data desk cartography palette
-// (vendor/dd); detections render as the 'flare' marking stepped through the
-// red→orange→white intensity ramp (guidelines pdf:85 key). app.js holds currentMode
-// and the slider state and feeds them in.
+// mode config + marking/colour builders — the single source of truth for how
+// detections look in each mode. colours come from the data desk cartography
+// palette (vendor/dd); detections render as the 'flare' marking stepped through
+// the red→orange→white intensity ramp (guidelines pdf:85 key). config.js holds
+// the current mode and the slider state and feeds them in; the key itself is
+// built by cartograph from config.js's keySections.
 
 import { map as ddPalette } from './vendor/dd/palette.js';
-import { markSVG } from './vendor/dd/markings.js';
 
 export const DD = ddPalette.adjusted;
 export const RAMP = [DD.red, DD.orange, DD.white]; // low → high intensity
@@ -22,7 +22,6 @@ export const MODE = {
         chartRange: [0.85, 1.6],
         filter: { min: 0, max: 1.5, step: 0.05, default: 0.85 },
         formatFilter: v => v === 0 ? 'Off' : v.toFixed(2),
-        formatStop: v => String(v),
         yVal: d => d.b12_corrected,
         formatVal: d => d.max_b12?.toFixed(2) || '-',
         formatCount: d => String(d.pixels || '-'),
@@ -38,7 +37,6 @@ export const MODE = {
         chartRange: [0.5, 50],
         filter: { min: 0, max: 10, step: 0.5, default: 3 },
         formatFilter: v => v === 0 ? 'Off' : `${v} MW`,
-        formatStop: v => String(v),
         yVal: d => d.rh_mw || 0,
         formatVal: d => d.rh_mw >= 999 ? '-' : (d.rh_mw?.toFixed(1) || '-'),
         formatCount: d => d.rh_mw >= 999 ? '-' : (d.rh_mw != null ? (d.rh_mw * RH_TO_MCM).toFixed(2) : '-'),
@@ -81,32 +79,6 @@ export function markIconExpr(cfg) {
 }
 
 export const ICON_SIZE = ['interpolate', ['linear'], ['zoom'], 2, 0.55, 10, 0.8, 14, 1];
-
-// --- key (legend) ---
-
-// inline svg text per marking (dd markSVG), tinted via css color on the wrapper
-const MARKS = {};
-export function loadMarks(names = ['flare', 'triangle']) {
-    return Promise.all(names.map(async n => MARKS[n] = await markSVG(n)));
-}
-
-const CHEV = open => `<span class="dd-chevron${open ? '' : ' dd-chevron-down'}"></span>`;
-const mark = (name, color) => `<span style="color:${color};display:flex">${MARKS[name] || ''}</span>`;
-const row = (icon, label) => `<div class="dd-key-row">${icon}${label}</div>`;
-
-// Build key HTML: intensity ramp section + infrastructure section (pdf:85).
-// state: { open } — one chevron collapses the whole legend;
-// both group labels toggle it too
-export function buildKeyHTML(cfg, state) {
-    const stops = [...cfg.stops].reverse();
-    const ramp = stops.map((v, i) =>
-        row(mark('flare', RAMP[2 - i]), i === 0 ? `${cfg.formatStop(v)}+` : cfg.formatStop(v))).join('');
-    const infra = row(mark('triangle', DD.white), 'LNG');
-    const section = (label, items, chev = '') =>
-        `<div class="key-section"><div class="key-head">${chev}<span class="dd-secondary">${label}</span></div>` +
-        (state.open ? `<div class="key-items">${items}</div>` : '') + '</div>';
-    return section(cfg.label, ramp, CHEV(state.open)) + section('Infrastructure', infra);
-}
 
 export function formatDate(dateStr) {
     if (!dateStr) return '-';

@@ -7,8 +7,7 @@
 
 import { clusterDetections } from './s2/cluster.js';
 import { findNearestTerminal } from './clustering.js';
-import { viewportBbox } from './map.js';
-import { getSelectedDateRange, quarterKey } from './quarters.js';
+import { viewportBbox } from './vendor/cartograph/shell.js';
 
 let LWWMap, Store, PeerMesh, geohash3, SyncManager, validateDetection;   // lazy imports
 
@@ -22,9 +21,10 @@ const SIGNALING_URL = _sigMeta
     ? _sigMeta.content
     : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:4444`;
 
-// injected by initDetect: the map, a render callback (re-cluster + redraw in the
-// active mode), a quarter-indicator refresh, and the live avg-B12 slider gate.
-let map, render, updateQuarters, minAvgB12;
+// injected by initDetect: the map, the cartograph quarter-picker api, a render
+// callback (re-cluster + redraw in the active mode), a quarter-indicator
+// refresh, and the live avg-B12 slider gate.
+let map, quarters, render, updateQuarters, minAvgB12;
 
 let detectionMap = null, processedMap = null, store = null, mesh = null, syncManager = null;
 let allRawDetections = [];
@@ -38,7 +38,7 @@ let _currentPeerCount = 0;
 export const isDetecting = () => _isDetecting;
 
 export function initDetect(deps) {
-    ({ map, render, updateQuarters, minAvgB12 } = deps);
+    ({ map, quarters, render, updateQuarters, minAvgB12 } = deps);
     document.getElementById('detect-btn').addEventListener('click', startDetection);
 }
 
@@ -196,7 +196,7 @@ function scheduleDetectionUpdate() {
 
 /** Redraw the detection source from the CRDT-held detections. */
 export function updateDetectionSource() {
-    const src = map.getSource('client-detections');
+    const src = map.getSource('detections');
     if (!src) return;
     src.setData({ type: 'FeatureCollection', features: crossDateCluster(allRawDetections) });
     map.triggerRepaint();
@@ -305,6 +305,7 @@ export function crossDateCluster(allDetections, obs) {
             properties: {
                 name,
                 terminal: terminal?.name || null,
+                lat: cl.lat, lon: cl.lon,   // exact coords for detail/highlight
                 max_b12: cl.max_b12,
                 detection_count: cl.detection_count,
                 seasonal: cl.seasonal,
@@ -392,11 +393,9 @@ export function getDetectedQuarters() {
     return quarters;
 }
 
-export function updateDetectButton(quarters) {
-    if (!quarters) quarters = getDetectedQuarters();
-    const activeBtns = document.querySelectorAll('.quarter-btn.active');
-    const allDetected = activeBtns.length > 0 &&
-        Array.from(activeBtns).every(btn => quarters.has(quarterKey(btn)));
+export function updateDetectButton(detected = getDetectedQuarters()) {
+    const active = quarters.keys();
+    const allDetected = active.size > 0 && [...active].every(k => detected.has(k));
     const tooZoomedOut = map.getZoom() < MIN_DETECT_ZOOM;
     const btn = document.getElementById('detect-btn');
     btn.disabled = allDetected || tooZoomedOut;
@@ -570,7 +569,7 @@ async function startDetection() {
     document.getElementById('detect-text').textContent = 'Searching...';
 
     const bbox = viewportBbox(map);
-    const dateRange = getSelectedDateRange();
+    const dateRange = quarters.range();
     const job = {
         id: `${mesh.localPeerId}-${Date.now()}`,
         bbox, epsg: guessEpsg(bbox),

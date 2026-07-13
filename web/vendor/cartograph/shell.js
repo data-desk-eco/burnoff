@@ -1,18 +1,19 @@
 // generic data desk full-screen map shell — maplibre + the vendored dd design
-// system, no burnoff specifics. reusable scaffolding for any remote-sensing map:
-// dark basemap with globe projection and on-demand marking images, grayscale
-// satellite underlay, mollweide worldmap widgets, hover popups, panel collapse
-// and viewport bbox helpers.
+// system (expected as a sibling vendor dir: ../dd/). dark basemap with globe
+// projection and on-demand marking images, grayscale satellite underlay,
+// mollweide worldmap widget, hover popups and panel collapse.
 
-import { addMarking } from './vendor/dd/markings.js';
-import { drawWorldmap, setBoxes } from './vendor/dd/worldmap.js';
+import { addMarking } from '../dd/markings.js';
+import { drawWorldmap, setBoxes } from '../dd/worldmap.js';
+
+const DD = new URL('../dd/', import.meta.url);
 
 // dd dark basemap + globe. markings load on demand: styleimagemissing catches any
 // `<name>-<#hex>` id referenced before its image arrives, so layers can be added
 // without awaiting; ensureMark preloads ids referenced only in expressions.
 const _marksLoading = new WeakMap();
 export function createMap(opts = {}) {
-    const map = new maplibregl.Map({ container: 'map', style: 'vendor/dd/style.dark.json', ...opts });
+    const map = new maplibregl.Map({ container: 'map', style: new URL('style.dark.json', DD).href, ...opts });
     map.on('style.load', () => map.setProjection({ type: 'globe' }));
     _marksLoading.set(map, new Set());
     map.on('styleimagemissing', e => ensureMark(map, e.id));
@@ -24,7 +25,7 @@ export function ensureMark(map, id) {
     const loading = _marksLoading.get(map);
     if (!m || !loading || loading.has(id)) return;
     loading.add(id);
-    addMarking(map, m[1], { color: m[2], base: new URL('vendor/dd/markings/', location.href) })
+    addMarking(map, m[1], { color: m[2], base: new URL('markings/', DD) })
         .catch(() => loading.delete(id));
 }
 
@@ -56,23 +57,6 @@ export function viewportBbox(map) {
     return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
 }
 
-// expand a bbox to at least `min` degrees per axis (centered). availability tests
-// on a razor-thin zoomed-in viewport otherwise flip the moment you sit between
-// features; a ~3 km floor makes them reflect the surrounding area instead.
-export function padBbox([w, s, e, n], min = 0.03) {
-    const dw = Math.max(0, (min - (e - w)) / 2), dh = Math.max(0, (min - (n - s)) / 2);
-    return [w - dw, s - dh, e + dw, n + dh];
-}
-
-// [w, s, e, n] of a polygon / multipolygon feature
-export function featureBbox(f) {
-    let w = 180, s = 90, e = -180, n = -90;
-    for (const [x, y] of f.geometry.coordinates.flat(f.geometry.type === 'MultiPolygon' ? 2 : 1)) {
-        w = Math.min(w, x); e = Math.max(e, x); s = Math.min(s, y); n = Math.max(n, y);
-    }
-    return [w, s, e, n];
-}
-
 // mollweide worldmap widget showing the live viewport as a box (pdf:83)
 export function wireWorldmap(map, el) {
     const update = () => setBoxes(el, [viewportBbox(map)]);
@@ -90,20 +74,21 @@ export function boxesWorldmap(el, getBoxes, minSize) {
 }
 
 // dd popup on hover: labels attach up-and-right of the marking (dd cartography
-// label rule). html(properties) returns the popup body.
-export function hoverPopup(map, layer, html) {
+// label rule). html(properties) returns the popup body; also shown on click
+// (touch). pass {click: false} to keep it hover-only.
+export function hoverPopup(map, layer, html, { click = true } = {}) {
     const popup = new maplibregl.Popup({
         closeButton: false, closeOnClick: false, className: 'dd-popup',
         anchor: 'bottom-left', offset: 10
     });
-    map.on('mousemove', layer, e => {
-        map.getCanvas().style.cursor = 'pointer';
-        popup.setLngLat(e.lngLat).setHTML(html(e.features[0].properties)).addTo(map);
-    });
+    const show = e => popup.setLngLat(e.lngLat).setHTML(html(e.features[0].properties)).addTo(map);
+    map.on('mousemove', layer, e => { map.getCanvas().style.cursor = 'pointer'; show(e); });
+    if (click) map.on('click', layer, show);
     map.on('mouseleave', layer, () => {
         map.getCanvas().style.cursor = '';
         popup.remove();
     });
+    return popup;
 }
 
 // chevron and heading text both toggle expand/contract (dd heading rule).
@@ -111,6 +96,6 @@ export function hoverPopup(map, layer, html) {
 export function wireCollapse(pairs) {
     for (const [ids, panel] of pairs)
         for (const id of ids)
-            document.getElementById(id).addEventListener('click', () =>
+            document.getElementById(id)?.addEventListener('click', () =>
                 document.getElementById(panel).classList.toggle('collapsed'));
 }

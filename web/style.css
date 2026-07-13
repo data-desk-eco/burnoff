@@ -1,66 +1,28 @@
-/* burnoff-specific layout on top of vendor/dd/map.css (data desk design system).
-   spacing values follow the 2026 guidelines ui examples (pdf:81-88). */
+/* burnoff-specific ui on top of vendor/cartograph/shell.css + vendor/dd/map.css
+   (data desk design system). the panel/key/detail/modal furniture is all
+   cartograph's; only the mode row, detect controls, quarter 'detected' state,
+   card internals and intro-modal extras live here. */
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100%; height: 100%; background: #000; }
-body { font: 400 11px/1.4 Inter, sans-serif; font-feature-settings: "calt", "tnum", "ss01", "ss02"; }
-#map { width: 100%; height: 100%; background: #000; }
-.maplibregl-ctrl, .maplibregl-ctrl-logo, .maplibregl-ctrl-attrib { display: none !important; }
-a { color: inherit; text-decoration: underline; }
-.hidden { display: none !important; }
+/* --- main panel: mode row + detect controls --- */
 
-.custom-scroll::-webkit-scrollbar { width: 4px; }
-.custom-scroll::-webkit-scrollbar-track { background: transparent; }
-.custom-scroll::-webkit-scrollbar-thumb { background: var(--dd-ui-inactive); }
+/* mode toggle left, peers indicator right */
+.cg-filter[data-key="mode"] { display: flex; justify-content: space-between; align-items: baseline; }
 
-/* --- shared panel furniture --- */
-
-.dd-heading { padding-bottom: 3px; }
-#collapse-title, #info-name { cursor: pointer; }
-.dd-subtitle { margin-top: 8px; }
-.collapsed .dd-chevron { transform: rotate(180deg); }
-
-/* --- main panel --- */
-
-.main-panel { top: 0; left: 0; width: 250px; }
-#title-panel.collapsed > :not(.dd-head) { display: none; }
-#title-panel:not(.mode-s2) .s2-only { display: none; }
-
-#world-map { width: 100%; display: block; }
-
-.mode-row { display: flex; justify-content: space-between; align-items: baseline; }
-.mode-btn { background: none; border: none; color: var(--dd-ui-text); font: inherit; cursor: pointer; }
-.mode-btn:not(.active) { color: var(--dd-ui-inactive); }
-
-.quarter-btn.active .dd-dot { width: 8px; height: 8px; }
-.quarter-btn.unavailable .dd-dot, .quarter-btn.detected .dd-dot { background: var(--dd-ui-inactive); }
-.quarter-btn.unavailable, .quarter-btn.detected { pointer-events: none; }
-.quarter-hint { margin-top: 11px; }
-.quarter-hint:empty { display: none; }
-
-.slider-value { min-width: 30px; text-align: right; }
-
-.main-panel { max-height: calc(100vh - 20px); overflow-y: auto; }
+/* pure-detect builds (no archive meta) show Detect in s2 mode only; archive
+   builds also gate it on coverage via inline display (config.js) */
+#main-panel:not(.mode-s2) .s2-only { display: none; }
 
 .detect-area .dd-btn, .detect-progress { width: 100%; padding: 5px 6px; }
 .detect-progress { position: relative; border-left: 1px solid var(--dd-ui-border); border-right: 1px solid var(--dd-ui-border); text-align: center; color: var(--dd-ui-text-secondary); }
 .detect-bar { position: absolute; left: 0; bottom: 0; height: 1px; width: 0%; background: var(--dd-ui-text); transition: width 0.3s ease; }
 
-/* --- key --- */
+/* local-worker detected quarters: greyed like dd-unavailable, display-only */
+.dd-dot-btn.detected .dd-dot { background: var(--dd-ui-inactive); }
+.dd-dot-btn.detected { pointer-events: none; }
 
-.key-panel { bottom: 0; left: 0; padding: 15px 15px 15px 30px; display: flex; flex-direction: column; gap: 25px; min-width: 105px; }
-/* hanging chevron per dd heading rule: -(chevron 8px + gap 11px) into the L padding */
-.key-head { display: flex; align-items: center; gap: 11px; cursor: pointer; user-select: none; }
-.key-head .dd-chevron { margin-left: -19px; }
-.key-items { margin-top: 15px; display: flex; flex-direction: column; gap: 9px; }
-.dd-key-row svg { width: 11px; height: auto; flex-shrink: 0; }
+/* --- detail card internals --- */
 
-/* --- info panel --- */
-
-.info-panel { top: 0; right: 0; width: 270px; max-height: calc(100vh - 20px); overflow-y: auto; display: none; }
-.info-panel.visible { display: flex; flex-direction: column; gap: 30px; }
-#info.collapsed > :not(.dd-head), #info.collapsed .info-stats { display: none; }
-.info-stats { margin-top: 11px; display: flex; flex-direction: column; gap: 6px; }
+.info-stats { display: flex; flex-direction: column; gap: 6px; }
 .info-stats div { display: flex; justify-content: space-between; }
 
 .intensity-chart:empty { display: none; }
@@ -79,30 +41,18 @@ a { color: inherit; text-decoration: underline; }
 .col-count, .event-meta-count { width: 32px; }
 .events-empty { color: var(--dd-ui-text-secondary); padding: 2px 7px; }
 
-/* --- about modal --- */
+/* --- intro modal extras: coverage worldmap + methods reveal --- */
 
-.modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal-content { position: relative; width: 420px; max-width: calc(100vw - 40px); max-height: calc(100vh - 40px); overflow-y: auto; display: flex; flex-direction: column; gap: 38px; }
-.modal-content .dd-gap { gap: 25px; }
-.region-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 25px; }
+.region-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 25px; margin-bottom: 14px; }
 .region-row .dd-secondary { margin-bottom: 6px; }
 .region-row svg { width: 170px; flex-shrink: 0; }
-.dd-intro-body p + p { margin-top: 14px; }
+.methods { margin-top: 14px; }
+.methods-head { display: flex; align-items: center; gap: 11px; cursor: pointer; user-select: none; }
 .methods-list { margin-top: 15px; }
 .methods-list p + p { margin-top: 6px; }
-.enter-btn { padding: 5px 6px; }
-
-/* dd key rule: groups go side by side rather than overlap the main panel */
-@media (max-height: 960px) and (min-width: 769px) {
-    .key-panel { flex-direction: row; gap: 38px; }
-}
 
 /* --- mobile --- */
 
 @media (max-width: 768px) {
-    .main-panel { width: 210px; }
-    #world-map { display: none; }
-    .key-panel { bottom: auto; top: 0; right: 0; left: auto; }
-    .info-panel { top: auto; bottom: 0; left: 0; right: 0; width: 100%; max-height: 45vh; }
-    .intensity-chart, .panel-actions, .dd-logo { display: none; }
+    .intensity-chart, .panel-actions { display: none; }
 }

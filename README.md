@@ -17,10 +17,12 @@ Three views of one map:
 The detector, clusterer and quality score are the s2-flares methodology core
 (github.com/data-desk-eco/s2-flares), Rust compiled to wasm and vendored in
 web/s2/ — the in-browser path produces the same results as the archive run.
-The UI is the data desk design system, vendored in web/vendor/dd/; the generic
-map shell (web/map.js, web/quarters.js) is kept separate from the burnoff
-modules (app.js, detect.js, card.js) so future full-screen remote-sensing maps
-can reuse it directly.
+The app is a cartograph consumer (~/Tools/cartograph, vendored in
+web/vendor/cartograph/): web/config.js is the declarative map config passed to
+mount(), and the burnoff-specific behaviour lives in the hook modules it wires
+in (card.js, detect.js, vnf.js, s2archive.js, clustering.js, render.js). The
+shell, key, quarter picker, sliders, detail panel and permalinks are all
+cartograph's, which in turn encodes the data desk design system (vendor/dd/).
 
 Zero npm dependencies: MapLibre GL, geotiff.js, DuckDB-WASM and the wasm core
 are vendored; the rest (CRDT, WebRTC mesh, IndexedDB, UTM math, signaling) is
