@@ -16,11 +16,6 @@ import { setTerminals, archiveFeature, enrichVNFFeatures } from './clustering.js
 // Build config (index.html meta tags) + mode state ('s2' or 'vnf')
 // ---------------------------------------------------------------------------
 
-maplibregl.addProtocol('pmtiles', new pmtiles.Protocol().tile);
-
-const OGIM_BUCKET = document.querySelector('meta[name="ogim-bucket"]')?.content;
-const OGIM_URL = OGIM_BUCKET ? `${OGIM_BUCKET}/ogim.pmtiles` : 'data/ogim.pmtiles';
-
 // VNF parquet lives in the shared s2-flares CloudFerro archive at a stable key
 // (vnf/data.parquet) — public-read, DuckDB range-reads it remotely. Set via
 // <meta name="vnf-url">; localhost (or an unset url) falls back to a local build.
@@ -360,9 +355,8 @@ function switchMode(mode) {
     updateCirclePaint();
 }
 
-// Key panel: intensity ramp + infrastructure sections, collapsible, with the
-// OGIM rows doubling as layer toggles (inactive rows grey out).
-const _keyState = { open: true, ogim: false, pipes: false };
+// Key panel: intensity ramp + infrastructure sections, collapsible.
+const _keyState = { open: true };
 function updateLegend() {
     document.getElementById('key-panel').innerHTML = buildKeyHTML(modeConf(), _keyState);
 }
@@ -372,21 +366,12 @@ function updateCirclePaint() {
     map.setLayoutProperty('client-detection-circles', 'icon-image', markIconExpr(modeConf()));
 }
 
-// Key panel: whole-legend collapse + OGIM layer toggles (delegated — rebuilt on mode switch)
+// Key panel: whole-legend collapse (delegated — rebuilt on mode switch)
 document.getElementById('key-panel').addEventListener('click', e => {
     if (e.target.closest('.key-head')) {
         _keyState.open = !_keyState.open;
-        return updateLegend();
+        updateLegend();
     }
-    const t = e.target.closest('.key-toggle');
-    if (!t) return;
-    const name = t.dataset.layer;
-    const on = (_keyState[name] = !_keyState[name]);
-    const ids = name === 'ogim' ? ['ogim-facilities', 'ogim-wells'] : ['ogim-pipelines'];
-    for (const id of ids) {
-        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-    }
-    updateLegend();
 });
 
 // Key needs the inline marking svgs before first render.
@@ -445,7 +430,7 @@ map.on('load', () => {
 
     // Preload the marking images every layer references.
     [`flare-${RAMP[0]}`, `flare-${RAMP[1]}`, `flare-${RAMP[2]}`,
-     'triangle-#FFFFFF', 'square-#FFFFFF', 'highlight-#FFFFFF'].forEach(id => ensureMark(map, id));
+     'triangle-#FFFFFF', 'highlight-#FFFFFF'].forEach(id => ensureMark(map, id));
 
     // LNG terminal dots: triangle marking = structure, with a generous hit area
     fetch('terminals.geojson').then(r => r.json()).then(geojson => {
@@ -477,59 +462,6 @@ map.on('load', () => {
             `<span class="dd-title">${p.name}</span><br>${p.country} · ${p.type}<br>` +
             (p.capacity_mtpa ? `${p.capacity_mtpa} mtpa` : '—'));
     });
-
-    // OGIM infrastructure overlay (PMTiles vector tiles), toggled from the key
-    try {
-        map.addSource('ogim', { type: 'vector', url: `pmtiles://${OGIM_URL}`, maxzoom: 14 });
-        const ogimBefore = map.getLayer('lng-terminal-hitarea') ? 'lng-terminal-hitarea' : undefined;
-
-        map.addLayer({
-            id: 'ogim-pipelines',
-            type: 'line',
-            source: 'ogim',
-            'source-layer': 'pipelines',
-            minzoom: 6,
-            layout: { visibility: 'none' },
-            paint: {
-                'line-color': '#808080',
-                'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 14, 1.5]
-            }
-        }, ogimBefore);
-
-        map.addLayer({
-            id: 'ogim-facilities',
-            type: 'symbol',
-            source: 'ogim',
-            'source-layer': 'facilities',
-            minzoom: 6,
-            layout: {
-                visibility: 'none',
-                'icon-image': 'square-#FFFFFF',
-                'icon-allow-overlap': true,
-                'icon-ignore-placement': true,
-                'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.4, 12, 0.6, 16, 0.9]
-            },
-            paint: { 'icon-opacity': 0.8 }
-        }, ogimBefore);
-
-        map.addLayer({
-            id: 'ogim-wells',
-            type: 'symbol',
-            source: 'ogim',
-            'source-layer': 'wells',
-            minzoom: 8,
-            layout: {
-                visibility: 'none',
-                'icon-image': 'square-#FFFFFF',
-                'icon-allow-overlap': true,
-                'icon-ignore-placement': true,
-                'icon-size': ['interpolate', ['linear'], ['zoom'], 8, 0.25, 12, 0.4, 16, 0.6]
-            },
-            paint: { 'icon-opacity': 0.5 }
-        }, ogimBefore);
-    } catch (e) {
-        console.warn('OGIM layers not available:', e.message);
-    }
 
     // Selection: heavy-stroke empty highlight box marking around the resolved poi
     map.addSource('selection-highlight', {

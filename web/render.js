@@ -86,27 +86,22 @@ export const ICON_SIZE = ['interpolate', ['linear'], ['zoom'], 2, 0.55, 10, 0.8,
 
 // inline svg text per marking (dd markSVG), tinted via css color on the wrapper
 const MARKS = {};
-export function loadMarks(names = ['flare', 'triangle', 'square']) {
+export function loadMarks(names = ['flare', 'triangle']) {
     return Promise.all(names.map(async n => MARKS[n] = await markSVG(n)));
 }
 
 const CHEV = open => `<span class="dd-chevron${open ? '' : ' dd-chevron-down'}"></span>`;
 const mark = (name, color) => `<span style="color:${color};display:flex">${MARKS[name] || ''}</span>`;
-const row = (icon, label, layer, on = true) =>
-    `<div class="dd-key-row${on ? '' : ' dd-inactive'}${layer ? ' key-toggle' : ''}"${layer ? ` data-layer="${layer}"` : ''}>${icon}${label}</div>`;
+const row = (icon, label) => `<div class="dd-key-row">${icon}${label}</div>`;
 
 // Build key HTML: intensity ramp section + infrastructure section (pdf:85).
-// state: { open, ogim, pipes } — one chevron collapses the whole legend;
+// state: { open } — one chevron collapses the whole legend;
 // both group labels toggle it too
 export function buildKeyHTML(cfg, state) {
     const stops = [...cfg.stops].reverse();
     const ramp = stops.map((v, i) =>
         row(mark('flare', RAMP[2 - i]), i === 0 ? `${cfg.formatStop(v)}+` : cfg.formatStop(v))).join('');
-    const line = `<svg width="13" height="13" viewBox="0 0 13 13"><line x1="0" y1="6.5" x2="13" y2="6.5" stroke="currentColor"/></svg>`;
-    const infra =
-        row(mark('triangle', DD.white), 'LNG') +
-        row(mark('square', DD.white), 'OGIM infra.', 'ogim', state.ogim) +
-        row(line, 'Pipelines', 'pipes', state.pipes);
+    const infra = row(mark('triangle', DD.white), 'LNG');
     const section = (label, items, chev = '') =>
         `<div class="key-section"><div class="key-head">${chev}<span class="dd-secondary">${label}</span></div>` +
         (state.open ? `<div class="key-items">${items}</div>` : '') + '</div>';

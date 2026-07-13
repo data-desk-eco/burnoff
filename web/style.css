@@ -54,8 +54,6 @@ a { color: inherit; text-decoration: underline; }
 .key-head .dd-chevron { margin-left: -19px; }
 .key-items { margin-top: 15px; display: flex; flex-direction: column; gap: 9px; }
 .dd-key-row svg { width: 11px; height: auto; flex-shrink: 0; }
-.dd-key-row.dd-inactive svg { opacity: 0.4; }
-.key-toggle { cursor: pointer; }
 
 /* --- info panel --- */
 

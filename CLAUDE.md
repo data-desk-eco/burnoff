@@ -92,7 +92,7 @@ clustering.js) so future remote-sensing maps can lift the shell wholesale.
 ```
 web/
   app.js              Burnoff orchestrator: mode switching (S2/VNF), map layers
-                      (detections, terminals, OGIM), legend, sliders, deep links
+                      (detections, terminals), legend, sliders, deep links
   map.js              GENERIC dd map shell: dark basemap + globe + on-demand
                       markings, satellite underlay, worldmap widgets, hover
                       popups, panel collapse, viewport bbox helpers
