@@ -4,7 +4,7 @@ Client-side Sentinel-2 SWIR flare detection with P2P sync, plus a
 VIIRS Nightfire (VNF) mode for browsing EOG's satellite flare catalog.
 
 Zero npm dependencies. The only external libraries are MapLibre GL (map
-rendering), geotiff.js (COG reads), DuckDB-WASM (Parquet queries), and the
+rendering), geotiff.js (COG reads), hyparquet (parquet reads, pure js), and the
 s2-flares rust core compiled to wasm (the flare detector) — all vendored under
 `web/vendor/` and `web/s2/`. Everything else — CRDT, WebRTC mesh, sync protocol,
 IndexedDB persistence, UTM projection math, and the signal server's WebSocket
@@ -31,7 +31,7 @@ framing — is hand-rolled using web standards.
  └──────────┼───────────┘                 └──────────┼───────────┘
             │ HTTP range requests                    │
             ▼                                        ▼
-     Element84 STAC API          DuckDB-WASM
+     Element84 STAC API          hyparquet
      Sentinel-2 L2A COGs         VNF Parquet (CloudFerro archive)
      (B12, B11, B8A, SCL)
 ```
@@ -41,7 +41,7 @@ straight from the CloudFerro public parquet archive (s2-flares `box.sh publish`)
 The archive co-produces a derived cluster view partitioned by MGRS tile,
 `clusters/mgrs=<tile>/data.parquet` — one row per cluster (scalar score columns +
 a nested `detections` list). `web/s2archive.js` enumerates those per-tile objects
-from the bucket listing, then range-reads with DuckDB-WASM **only the tiles the
+from the bucket listing, then range-reads with hyparquet **only the tiles the
 viewport overlaps** — each tile's parquet is loaded once, lazily, and cached;
 viewports are served from those cached tiles (bbox + date-overlap filter), so a
 far-out or uncovered viewport fetches nothing. `archiveFeature` maps a row straight
@@ -50,7 +50,7 @@ client-side but the server-side clustering is not re-run. The in-browser COG det
 button) is the fallback for areas not yet archived: it runs the s2-flares rust core
 compiled to wasm (`web/s2/wasm/`), the SAME binary methodology as the server-side
 archive — there is no JS detector port (it drifted from the core and was removed; the
-app already hard-depends on wasm via DuckDB-WASM, so wasm-or-nothing loses no reach).
+app hard-depends on wasm for detection anyway, so wasm-or-nothing loses no reach).
 Peers share a single CRDT document, idle peers read
 the job from awareness state, partition blocks by hash, and process their share,
 merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**
@@ -58,7 +58,7 @@ merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**
 sits outside the archive's coverage — a pure-archive session never fetches it. The
 archive base is set via `<meta name="s2-archive">` in index.html.
 
-**VNF mode:** DuckDB-WASM queries a pre-built Parquet file containing per-flare
+**VNF mode:** hyparquet reads a pre-built Parquet file containing per-flare
 daily observations from EOG profile CSVs. In production it lives in the shared
 s2-flares CloudFerro archive at `vnf/data.parquet` (`<meta name="vnf-url">`); dev
 falls back to a local `web/vnf.parquet`. Each row has `clear`/`detected` booleans
@@ -107,11 +107,8 @@ web/
   vendor/dd/          Vendored data desk design system dist (map.css, style.dark.json,
                       markings, palette, worldmap) from ~/Tools/design
   clustering.js       Terminal grid + archive/VNF feature builders
-  duckdb.js           Shared DuckDB-WASM bootstrap (openDuckDB) for vnf +
-                      archive: remote row-group range reads, distinct from
-                      cartograph's fetch-whole data.js (unused here)
-  vnf.js              VNF data module: DuckDB-WASM Parquet queries
-  s2archive.js        S2 archive reader: DuckDB-WASM over the cluster parquet
+  vnf.js              VNF data module: hyparquet reads + per-flare aggregation
+  s2archive.js        S2 archive reader: hyparquet over the cluster parquet
   detect-worker.js    Module Web Worker: wasm block detector + COG I/O
   s2/                 The s2-flares methodology core, adopted in-tree (no submodule):
                       stac/cog/geo I/O + cluster/score JS + the rust core compiled to
@@ -145,7 +142,7 @@ test/
 | MapLibre GL 5.1 | WebGL map rendering | Vendored (`web/vendor/`) |
 | geotiff.js 2.1 | Cloud Optimized GeoTIFF reads | Vendored in `web/s2/vendor/` (ESM, one copy) |
 | s2-flares wasm 2.0 | Block flare detector (rust core) | Vendored in `web/s2/wasm/` |
-| DuckDB-WASM 1.29 | VNF + S2-archive Parquet queries | Vendored (`web/vendor/duckdb/`) |
+| hyparquet 1.26 | VNF + S2-archive Parquet reads | Vendored (`web/vendor/hyparquet/`) |
 
 Everything else uses browser/Node.js builtins:
 WebRTC, IndexedDB, Web Workers, Fetch, Canvas, WebSocket,

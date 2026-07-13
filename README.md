@@ -8,7 +8,7 @@ In-browser Sentinel-2 gas-flare detection, on a map.
 Three views of one map:
 
   - S2 (default): precomputed flare clusters from the s2-flares CloudFerro
-    archive, range-read over HTTP with DuckDB-WASM.
+    archive, range-read over HTTP with hyparquet.
   - Detect (outside archive coverage): downloads Sentinel-2 L2A COGs from the
     Element84 STAC catalogue and runs the detector in a Web Worker; connected
     peers split the work over WebRTC and merge results in a CRDT.
@@ -24,7 +24,7 @@ in (card.js, detect.js, vnf.js, s2archive.js, clustering.js, render.js). The
 shell, key, quarter picker, sliders, detail panel and permalinks are all
 cartograph's, which in turn encodes the data desk design system (vendor/dd/).
 
-Zero npm dependencies: MapLibre GL, geotiff.js, DuckDB-WASM and the wasm core
+Zero npm dependencies: MapLibre GL, geotiff.js, hyparquet and the wasm core
 are vendored; the rest (CRDT, WebRTC mesh, IndexedDB, UTM math, signaling) is
 browser/Node.js builtins. Production signaling is a Cloudflare Durable Object
 (signal/worker.js).

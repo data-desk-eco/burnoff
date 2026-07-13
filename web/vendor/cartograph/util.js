@@ -92,7 +92,7 @@ export const dateInQuarters = (dateStr, keys) => !keys.size || keys.has(quarterO
 export const tpl = (t, esc = escapeHtml) => p => t.replace(/\{(\w+)\}/g, (_, k) => esc(p[k] ?? '—'));
 
 // string hover/detail templates, `prop` shorthands for filter/key equality
-// predicates, sources defaulted from the data files (SELECT *), table rows
+// predicates, sources defaulted from the data files (full read), table rows
 // named by source id
 export function compileConfig(config) {
     for (const l of config.layers || [])
@@ -110,13 +110,8 @@ export function compileConfig(config) {
     }
     for (const t of config.table || [])
         if (typeof t.rows === 'string') { const id = t.rows; t.rows = ctx => ctx.sources[id].features.map(f => f.properties); }
-    config.sources ??= async ({ query, need, fc }) => {
-        const names = Object.keys(config.data?.files || {});
-        await need(...names);
-        const out = {};
-        for (const n of names) out[n] = fc(await query(`SELECT * FROM '${n}.parquet'`));
-        return out;
-    };
+    config.sources ??= async ({ read, fc }) => Object.fromEntries(await Promise.all(
+        Object.keys(config.data?.files || {}).map(async n => [n, fc(await read(n))])));
     return config;
 }
 

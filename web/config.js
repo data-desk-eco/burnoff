@@ -1,6 +1,6 @@
 // burnoff on cartograph — this config plus the hook modules: render.js (mode
 // look-up tables + ramp), card.js (detail card body), detect.js (local detect
-// + p2p, lazy), s2archive.js / vnf.js (duckdb parquet readers) and
+// + p2p, lazy), s2archive.js / vnf.js (hyparquet parquet readers) and
 // clustering.js (feature builders). two data modes share one detection layer:
 // s2 (archive clusters, detect fallback) and vnf (viirs nightfire).
 
@@ -24,14 +24,14 @@ if (/^#vnf\/\d+$/.test(location.hash))
 // ---------------------------------------------------------------------------
 
 // vnf parquet lives in the shared s2-flares CloudFerro archive at a stable key
-// (vnf/data.parquet) — public-read, duckdb range-reads it remotely. set via
+// (vnf/data.parquet) — public-read, hyparquet range-reads it remotely. set via
 // <meta name="vnf-url">; localhost (or an unset url) falls back to a local build.
 const VNF_URL = document.querySelector('meta[name="vnf-url"]')?.content || '';
 const vnfUrl = () => (location.hostname === 'localhost' || !VNF_URL) ? 'vnf.parquet' : VNF_URL;
 
 // s2 mode reads the precomputed cluster view straight from the CloudFerro parquet
 // archive (s2-flares `box.sh publish`); the in-browser COG worker ("Detect")
-// stays as the fallback for areas not yet archived. warm duckdb + the archive
+// stays as the fallback for areas not yet archived. warm the archive
 // cache at page parse, overlapping maplibre init.
 const S2_ARCHIVE = document.querySelector('meta[name="s2-archive"]')?.content || '';
 if (S2_ARCHIVE) initS2Archive(S2_ARCHIVE);

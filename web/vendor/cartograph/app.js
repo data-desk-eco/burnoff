@@ -5,7 +5,7 @@
 // common fields declarative forms so simple maps ship no js at all.
 
 import { createMap, addSatellite, wireWorldmap, wireCollapse, hoverPopup } from './shell.js';
-import { initData, need, query, fc } from './data.js';
+import { initData, read, meta, fc } from './data.js';
 import { buildShell, initKey, wireSliders } from './ui.js';
 import { initQuarters } from './quarters.js';
 import { initDetail } from './detail.js';
@@ -69,7 +69,7 @@ export async function mount(config) {
     if (config.search) wireSearch(map);
     if (config.data) initData(config.data);
 
-    const ctx = { map, config, query, need, fc, sources: {} };
+    const ctx = { map, config, read, meta, fc, sources: {} };
     if (config.quarters) ctx.quarters = initQuarters(document.getElementById('quarters'),
         () => config.quarters.onChange?.(ctx), config.quarters.years);
     wireSliders(config, ctx);

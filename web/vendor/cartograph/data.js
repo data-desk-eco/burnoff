@@ -1,69 +1,76 @@
-// duckdb-wasm parquet backend (expected as a sibling vendor dir: ../duckdb/).
-// parquet exports sized for the browser are fetched whole and registered as
-// buffers; queries come back as plain row objects. the host page needs the
-// importmap that remaps the duckdb bundle's /npm/... imports (see example/).
+// pure-js parquet backend (hyparquet + decompressors, expected as a sibling
+// vendor dir: ../hyparquet/). no wasm, no worker: relative paths are fetched
+// whole; absolute http(s) urls are range-read — the footer first, then only
+// the row groups a read touches (override per call with {range}).
 
-const DUCKDB = new URL('../duckdb/', import.meta.url).href;
+const HYP = new URL('../hyparquet/', import.meta.url).href;
 
-let db, conn, opening;
-const registered = new Map();   // name -> promise resolving once queryable
-const prefetched = new Map();   // name -> arraybuffer promise
+let lib;   // hyparquet + compressors module namespace, loaded on first open
+const load = () => lib ??= Promise.all(
+    [import(`${HYP}hyparquet.mjs`), import(`${HYP}hyparquet-compressors.mjs`)]
+).then(([h, c]) => ({ ...h, ...c }));
+
 let files = {};
+const opened = new Map();   // url -> promise<{h, file, meta}>
 
-// start prefetching listed parquets at once (before the wasm is even loaded)
+// start opening listed parquets at once (fetch before the first read needs them)
 export function initData({ files: f = {}, prefetch = [] } = {}) {
     files = f;
-    for (const n of prefetch) prefetched.set(n, fetch(files[n]).then(r => r.arrayBuffer()));
-    opening ??= open();
-    return opening;
+    for (const n of prefetch) open(files[n]);
 }
 
-async function open() {
-    const duckdb = await import(`${DUCKDB}duckdb-browser.mjs`);
-    // absolute url — the worker runs in a blob context
-    const blob = new Blob([`importScripts("${DUCKDB}duckdb-browser-eh.worker.js");`], { type: 'text/javascript' });
-    db = new duckdb.AsyncDuckDB({ log: () => {} }, new Worker(URL.createObjectURL(blob)));
-    await db.instantiate(`${DUCKDB}duckdb-eh.wasm`);
-    conn = await db.connect();
+function open(url, range = /^https?:/i.test(url)) {
+    return opened.get(url) ?? opened.set(url, (async () => {
+        const h = await load();
+        const file = range ? h.cachedAsyncBuffer(await h.asyncBufferFromUrl({ url }))
+                           : await fetch(url).then(r => r.arrayBuffer());
+        return { h, file, meta: await h.parquetMetadataAsync(file) };
+    })()).get(url);
 }
 
-// ensure parquets are registered before querying them — no-ops when loaded.
-// sql references them by name: `SELECT … FROM 'plumes.parquet'`
-export function need(...names) {
-    return Promise.all(names.map(n => registered.get(n) ?? registered.set(n, (async () => {
-        const buf = await (prefetched.get(n) ?? fetch(files[n]).then(r => r.arrayBuffer()));
-        await opening;
-        await db.registerFileBuffer(`${n}.parquet`, new Uint8Array(buf));
-    })()).get(n)));
+// parquet footer metadata (row groups, column stats) — for remote urls this
+// costs only the footer bytes
+export const meta = (name, { range } = {}) => open(files[name] ?? name, range).then(o => o.meta);
+
+// read rows as plain objects; `name` is a data.files key or a url.
+// opts.where {col: [min, max]} (either bound nullable) prunes row groups via
+// footer stats then filters rows; opts.columns limits the columns read
+export async function read(name, { columns, where, range } = {}) {
+    const { h, file, meta } = await open(files[name] ?? name, range);
+    const parts = await Promise.all(spans(meta, where).map(([rowStart, rowEnd]) =>
+        h.parquetReadObjects({ file, compressors: h.compressors, columns, rowStart, rowEnd })));
+    const rows = parts.flat().map(norm);
+    return where ? rows.filter(r => matches(r, where)) : rows;
 }
 
-export async function query(sql) {
-    await opening;
-    return rows(await conn.query(sql));
-}
+// bigints -> numbers, dates -> iso strings (date-only at utc midnight),
+// recursing into nested lists/structs
+export const norm = v =>
+    typeof v === 'bigint' ? Number(v)
+    : v instanceof Date ? v.toISOString().replace('T00:00:00.000Z', '')
+    : Array.isArray(v) ? v.map(norm)
+    : v && typeof v === 'object' && !ArrayBuffer.isView(v)
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, norm(x)]))
+    : v;
 
-// arrow result -> plain row objects. `col.toArray()` returns the raw typed
-// buffer and does NOT apply arrow's null bitmap, so null slots in numeric
-// columns surface as garbage — carry the vector for nullable columns and emit
-// real nulls via isValid(). bigints downcast to Number; nested values (list
-// columns) come back as arrays via toJSON.
-export function rows(result) {
-    const n = result.numRows;
-    if (n === 0) return [];
-    const columns = result.schema.fields.map(f => {
-        const col = result.getChild(f.name);
-        return { name: f.name, col, arr: col.toArray(), nullable: col.nullCount > 0 };
-    });
-    const out = new Array(n);
-    for (let i = 0; i < n; i++) {
-        const obj = {};
-        for (const { name, col, arr, nullable } of columns) {
-            let v = nullable && !col.isValid(i) ? null : arr[i];
-            if (typeof v === 'bigint') v = Number(v);
-            else if (v && typeof v === 'object' && typeof v.toJSON === 'function') v = v.toJSON();
-            obj[name] = v;
-        }
-        out[i] = obj;
+export const matches = (r, where) => Object.entries(where).every(([c, [lo, hi]]) =>
+    r[c] != null && (lo == null || r[c] >= lo) && (hi == null || r[c] <= hi));
+
+// [rowStart, rowEnd] spans of the row groups whose column stats may overlap
+// `where`, adjacent survivors merged into one contiguous read; groups without
+// stats are kept
+export function spans(meta, where = {}) {
+    const out = [];
+    let row = 0;
+    for (const g of meta.row_groups) {
+        const n = Number(g.num_rows);
+        const hit = Object.entries(where).every(([c, [lo, hi]]) => {
+            const s = g.columns.find(x => x.meta_data?.path_in_schema[0] === c)?.meta_data?.statistics;
+            return s?.min_value == null
+                || ((hi == null || norm(s.min_value) <= hi) && (lo == null || norm(s.max_value) >= lo));
+        });
+        if (hit) out.at(-1)?.[1] === row ? out.at(-1)[1] = row + n : out.push([row, row + n]);
+        row += n;
     }
     return out;
 }

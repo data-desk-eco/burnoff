@@ -1,107 +1,70 @@
-// VNF (VIIRS Nightfire) data module — queries a Parquet file (local or remote)
-// via vendored DuckDB-WASM. Zero npm dependencies.
+// VNF (VIIRS Nightfire) data module — reads a parquet file (local or remote)
+// through cartograph's hyparquet data layer: remote urls are range-read
+// (footer first, then only the row groups a query's bbox/date filter touches
+// via row-group stats), local paths are fetched whole. Zero npm dependencies.
 
-import { openDuckDB } from './duckdb.js';
+import { read, meta } from './vendor/cartograph/data.js';
+import { quarterOf } from './vendor/cartograph/util.js';
 
-let conn = null;
-let _initPromise = null;
-let _ready = false;
-let _parquetUrl = null;
+let _url = null, _initPromise = null, _ready = false;
 
 export function isReady() { return _ready; }
 
+const COLS = ['flare_id', 'lat', 'lon', 'date', 'clear', 'detected', 'rh_mw', 'temp_k',
+              'type', 'category', 'country', 'facility_type', 'facility_name'];
+
 /**
- * Initialize DuckDB-WASM and register the VNF parquet file.
+ * Initialize the VNF parquet: open it (remote: footer bytes only) so
+ * queries can range-read row groups.
  * @param {string} url - URL or local path to the parquet file
  */
-export async function initVNF(url) {
-    if (_initPromise) return _initPromise;
-    _parquetUrl = url;
-    _initPromise = _init(url);
-    return _initPromise;
+export function initVNF(url) {
+    return _initPromise ??= meta(_url = url).then(() => { _ready = true; });
 }
 
 /** Reset state so initVNF can be called again with a different URL. */
 export function resetVNF() {
     _initPromise = null;
     _ready = false;
-    _parquetUrl = null;
-    conn = null;
+    _url = null;
 }
 
-async function _init(url) {
-    ({ conn } = await openDuckDB(url));
-    _ready = true;
-}
-
-// Per-site aggregation shared by the viewport and single-flare queries: daily
-// rows grouped to one row per flare with clear/detected counts and an ordered
-// detection list.
-const siteQuery = where => `
-    SELECT
-        flare_id,
-        FIRST(lat) AS lat,
-        FIRST(lon) AS lon,
-        COUNT(*) AS total_dates,
-        COUNT(*) FILTER (WHERE clear) AS clear_dates,
-        COUNT(*) FILTER (WHERE detected) AS detection_dates,
-        AVG(rh_mw) FILTER (WHERE detected) AS avg_rh,
-        MAX(rh_mw) FILTER (WHERE detected) AS max_rh,
-        FIRST(type) FILTER (WHERE type != '') AS type,
-        FIRST(category) FILTER (WHERE category != '') AS category,
-        FIRST(country) FILTER (WHERE country != '') AS country,
-        FIRST(facility_type) FILTER (WHERE facility_type != '') AS facility_type,
-        FIRST(facility_name) FILTER (WHERE facility_name != '') AS facility_name,
-        LIST(struct_pack(
-            date := CAST(date AS VARCHAR),
-            rh_mw := rh_mw,
-            temp_k := temp_k
-        ) ORDER BY date) FILTER (WHERE detected) AS detections
-    FROM '${_parquetUrl}'
-    WHERE ${where}
-    GROUP BY flare_id`;
-
-// Map a duckdb result to GeoJSON features (arrow rows/lists → plain objects)
-function rowFeatures(result) {
-    const features = [];
-    for (let i = 0; i < result.numRows; i++) {
-        const row = result.get(i);
-
-        const detections = [];
-        const rawDets = row.detections;
-        if (rawDets) {
-            for (let j = 0; j < rawDets.length; j++) {
-                const d = typeof rawDets.get === 'function' ? rawDets.get(j) : rawDets[j];
-                if (!d) continue;
-                const obj = typeof d.toJSON === 'function' ? d.toJSON() : d;
-                detections.push({
-                    date: formatDuckDate(obj.date),
-                    rh_mw: Number(obj.rh_mw) || 0,
-                    temp_k: Number(obj.temp_k) || 0
-                });
-            }
-        }
-
-        features.push({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [Number(row.lon), Number(row.lat)] },
-            properties: {
-                flare_id: Number(row.flare_id),
-                type: String(row.type || ''),
-                category: String(row.category || ''),
-                country: String(row.country || ''),
-                facility_type: String(row.facility_type || ''),
-                facility_name: String(row.facility_name || ''),
-                total_dates: Number(row.total_dates) || 0,
-                clear_dates: Number(row.clear_dates) || 0,
-                detection_dates: Number(row.detection_dates) || 0,
-                avg_rh: Number(row.avg_rh),
-                max_rh: Number(row.max_rh),
-                detections
-            }
+// Per-site aggregation shared by the viewport and single-flare queries (the
+// old duckdb GROUP BY in js): daily rows grouped to one feature per flare with
+// clear/detected counts, first non-empty labels and an ordered detection list.
+function siteFeatures(rows, { detectedOnly = false } = {}) {
+    const by = new Map();
+    for (const r of rows) {
+        let s = by.get(r.flare_id);
+        if (!s) by.set(r.flare_id, s = {
+            flare_id: Number(r.flare_id), lat: Number(r.lat), lon: Number(r.lon),
+            type: '', category: '', country: '', facility_type: '', facility_name: '',
+            total_dates: 0, clear_dates: 0, detection_dates: 0, avg_rh: 0, max_rh: 0, detections: [],
         });
+        s.total_dates++;
+        if (r.clear) s.clear_dates++;
+        if (r.detected) {
+            s.detection_dates++;
+            s.avg_rh += Number(r.rh_mw) || 0;
+            s.max_rh = Math.max(s.max_rh, Number(r.rh_mw) || 0);
+            s.detections.push({ date: String(r.date).slice(0, 10), rh_mw: Number(r.rh_mw) || 0, temp_k: Number(r.temp_k) || 0 });
+        }
+        for (const k of ['type', 'category', 'country', 'facility_type', 'facility_name']) s[k] ||= r[k] || '';
     }
-    return { type: 'FeatureCollection', features };
+    const sites = [...by.values()].filter(s => !detectedOnly || s.detection_dates > 0)
+        .sort((a, b) => b.max_rh - a.max_rh);
+    return {
+        type: 'FeatureCollection',
+        features: sites.map(({ lat, lon, detections, ...p }) => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lon, lat] },
+            properties: {
+                ...p,
+                avg_rh: p.detection_dates ? p.avg_rh / p.detection_dates : 0,
+                detections: detections.sort((a, b) => a.date < b.date ? -1 : 1),
+            },
+        })),
+    };
 }
 
 /**
@@ -109,15 +72,11 @@ function rowFeatures(result) {
  * Returns a GeoJSON FeatureCollection with per-site aggregated data.
  */
 export async function queryVNF(bbox, startDate, endDate) {
-    if (!conn) throw new Error('VNF not initialized');
+    if (!_ready) throw new Error('VNF not initialized');
     const [west, south, east, north] = bbox;
-    const result = await conn.query(siteQuery(`
-            lat BETWEEN ${south} AND ${north}
-        AND lon BETWEEN ${west} AND ${east}
-        AND date BETWEEN '${startDate}' AND '${endDate}'`) + `
-        HAVING COUNT(*) FILTER (WHERE detected) > 0
-        ORDER BY max_rh DESC`);
-    return rowFeatures(result);
+    const rows = await read(_url, { columns: COLS,
+        where: { lat: [south, north], lon: [west, east], date: [startDate, endDate] } });
+    return siteFeatures(rows, { detectedOnly: true });
 }
 
 /**
@@ -125,38 +84,17 @@ export async function queryVNF(bbox, startDate, endDate) {
  * Returns a GeoJSON FeatureCollection with 0 or 1 features.
  */
 export async function queryVNFFlare(flareId, startDate, endDate) {
-    if (!conn) throw new Error('VNF not initialized');
-    const result = await conn.query(siteQuery(`
-            flare_id = ${Number(flareId)}
-        AND date BETWEEN '${startDate}' AND '${endDate}'`));
-    return rowFeatures(result);
+    if (!_ready) throw new Error('VNF not initialized');
+    const rows = await read(_url, { columns: COLS,
+        where: { flare_id: [Number(flareId), Number(flareId)], date: [startDate, endDate] } });
+    return siteFeatures(rows);
 }
 
 /** Set of `year_quarter` keys with any detection in the viewport over [start,end]. */
 export async function availableQuartersVNF(bbox, startDate, endDate) {
-    if (!conn) return new Set();
+    if (!_ready) return new Set();
     const [west, south, east, north] = bbox;
-    const result = await conn.query(`
-        SELECT DISTINCT year(date) AS y, quarter(date) AS q
-        FROM '${_parquetUrl}'
-        WHERE detected
-          AND lat BETWEEN ${south} AND ${north}
-          AND lon BETWEEN ${west} AND ${east}
-          AND date BETWEEN '${startDate}' AND '${endDate}'`);
-    const qs = new Set();
-    for (let i = 0; i < result.numRows; i++) {
-        const r = result.get(i);
-        qs.add(`${Number(r.y)}_${Number(r.q)}`);
-    }
-    return qs;
-}
-
-/** Format a DuckDB date value to YYYY-MM-DD string */
-function formatDuckDate(d) {
-    if (typeof d === 'string') return d.slice(0, 10);
-    if (d instanceof Date) return d.toISOString().slice(0, 10);
-    if (typeof d === 'number' || typeof d === 'bigint') {
-        return new Date(Number(d) * 86400000).toISOString().slice(0, 10);
-    }
-    return String(d).slice(0, 10);
+    const rows = await read(_url, { columns: ['lat', 'lon', 'date', 'detected'],
+        where: { lat: [south, north], lon: [west, east], date: [startDate, endDate], detected: [true, true] } });
+    return new Set(rows.map(r => quarterOf(r.date)));
 }

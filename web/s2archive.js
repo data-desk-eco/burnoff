@@ -3,21 +3,22 @@
 // The archive co-produces a derived cluster view partitioned by MGRS tile,
 // `clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
 // nested `detections` list). We enumerate those per-tile objects from the bucket
-// listing, then range-read only the tiles a viewport overlaps with vendored
-// DuckDB-WASM — each tile's parquet is loaded once, lazily, and cached. Viewports
-// are then served from those cached tiles (bbox + date-overlap filter). Zero npm deps.
+// listing, then range-read only the tiles a viewport overlaps through cartograph's
+// hyparquet data layer — each tile's parquet is loaded once, lazily, and cached.
+// Viewports are then served from those cached tiles (bbox + date-overlap filter).
+// Zero npm deps, no wasm.
 
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
-import { openDuckDB } from './duckdb.js';
+import { read, meta } from './vendor/cartograph/data.js';
 
-let conn = null, _initPromise = null, _base = '', _tiles = null, _coverage = null, _tilesPromise = null, _clusterTiles = null;
+let _ready = false, _initPromise = null, _base = '', _tiles = null, _coverage = null, _tilesPromise = null, _clusterTiles = null;
 const _tileCache = new Map();   // mgrs id -> Promise<cluster[]>
 const _bboxDone = new Set();    // tile ids whose bbox has been refined from footer stats
 const overlaps = ([w, s, e, n], [tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts;
 const PAD = 0.25;               // granule overhang slack (~25 km): a cluster anchor can sit outside its tile square
 const padBox = ([w, s, e, n]) => [w - PAD, s - PAD, e + PAD, n + PAD];
 
-export function isReady() { return !!conn; }
+export function isReady() { return _ready; }
 
 // MGRS 100km-square id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
 // Only a fallback bound for which per-tile cluster parquet a viewport overlaps: each
@@ -85,32 +86,31 @@ function loadTiles() {
 }
 
 // Refine the given tiles' bboxes to their TRUE data extent (min/max lon/lat of the
-// clusters each holds), read once from the parquet footer statistics — DuckDB answers
-// min/max from metadata alone, so this is footer-only range reads, not full scans. This
-// catches granule overhang (a cluster anchor can sit ~10 km outside its tile's square),
-// which a nominal-square filter would drop once the viewport zoomed past the square.
-// Refined per tile and cached (_bboxDone) so each footer is read AT MOST ONCE, and only
-// the handful of tiles near a viewport are touched — not the whole archive on first load.
-// On query failure the nominal square set in loadTiles remains as a (smaller) fallback.
+// clusters each holds), read once from the parquet footer statistics — footer-only
+// range reads, not full scans. This catches granule overhang (a cluster anchor can
+// sit ~10 km outside its tile's square), which a nominal-square filter would drop
+// once the viewport zoomed past the square. Refined per tile and cached (_bboxDone)
+// so each footer is read AT MOST ONCE, and only the handful of tiles near a viewport
+// are touched — not the whole archive on first load. On failure the nominal square
+// set in loadTiles remains as a (smaller) fallback.
 async function refineBboxes(tiles) {
-    const todo = tiles.filter(t => !_bboxDone.has(t.id));
-    if (!conn || !todo.length) return;
-    try {
-        const list = todo.map(t => `'${t.key}'`).join(',');
-        const res = await conn.query(`
-            SELECT regexp_extract(filename, 'mgrs=([0-9A-Z]+)', 1) AS mgrs,
-                   min(lon) AS w, min(lat) AS s, max(lon) AS e, max(lat) AS n
-            FROM read_parquet([${list}], filename = true) GROUP BY 1`);
-        const by = new Map();
-        for (let i = 0; i < res.numRows; i++) {
-            const r = res.get(i);
-            by.set(String(r.mgrs), [Number(r.w), Number(r.s), Number(r.e), Number(r.n)]);
-        }
-        for (const t of todo) { t.bbox = by.get(t.id) ?? t.bbox; _bboxDone.add(t.id); }
-    } catch (err) { console.error('S2 archive cluster-bbox stats failed:', err); }
+    await Promise.all(tiles.filter(t => !_bboxDone.has(t.id)).map(async t => {
+        try {
+            const md = await meta(t.key);
+            let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+            for (const g of md.row_groups) for (const c of g.columns) {
+                const p = c.meta_data?.path_in_schema[0], st = c.meta_data?.statistics;
+                if (!st || st.min_value == null) continue;
+                if (p === 'lon') { w = Math.min(w, st.min_value); e = Math.max(e, st.max_value); }
+                if (p === 'lat') { s = Math.min(s, st.min_value); n = Math.max(n, st.max_value); }
+            }
+            if (w <= e && s <= n) t.bbox = [w, s, e, n];
+            _bboxDone.add(t.id);
+        } catch (err) { console.error('S2 archive cluster-bbox stats failed:', err); }
+    }));
 }
 
-/** Init DuckDB-WASM and remember the archive base URL. */
+/** Remember the archive base URL and start the tile/coverage listing. */
 export function initS2Archive(base) {
     _base = base.replace(/\/$/, '');
     return _initPromise ??= _init();
@@ -118,37 +118,14 @@ export function initS2Archive(base) {
 
 async function _init() {
     loadTiles();   // fire-and-forget; isCovered assumes archived until the listing lands
-    ({ conn } = await openDuckDB());   // archive is always remote (https)
+    _ready = true;
 }
 
-const num = v => v == null ? null : Number(v);
-
-/** Load one MGRS tile's cluster parquet once, lazily, and cache it by tile id. */
+/** Load one MGRS tile's cluster parquet once, lazily, and cache it by tile id.
+ *  hyparquet + norm hand back numbers, iso date strings and nested detections
+ *  as plain objects directly. */
 function loadTile(t) {
-    if (!_tileCache.has(t.id)) _tileCache.set(t.id, (async () => {
-        const res = await conn.query(`
-            SELECT lon, lat, max_b12, avg_b12, detection_count, date_count,
-                   CAST(first_date AS VARCHAR) AS first_date, CAST(last_date AS VARCHAR) AS last_date,
-                   persistence, seasonal, ratio_score, persistence_score, glint_penalty,
-                   total_score, max_ratio, min_glint, glint_suspect, to_json(detections) AS detections
-            FROM read_parquet('${t.key}')`);
-        const out = [];
-        for (let i = 0; i < res.numRows; i++) {
-            const r = res.get(i);
-            out.push({
-                lon: Number(r.lon), lat: Number(r.lat),
-                max_b12: Number(r.max_b12), avg_b12: Number(r.avg_b12),
-                detection_count: Number(r.detection_count), date_count: Number(r.date_count),
-                first_date: String(r.first_date).slice(0, 10), last_date: String(r.last_date).slice(0, 10),
-                persistence: num(r.persistence), seasonal: !!r.seasonal,
-                ratio_score: num(r.ratio_score), persistence_score: num(r.persistence_score),
-                glint_penalty: num(r.glint_penalty), total_score: num(r.total_score),
-                max_ratio: num(r.max_ratio), min_glint: num(r.min_glint), glint_suspect: !!r.glint_suspect,
-                detections: JSON.parse(r.detections).map(d => ({ ...d, date: String(d.date).slice(0, 10) })),
-            });
-        }
-        return out;
-    })());
+    if (!_tileCache.has(t.id)) _tileCache.set(t.id, read(t.key));
     return _tileCache.get(t.id);
 }
 
@@ -171,7 +148,7 @@ async function loadViewport(bbox) {
  * cluster's [first_date, last_date]; the published scalar scores are passed through.
  */
 export async function queryS2Archive(bbox, startDate, endDate) {
-    if (!conn) throw new Error('S2 archive not initialized');
+    if (!_ready) throw new Error('S2 archive not initialized');
     const [w, s, e, n] = bbox;
     return (await loadViewport(bbox)).filter(c =>
         c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n &&
@@ -180,7 +157,7 @@ export async function queryS2Archive(bbox, startDate, endDate) {
 
 /** Set of `year_quarter` keys that have any detection in the viewport (all dates). */
 export async function availableQuartersS2(bbox) {
-    if (!conn) return new Set();
+    if (!_ready) return new Set();
     const [w, s, e, n] = bbox;
     const qs = new Set();
     for (const c of await loadViewport(bbox)) {
