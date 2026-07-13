@@ -16,10 +16,8 @@ import initWasm, { detectBlock as wasmDetectBlock } from './s2/wasm/s2_flares_wa
 
 // The block detector is the s2-flares rust core, compiled to wasm — the SAME
 // methodology the server-side archive run uses; STAC/COG I/O and clustering stay JS
-// (web/s2/). There is no JS fallback detector: the app already hard-depends on
-// WebAssembly (DuckDB-WASM powers the archive + VNF modes), so a parallel JS port
-// would only ever run when the rest of the app is already dead — and a silently
-// drifting copy is exactly how the in-browser pixel counts diverged from the core.
+// (web/s2/). There is no JS fallback detector: a silently drifting copy is
+// exactly how the in-browser pixel counts diverged from the core.
 let _wasmDetect = null;
 const _wasmReady = initWasm()
     .then(() => { _wasmDetect = wasmDetectBlock; })

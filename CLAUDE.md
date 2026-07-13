@@ -49,8 +49,7 @@ to the Feature shape `crossDateCluster` emits, so the avg-B12 slider gates
 client-side but the server-side clustering is not re-run. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
 button) is the fallback for areas not yet archived: it runs the s2-flares rust core
 compiled to wasm (`web/s2/wasm/`), the SAME binary methodology as the server-side
-archive — there is no JS detector port (it drifted from the core and was removed; the
-app hard-depends on wasm for detection anyway, so wasm-or-nothing loses no reach).
+archive — there is no JS detector port (it drifted from the core and was removed).
 Peers share a single CRDT document, idle peers read
 the job from awareness state, partition blocks by hash, and process their share,
 merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**

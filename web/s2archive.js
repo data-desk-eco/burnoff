@@ -10,19 +10,20 @@
 
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { read, meta } from './vendor/cartograph/data.js';
+import { quarterOf } from './vendor/cartograph/util.js';
 
-let _ready = false, _initPromise = null, _base = '', _tiles = null, _coverage = null, _tilesPromise = null, _clusterTiles = null;
+let _base = '', _tiles = null, _coverage = null, _tilesPromise = null, _clusterTiles = null;
 const _tileCache = new Map();   // mgrs id -> Promise<cluster[]>
 const _bboxDone = new Set();    // tile ids whose bbox has been refined from footer stats
 const overlaps = ([w, s, e, n], [tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts;
 const PAD = 0.25;               // granule overhang slack (~25 km): a cluster anchor can sit outside its tile square
 const padBox = ([w, s, e, n]) => [w - PAD, s - PAD, e + PAD, n + PAD];
 
-export function isReady() { return _ready; }
+export function isReady() { return !!_base; }
 
 // MGRS 100km-square id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
 // Only a fallback bound for which per-tile cluster parquet a viewport overlaps: each
-// tile's true data bbox comes from loadClusterBboxes() (footer stats), and the coverage
+// tile's true data bbox comes from refineBboxes() (footer stats), and the coverage
 // *display* + isCovered() come from the published coverage.geojson (the real scanned AOI
 // boxes) — neither the cluster loading nor the overlay relies on these nominal squares.
 const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
@@ -110,15 +111,11 @@ async function refineBboxes(tiles) {
     }));
 }
 
-/** Remember the archive base URL and start the tile/coverage listing. */
+/** Remember the archive base URL and start the tile/coverage listing (memoized;
+ *  isCovered assumes archived until the listing lands). */
 export function initS2Archive(base) {
     _base = base.replace(/\/$/, '');
-    return _initPromise ??= _init();
-}
-
-async function _init() {
-    loadTiles();   // fire-and-forget; isCovered assumes archived until the listing lands
-    _ready = true;
+    return loadTiles();
 }
 
 /** Load one MGRS tile's cluster parquet once, lazily, and cache it by tile id.
@@ -148,7 +145,7 @@ async function loadViewport(bbox) {
  * cluster's [first_date, last_date]; the published scalar scores are passed through.
  */
 export async function queryS2Archive(bbox, startDate, endDate) {
-    if (!_ready) throw new Error('S2 archive not initialized');
+    if (!_base) throw new Error('S2 archive not initialized');
     const [w, s, e, n] = bbox;
     return (await loadViewport(bbox)).filter(c =>
         c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n &&
@@ -157,15 +154,11 @@ export async function queryS2Archive(bbox, startDate, endDate) {
 
 /** Set of `year_quarter` keys that have any detection in the viewport (all dates). */
 export async function availableQuartersS2(bbox) {
-    if (!_ready) return new Set();
+    if (!_base) return new Set();
     const [w, s, e, n] = bbox;
     const qs = new Set();
-    for (const c of await loadViewport(bbox)) {
-        if (c.lon < w || c.lon > e || c.lat < s || c.lat > n) continue;
-        for (const d of c.detections) {
-            const q = Math.floor((+d.date.slice(5, 7) - 1) / 3) + 1;
-            qs.add(`${d.date.slice(0, 4)}_${q}`);
-        }
-    }
+    for (const c of await loadViewport(bbox))
+        if (c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n)
+            for (const d of c.detections) qs.add(quarterOf(d.date));
     return qs;
 }

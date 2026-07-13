@@ -49,6 +49,9 @@ export function initTable(ctx) {
         handle.style.right = w + 'px';
         ctx.map.setPadding({ right: w });
         document.getElementById('detail')?.style.setProperty('right', w ? w + 'px' : '');
+        // search box only once there's room for it beside the tabs (which
+        // keep their natural width — the css never stretches or shrinks them)
+        el('.cg-drawer-q').style.display = w < el('.dd-toggle').offsetWidth + 200 ? 'none' : '';
     };
 
     async function render() {
