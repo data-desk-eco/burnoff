@@ -107,7 +107,9 @@ a { color: inherit; text-decoration: underline; }
     .cg-main { width: 210px; }
     #worldmap { display: none; }
     .cg-key { bottom: auto; top: 0; right: 0; left: auto; }
-    .cg-detail { top: auto; bottom: 0; left: 0; right: 0; width: 100%; max-height: 45vh; }
+    /* width:auto so left+right size it inside the dd-panel 10px margins;
+       width:100% would override right:0 and overflow the viewport */
+    .cg-detail { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 45vh; }
     .dd-logo { display: none; }
     .cg-drawer, .cg-drawer-handle { display: none; }
 }
