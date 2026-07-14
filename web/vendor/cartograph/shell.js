@@ -75,13 +75,21 @@ export function boxesWorldmap(el, getBoxes, minSize) {
 
 // dd popup on hover: labels attach up-and-right of the marking (dd cartography
 // label rule). html(properties) returns the popup body; also shown on click
-// (touch). pass {click: false} to keep it hover-only.
+// (touch). pass {click: false} to keep it hover-only. hover layers register
+// per map so coincident features across layers show one popup (topmost wins).
+const hoverLayers = new WeakMap();
 export function hoverPopup(map, layer, html, { click = true } = {}) {
+    const layers = hoverLayers.get(map) || hoverLayers.set(map, []).get(map);
+    layers.push(layer);
     const popup = new maplibregl.Popup({
         closeButton: false, closeOnClick: false, className: 'dd-popup',
         anchor: 'bottom-left', offset: 10
     });
-    const show = e => popup.setLngLat(e.lngLat).setHTML(html(e.features[0].properties)).addTo(map);
+    const show = e => {
+        const top = map.queryRenderedFeatures(e.point, { layers })[0];
+        if (top?.layer.id !== layer) return popup.remove();
+        popup.setLngLat(e.lngLat).setHTML(html(top.properties)).addTo(map);
+    };
     map.on('mousemove', layer, e => { map.getCanvas().style.cursor = 'pointer'; show(e); });
     if (click) map.on('click', layer, show);
     map.on('mouseleave', layer, () => {
