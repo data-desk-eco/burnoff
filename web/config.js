@@ -95,11 +95,13 @@ let _s2Timer = null;
 // archive builds serve precomputed clusters, so the local-worker detect path —
 // and the p2p mesh that shares its workload — only make sense where the archive
 // has no coverage: reveal Detect / peer status there, hide them where the
-// archive serves. no-op in pure detect builds, which always expose the controls.
+// archive serves. a running detection pins them visible so the progress bar
+// (which lives in #detect-area) stays on screen. no-op in pure detect builds,
+// which always expose the controls.
 function updateS2Controls() {
     if (!S2_ARCHIVE) return;
-    const show = mode === 's2' && s2ArchiveReady() &&
-        CTX.map.getZoom() >= MIN_DETECT_ZOOM && !isCovered(viewportBbox(CTX.map)) && !isDetecting();
+    const show = mode === 's2' && (isDetecting() || (s2ArchiveReady() &&
+        CTX.map.getZoom() >= MIN_DETECT_ZOOM && !isCovered(viewportBbox(CTX.map))));
     if (show) ensureDetect();   // outside coverage the detect/p2p path is live
     for (const sel of ['#peer-status', '#detect-area'])
         document.querySelector(sel)?.style.setProperty('display', show ? '' : 'none');
