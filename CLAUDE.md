@@ -230,13 +230,16 @@ Profile CSVs → nighttime filter → daily aggregation → parquet
 
 Parquet schema: `flare_id, lat, lon, date, clear, detected, rh_mw, temp_k,
 flow_mcm, n_passes, type, category, country`. Coordinates are stable per-flare
-averages (from profile passes), not per-pass positions. `flow_mcm` is EOG's
-own per-pass `Flow_Rate` (daily-averaged like `rh_mw`) — NOT the linear
-0.0315×RH calibration; nightly-backfilled rows have it as 0 (the ez CSVs
-carry no flow) until the next full profile build.
+averages (from profile passes), not per-pass positions. `flow_mcm` carries
+EOG's own per-pass `Flow_Rate` (daily-averaged like `rh_mw`; 0 on
+nightly-backfilled rows — the ez CSVs have no flow) but is NOT displayed:
+the UI's MCM column is `rh_mw × 0.0315`, the JZ-RH VNF v3 calibration
+(Zhizhin et al. 2025, Energies 18:4765 — BCM/yr = 0.0115×RH, metered-flare
+validated). EOG's `Flow_Rate` implements the legacy Cedigaz power law, which
+that paper shows overestimates dim flares and underestimates bright ones.
 
 The web query groups by `flare_id`, computes `total_dates`, `clear_dates`,
-`detection_dates`, and returns a detection list with `date, rh_mw, temp_k, flow_mcm`.
+`detection_dates`, and returns a detection list with `date, rh_mw, temp_k`.
 Persistence = `detection_dates / clear_dates` (real cloud-free denominator).
 
 ## P2P Sync

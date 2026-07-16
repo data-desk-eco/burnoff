@@ -9,6 +9,11 @@ import { map as ddPalette } from './vendor/dd/palette.js';
 
 export const DD = ddPalette.adjusted;
 export const RAMP = [DD.red, DD.orange, DD.white]; // low → high intensity
+// jz-rh calibration for vnf v3 toa radiant heat (zhizhin et al. 2025, energies
+// 18:4765 fig 20): bcm/yr = 0.0115*rh -> mcm/day. metered-flare validated;
+// preferred over eog's per-pass Flow_Rate (cedigaz power law, biased high on
+// dim flares / low on bright ones per the same paper)
+export const RH_TO_MCM = 0.0315;
 
 export const MODE = {
     s2: {
@@ -38,7 +43,7 @@ export const MODE = {
         formatFilter: v => v === 0 ? 'Off' : `${v} MW`,
         yVal: d => d.rh_mw || 0,
         formatVal: d => d.rh_mw >= 999 ? '-' : (d.rh_mw?.toFixed(1) || '-'),
-        formatCount: d => d.flow_mcm ? d.flow_mcm.toFixed(2) : '-',
+        formatCount: d => d.rh_mw >= 999 ? '-' : (d.rh_mw != null ? (d.rh_mw * RH_TO_MCM).toFixed(2) : '-'),
         sentinel: 999,
     }
 };
