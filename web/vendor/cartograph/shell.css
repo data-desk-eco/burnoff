@@ -44,7 +44,7 @@ a { color: inherit; text-decoration: underline; }
 
 /* --- key --- */
 
-.cg-key { bottom: 0; left: 0; padding: 15px 30px; display: flex; flex-direction: column; gap: 25px; min-width: 105px; }
+.cg-key { bottom: 0; left: 0; padding: 15px 30px 20px; display: flex; flex-direction: column; gap: 25px; min-width: 105px; }
 /* hanging chevron per dd heading rule: -(chevron 8px + gap 11px) into the L padding */
 .cg-key-head { display: flex; align-items: center; gap: 11px; cursor: pointer; user-select: none; }
 .cg-key-head .dd-chevron { margin-left: -19px; }
@@ -90,6 +90,16 @@ a { color: inherit; text-decoration: underline; }
 .cg-table tbody tr.selected { background: var(--dd-ui-active-background); color: var(--dd-ui-active-text); }
 .cg-drawer-empty { padding: 20px; }
 .cg-drawer-foot { padding: 6px 15px; border-top: 1px solid var(--dd-ui-border); flex-shrink: 0; }
+
+/* --- story (scrollytelling) --- */
+
+/* the scroller owns the viewport (wheel drives the story, not map zoom);
+   cards keep dd-panel furniture but ride in the scroll flow */
+.cg-story { position: fixed; inset: 0; overflow-y: auto; z-index: 4; }
+.cg-story ~ .dd-logo { position: fixed; z-index: 5; }
+.cg-step { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; }
+.cg-card { position: static; width: 340px; max-width: calc(100vw - 20px); max-height: calc(100vh - 20px); overflow-y: auto; }
+.cg-card p + p { margin-top: 14px; }
 
 /* --- about modal --- */
 

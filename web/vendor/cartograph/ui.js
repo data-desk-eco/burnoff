@@ -21,7 +21,21 @@ const sliderGroup = s => `
         <div class="dd-slider-row"><input type="range" class="dd-slider" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.value}"><span class="cg-slider-val"></span></div>
     </div>`;
 
+const logo = `<a class="dd-logo" href="https://research.datadesk.eco/" target="_blank" rel="noopener"><svg viewBox="0 0 734.66 733.34"><path fill="currentColor" d="${LOGO_PATH}"/></svg></a>`;
+
+// story mode: no panels — one full-viewport scroller of dd cards over the map
+const storyStep = (s, i) => `
+    <section class="cg-step" data-i="${i}">${s.title || s.html ? `
+        <div class="dd-panel dd-panel-l dd-gap cg-card custom-scroll">
+            ${s.title ? `<div class="dd-heading">${escapeHtml(s.title)}</div>` : ''}${s.html || ''}
+        </div>` : ''}
+    </section>`;
+
 export function buildShell(config) {
+    if (config.story) return document.body.insertAdjacentHTML('afterbegin', `
+    <div id="map"></div>
+    <div class="cg-story custom-scroll" id="story">${config.story.map(storyStep).join('')}</div>
+    ${logo}`);
     const title = config.link
         ? `<a href="${config.link}" target="_blank" rel="noopener">${escapeHtml(config.title)}</a>`
         : `<span id="main-title">${escapeHtml(config.title)}</span>`;
@@ -47,7 +61,7 @@ export function buildShell(config) {
 
     <div class="dd-panel dd-panel-l cg-detail custom-scroll" id="detail"></div>
 
-    <a class="dd-logo" href="https://research.datadesk.eco/" target="_blank" rel="noopener"><svg viewBox="0 0 734.66 733.34"><path fill="currentColor" d="${LOGO_PATH}"/></svg></a>
+    ${logo}
 
     ${config.about ? `
     <div class="cg-modal" id="about-modal">

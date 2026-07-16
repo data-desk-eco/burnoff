@@ -10,6 +10,7 @@ import { buildShell, initKey, wireSliders } from './ui.js';
 import { initQuarters } from './quarters.js';
 import { initDetail } from './detail.js';
 import { initTable } from './table.js';
+import { initStory } from './story.js';
 import { compileConfig } from './util.js';
 
 // location search: "lat, lon" zooms directly, anything else geocodes via nominatim
@@ -63,10 +64,13 @@ export async function mount(config) {
     if (typeof config === 'string') config = await (await fetch(config)).json();
     config = compileConfig(config);
     buildShell(config);
-    const map = createMap({ hash: 'map', ...config.map });
-    wireWorldmap(map, document.getElementById('worldmap'));
-    wireCollapse([[['main-collapse', 'main-title'], 'main-panel']]);
-    if (config.search) wireSearch(map);
+    // story mode scrolls the camera, so the #map= hash would only fight it
+    const map = createMap({ hash: config.story ? undefined : 'map', ...config.map });
+    if (!config.story) {
+        wireWorldmap(map, document.getElementById('worldmap'));
+        wireCollapse([[['main-collapse', 'main-title'], 'main-panel']]);
+        if (config.search) wireSearch(map);
+    }
     if (config.data) initData(config.data);
 
     const ctx = { map, config, read, meta, fc, sources: {} };
@@ -88,15 +92,18 @@ export async function mount(config) {
         map.addLayer(spec);
         if (hover) hoverPopup(map, spec.id, hover, { click: !config.detail?.layers.includes(spec.id) });
     }
-    let applyFilters;
-    const key = initKey(map, () => applyFilters());
-    applyFilters = wireFilters(map, config, ctx.sources, key.preds, ctx);
-    ctx.setKey = key.set;
-    if (config.key) await key.set(config.key(ctx));
+    if (config.story) initStory(ctx);
+    else {
+        let applyFilters;
+        const key = initKey(map, () => applyFilters());
+        applyFilters = wireFilters(map, config, ctx.sources, key.preds, ctx);
+        ctx.setKey = key.set;
+        if (config.key) await key.set(config.key(ctx));
 
-    initDetail(map, config, () =>
-        Object.values(ctx.sources).flatMap(s => s.features));
-    if (config.table) initTable(ctx);
+        initDetail(map, config, () =>
+            Object.values(ctx.sources).flatMap(s => s.features));
+        if (config.table) initTable(ctx);
+    }
 
     await config.ready?.(ctx);
     window.cartograph = ctx;   // console + test handle
