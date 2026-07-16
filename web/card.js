@@ -11,6 +11,7 @@ import { showDetail, closeDetail } from './vendor/cartograph/detail.js';
 import { dimSatellite } from './vendor/cartograph/shell.js';
 import { dateInQuarters } from './vendor/cartograph/util.js';
 import { DEG_TO_RAD } from './clustering.js';
+import { fetchVNFDetections } from './vnf.js';
 
 // injected by initCard: the map, the active mode config, an isVnf() probe,
 // whether this build serves the precomputed archive (no COGs in cluster rows)
@@ -102,7 +103,11 @@ export function cardTitle(p) {
 
 export function cardHtml(p) {
     const cfg = modeConf();
-    const m = quarterMetrics(p, parseDets(p), quarterKeys());
+    // vnf features carry range-scoped aggregates from the quarterly rollup
+    // (detections load lazily); s2 derives metrics from the embedded list
+    const m = isVnf()
+        ? { detection_count: p.detection_count, observations: p.observations, persistence: p.persistence }
+        : quarterMetrics(p, parseDets(p), quarterKeys());
     const cfLabel = p.passes && m.observations != null
         ? `Cloud-free (${Math.round(m.observations / p.passes * 100)}%)` : 'Cloud-free obs.';
     const stats = [
@@ -134,13 +139,32 @@ export function onCardShow(p, el) {
     selectedDetection = null;
     greyCircles(true);
 
+    // card shows only detections in the selected quarter window. vnf features
+    // carry no embedded list — daily history is fetched per flare, here, so
+    // the big daily parquet (and its footer) loads lazily behind the card
+    const qKeys = quarterKeys();
+    if (isVnf()) {
+        el.querySelector('#events-list').innerHTML = '<div class="events-empty">Loading…</div>';
+        fetchVNFDetections(p.flare_id).then(dets => {
+            if (current === p) renderEvents(el, dets.filter(d => dateInQuarters(d.date, qKeys)));
+        });
+    } else {
+        renderEvents(el, parseDets(p).filter(d => dateInQuarters(d.date, qKeys)));
+    }
+
+    el.querySelector('#download-btn')?.addEventListener('click', downloadFlareCSV);
+    el.querySelector('#open-image-btn')?.addEventListener('click', () => {
+        if (!current || !selectedDetection) return;
+        window.open(copernicusUrl(selectedDetection.date), '_blank');
+    });
+    document.activeElement?.blur();
+}
+
+function renderEvents(el, detections) {
     const cfg = modeConf();
     const vnf = isVnf();
-    // card shows only detections in the selected quarter window
-    const qKeys = quarterKeys();
-    const detections = parseDets(p).filter(d => dateInQuarters(d.date, qKeys));
-
     const list = el.querySelector('#events-list');
+    list.innerHTML = '';
     const sorted = [...detections].sort((a, b) => new Date(b.date) - new Date(a.date));
     const dateToItem = new Map();
     let firstItem = null;
@@ -186,13 +210,6 @@ export function onCardShow(p, el) {
 
     // vnf: auto-select highlights only (no COG); s2: auto-select loads the COG
     if (firstItem && !_skipAuto) selectDetection(firstItem.det, firstItem.item);
-
-    el.querySelector('#download-btn')?.addEventListener('click', downloadFlareCSV);
-    el.querySelector('#open-image-btn')?.addEventListener('click', () => {
-        if (!current || !selectedDetection) return;
-        window.open(copernicusUrl(selectedDetection.date), '_blank');
-    });
-    document.activeElement?.blur();
 }
 
 export function onCardClose() {

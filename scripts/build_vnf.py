@@ -8,18 +8,17 @@ All flares with profiles are included.  The multiyear index provides EOG's own
 metadata (type, category, country) — nothing else is joined in; the archive
 carries raw EOG data only, attribution is downstream consumers' job.
 
-Rows are ordered along a Hilbert curve over (lon, lat) so remote bbox reads
-prune row groups spatially (the web map's hot path); web/flares.parquet is a
-tiny per-flare position index so single-flare deep links can resolve an id to
-a location first and read spatially too.
+Three outputs (see vnf_common.py): the hilbert-ordered daily parquet (the
+archive; the map reads it only per flare on card open), the quarterly rollup
+the map's viewport reads, and web/flares.parquet, a tiny per-flare position
+index so single-flare reads can resolve an id to a location and read the
+hilbert-ordered files spatially.
 
 Usage: uv run --with duckdb scripts/build_vnf.py
 """
 import os
 import duckdb
-
-HILBERT = ("ST_Hilbert(lon, lat, "
-           "{'min_x': -180, 'min_y': -90, 'max_x': 180, 'max_y': 90}::BOX_2D)")
+from vnf_common import HILBERT, write_rollup
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL_DATA = os.path.join(PROJECT_ROOT, "data")
@@ -132,6 +131,10 @@ db.execute(f"""
     TO '{os.path.join(PROJECT_ROOT, "web", "flares.parquet")}'
     (FORMAT PARQUET, COMPRESSION ZSTD)
 """)
+
+print("Writing quarterly rollup...")
+write_rollup(db, os.path.abspath(OUTPUT),
+             os.path.join(PROJECT_ROOT, "web", "quarters.parquet"))
 
 size_mb = os.path.getsize(os.path.abspath(OUTPUT)) / 1e6
 print(f"Done: {size_mb:.1f} MB, {count:,} rows")

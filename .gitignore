@@ -11,3 +11,4 @@ web/vendor/.ok
 docs/
 __pycache__/
 web/flares.parquet
+web/quarters.parquet

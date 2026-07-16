@@ -48,6 +48,7 @@ web/vnf.parquet: scripts/build_vnf.py
 vnf-upload: web/vnf.parquet
 	@bash scripts/upload_vnf.sh
 	@[ -f web/flares.parquet ] && bash scripts/upload_vnf.sh web/flares.parquet vnf/flares.parquet || true
+	@[ -f web/quarters.parquet ] && bash scripts/upload_vnf.sh web/quarters.parquet vnf/quarters.parquet || true
 
 vnf-deploy: vnf vnf-upload
 
