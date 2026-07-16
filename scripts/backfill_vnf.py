@@ -321,8 +321,14 @@ def main():
     db.execute("INSERT INTO existing SELECT * FROM new_rows")
 
     total = db.execute("SELECT count(*) FROM existing").fetchone()[0]
+    # hilbert order keeps row-group lat/lon stats tight for remote bbox reads
+    # (same ordering as build_vnf.py)
+    db.execute("INSTALL spatial; LOAD spatial")
     db.execute(f"""
-        COPY (SELECT * FROM existing ORDER BY flare_id, date)
+        COPY (SELECT * FROM existing
+              ORDER BY ST_Hilbert(lon, lat,
+                  {{'min_x': -180, 'min_y': -90, 'max_x': 180, 'max_y': 90}}::BOX_2D),
+                  flare_id, date)
         TO '{os.path.abspath(OUTPUT)}'
         (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000)
     """)

@@ -47,6 +47,7 @@ web/vnf.parquet: scripts/build_vnf.py
 # creds come from ~/Tools/s2-flares/cloud/store.sh (env aws keys in CI).
 vnf-upload: web/vnf.parquet
 	@bash scripts/upload_vnf.sh
+	@[ -f web/flares.parquet ] && bash scripts/upload_vnf.sh web/flares.parquet vnf/flares.parquet || true
 
 vnf-deploy: vnf vnf-upload
 

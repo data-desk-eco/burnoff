@@ -27,7 +27,16 @@ export function resetVNF() {
     _initPromise = null;
     _ready = false;
     _url = null;
+    _flares = null;
 }
+
+// The daily parquet is hilbert-ordered over (lon, lat), so bbox reads prune
+// row groups spatially — but that scatters flare_id across groups. The tiny
+// flares.parquet beside it (flare_id -> lat/lon) lets a deep link resolve the
+// position first and read the daily file spatially too.
+let _flares = null;
+const flareIndex = () => _flares ??= read(_url.replace(/[^/]*$/, 'flares.parquet'))
+    .then(rows => new Map(rows.map(r => [Number(r.flare_id), r])));
 
 // Per-site aggregation shared by the viewport and single-flare queries (the
 // old duckdb GROUP BY in js): daily rows grouped to one feature per flare with
@@ -85,8 +94,11 @@ export async function queryVNF(bbox, startDate, endDate) {
  */
 export async function queryVNFFlare(flareId, startDate, endDate) {
     if (!_ready) throw new Error('VNF not initialized');
+    const f = (await flareIndex()).get(Number(flareId));
+    if (!f) return { type: 'FeatureCollection', features: [] };
     const rows = await read(_url, { columns: COLS,
-        where: { flare_id: [Number(flareId), Number(flareId)], date: [startDate, endDate] } });
+        where: { flare_id: [Number(flareId), Number(flareId)], date: [startDate, endDate],
+                 lat: [f.lat - 0.01, f.lat + 0.01], lon: [f.lon - 0.01, f.lon + 0.01] } });
     return siteFeatures(rows);
 }
 

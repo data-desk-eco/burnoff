@@ -10,3 +10,4 @@ web/vnf_nightly*.parquet
 web/vendor/.ok
 docs/
 __pycache__/
+web/flares.parquet
