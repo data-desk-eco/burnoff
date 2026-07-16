@@ -9,7 +9,6 @@ import { map as ddPalette } from './vendor/dd/palette.js';
 
 export const DD = ddPalette.adjusted;
 export const RAMP = [DD.red, DD.orange, DD.white]; // low → high intensity
-export const RH_TO_MCM = 0.0315;
 
 export const MODE = {
     s2: {
@@ -31,7 +30,7 @@ export const MODE = {
         subtitle: 'VIIRS Nightfire Flares',
         label: 'Radiant heat (MW)',
         prop: 'max_rh',
-        col2: 'RH', col3: 'MCM/d',
+        col2: 'RH', col3: 'MCM',
         stops: [1, 7, 20],
         log: true,
         chartRange: [0.5, 50],
@@ -39,7 +38,7 @@ export const MODE = {
         formatFilter: v => v === 0 ? 'Off' : `${v} MW`,
         yVal: d => d.rh_mw || 0,
         formatVal: d => d.rh_mw >= 999 ? '-' : (d.rh_mw?.toFixed(1) || '-'),
-        formatCount: d => d.rh_mw >= 999 ? '-' : (d.rh_mw != null ? (d.rh_mw * RH_TO_MCM).toFixed(2) : '-'),
+        formatCount: d => d.flow_mcm ? d.flow_mcm.toFixed(2) : '-',
         sentinel: 999,
     }
 };

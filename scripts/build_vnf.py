@@ -87,7 +87,8 @@ db.execute(f"""
         CAST(Lon_GMTCO AS DOUBLE) AS pass_lon,
         CAST(Cloud_Mask AS INTEGER) AS cloud_mask,
         CAST(Temp_BB AS DOUBLE) AS temp_bb,
-        CAST(RH AS DOUBLE) AS rh
+        CAST(RH AS DOUBLE) AS rh,
+        CAST(Flow_Rate AS DOUBLE) AS flow
     FROM read_csv('{PROFILE_GLOB}',
         auto_detect=true, union_by_name=true, ignore_errors=true)
     WHERE CAST(Sunlit AS INTEGER) = 0
@@ -158,6 +159,9 @@ db.execute("""
         AVG(temp_bb) FILTER (
             WHERE cloud_mask = 0 AND temp_bb != 999999
         ) AS temp_k,
+        AVG(flow) FILTER (
+            WHERE cloud_mask = 0 AND temp_bb != 999999 AND flow != 999999
+        ) AS flow_mcm,
         COUNT(*) AS n_passes
     FROM passes
     GROUP BY flare_id, date
@@ -191,6 +195,7 @@ db.execute(f"""
             d.clear, d.detected,
             COALESCE(d.rh_mw, 0) AS rh_mw,
             COALESCE(d.temp_k, 0) AS temp_k,
+            COALESCE(d.flow_mcm, 0) AS flow_mcm,
             d.n_passes,
             COALESCE(m.type, '') AS type,
             COALESCE(m.category, '') AS category,

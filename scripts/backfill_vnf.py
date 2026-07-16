@@ -289,6 +289,7 @@ def main():
         new_rows.append((
             fid, lat, lon, date_str,
             clear, detected, rh_mw, temp_k,
+            0,  # nightly ez CSVs carry no Flow_Rate; filled on next full profile build
             len(passes), "", "", "", "", "",
         ))
 
@@ -312,11 +313,11 @@ def main():
         CREATE TABLE new_rows (
             flare_id INT, lat DOUBLE, lon DOUBLE, date DATE,
             clear BOOLEAN, detected BOOLEAN, rh_mw DOUBLE, temp_k DOUBLE,
-            n_passes INT, type VARCHAR, category VARCHAR, country VARCHAR,
-            facility_type VARCHAR, facility_name VARCHAR
+            flow_mcm DOUBLE, n_passes INT, type VARCHAR, category VARCHAR,
+            country VARCHAR, facility_type VARCHAR, facility_name VARCHAR
         )
     """)
-    db.executemany("INSERT INTO new_rows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", new_rows)
+    db.executemany("INSERT INTO new_rows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", new_rows)
     db.execute("INSERT INTO existing SELECT * FROM new_rows")
 
     total = db.execute("SELECT count(*) FROM existing").fetchone()[0]

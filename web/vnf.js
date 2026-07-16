@@ -11,7 +11,7 @@ let _url = null, _initPromise = null, _ready = false;
 export function isReady() { return _ready; }
 
 const COLS = ['flare_id', 'lat', 'lon', 'date', 'clear', 'detected', 'rh_mw', 'temp_k',
-              'type', 'category', 'country', 'facility_type', 'facility_name'];
+              'flow_mcm', 'type', 'category', 'country', 'facility_type', 'facility_name'];
 
 /**
  * Initialize the VNF parquet: open it (remote: footer bytes only) so
@@ -47,7 +47,7 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
             s.detection_dates++;
             s.avg_rh += Number(r.rh_mw) || 0;
             s.max_rh = Math.max(s.max_rh, Number(r.rh_mw) || 0);
-            s.detections.push({ date: String(r.date).slice(0, 10), rh_mw: Number(r.rh_mw) || 0, temp_k: Number(r.temp_k) || 0 });
+            s.detections.push({ date: String(r.date).slice(0, 10), rh_mw: Number(r.rh_mw) || 0, temp_k: Number(r.temp_k) || 0, flow_mcm: Number(r.flow_mcm) || 0 });
         }
         for (const k of ['type', 'category', 'country', 'facility_type', 'facility_name']) s[k] ||= r[k] || '';
     }
