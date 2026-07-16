@@ -59,7 +59,7 @@ archive base is set via `<meta name="s2-archive">` in index.html.
 
 **VNF mode:** hyparquet reads a pre-built Parquet file containing per-flare
 daily observations from EOG profile CSVs. In production it lives in the shared
-s2-flares CloudFerro archive at `vnf/data.parquet` (`<meta name="vnf-url">`); dev
+datadesk CloudFerro store at `vnf/data.parquet` (`<meta name="vnf-url">`); dev
 falls back to a local `web/vnf.parquet`. Each row has `clear`/`detected` booleans
 for real cloud-free persistence metrics.
 
@@ -70,7 +70,7 @@ make serve        # Dev server on :8000 + signaling on :4444
 make signal       # Signaling server only
 make test         # Run determinism + P2P retry tests
 make vnf          # Build VNF parquet from EOG profile CSVs
-make vnf-upload   # Upload VNF parquet to the s2-flares archive (vnf/data.parquet)
+make vnf-upload   # Upload VNF parquet to the datadesk store (vnf/data.parquet)
 make deploy       # Deploy signaling worker to Cloudflare
 git push          # Deploy static site via GitHub Pages (auto on push to main)
 ```

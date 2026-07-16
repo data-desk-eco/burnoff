@@ -23,7 +23,7 @@ if (/^#vnf\/\d+$/.test(location.hash))
 // build config (index.html meta tags) + mode state ('s2' or 'vnf')
 // ---------------------------------------------------------------------------
 
-// vnf parquet lives in the shared s2-flares CloudFerro archive at a stable key
+// vnf parquet lives in the central datadesk store (CloudFerro) at a stable key
 // (vnf/data.parquet) — public-read, hyparquet range-reads it remotely. set via
 // <meta name="vnf-url">; localhost (or an unset url) falls back to a local build.
 const VNF_URL = document.querySelector('meta[name="vnf-url"]')?.content || '';

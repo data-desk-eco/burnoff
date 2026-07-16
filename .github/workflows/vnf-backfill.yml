@@ -4,7 +4,7 @@ name: VNF daily backfill
 # secrets (CLOUDFERRO_S3_KEY / CLOUDFERRO_S3_SECRET) are added to the repo and a
 # manual run is confirmed green. See TODO.md. Trigger manually via the Actions tab
 # in the meantime. (gcloud auth stays — it's for EOG creds in Secret Manager, not
-# the parquet upload, which now goes to the s2-flares CloudFerro archive.)
+# the parquet upload, which goes to the central datadesk store on CloudFerro.)
 on:
   # schedule:
   #   - cron: '0 10 * * *'   # daily 10:00 UTC, after the previous day's VIIRS orbits
@@ -23,7 +23,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install requests beautifulsoup4 lxml duckdb
-          curl -sL https://install.duckdb.org | sh   # duckdb CLI for upload_vnf.sh
 
       - name: Fetch shared skill libs
         env:
@@ -44,7 +43,7 @@ jobs:
       - name: Backfill recent nightly rows
         run: python scripts/backfill_vnf.py     # downloads the public archive parquet, appends
 
-      - name: Upload to the s2-flares archive
+      - name: Upload to the datadesk store
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFERRO_S3_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFERRO_S3_SECRET }}

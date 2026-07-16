@@ -45,7 +45,7 @@ def authenticate():
 
 # VNF parquet lives in the shared s2-flares CloudFerro archive at a stable, public
 # key — download is anonymous; upload goes through scripts/upload_vnf.sh (auth + creds).
-ARCHIVE_URL = "https://s3.WAW3-2.cloudferro.com/s2-flares-archive/vnf/data.parquet"
+ARCHIVE_URL = "https://s3.WAW3-2.cloudferro.com/datadesk-archive/vnf/data.parquet"
 
 
 def download_archive(dest):

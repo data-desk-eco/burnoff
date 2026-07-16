@@ -42,9 +42,9 @@ vnf: web/vnf.parquet
 web/vnf.parquet: scripts/build_vnf.py
 	uv run --with duckdb scripts/build_vnf.py
 
-# VNF parquet ships to the shared s2-flares CloudFerro archive at the stable key
-# vnf/data.parquet (mirrors detections/ and clusters/). The script sources openstack
-# auth, mints ec2/s3 creds if needed, and writes via duckdb httpfs (as box.sh does).
+# VNF parquet ships to the central datadesk store (CloudFerro) at the stable key
+# vnf/data.parquet — burnoff's prefix alongside s2-flares' detections/ + clusters/.
+# creds come from ~/Tools/s2-flares/cloud/store.sh (env aws keys in CI).
 vnf-upload: web/vnf.parquet
 	@bash scripts/upload_vnf.sh
 
@@ -80,7 +80,7 @@ help:
 	@echo "make vendor     - Vendor dependencies via cartograph (MapLibre, DuckDB, Inter, dd, cartograph)"
 	@echo "make test       - Run determinism tests"
 	@echo "make vnf        - Build VNF parquet from EOG profile CSVs"
-	@echo "make vnf-upload - Upload VNF parquet to the s2-flares archive (vnf/data.parquet)"
+	@echo "make vnf-upload - Upload VNF parquet to the datadesk store (vnf/data.parquet)"
 	@echo "make vnf-deploy - Build + upload VNF parquet (one step)"
 	@echo "make vnf-backfill - Backfill recent nightly VNF data into parquet"
 	@echo "make profiles    - Download VNF profiles for facility-adjacent flares"
