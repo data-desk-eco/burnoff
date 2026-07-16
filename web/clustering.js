@@ -96,10 +96,8 @@ export function enrichVNFFeatures(features, minRh) {
         if (minRh > 0 && p.avg_rh < minRh) continue;
 
         const terminal = findNearestTerminal(lat, lon);
-        const facilityName = p.facility_name || '';
-        const facilityType = p.facility_type || '';
         const typeCat = [p.type, p.category].filter(Boolean).join(' — ');
-        const name = facilityName || (terminal ? terminal.name : typeCat || `Flare #${p.flare_id}`);
+        const name = terminal ? terminal.name : typeCat || `Flare #${p.flare_id}`;
 
         const passes = p.total_dates;
         const detection_count = p.detection_dates;
@@ -113,8 +111,6 @@ export function enrichVNFFeatures(features, minRh) {
                 name,
                 terminal: terminal?.name || null,
                 lat, lon,   // exact coords for detail/highlight
-                facility_type: facilityType,
-                facility_name: facilityName,
                 flare_id: p.flare_id,
                 type: p.type || '',
                 category: p.category || '',

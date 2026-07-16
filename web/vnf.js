@@ -11,7 +11,7 @@ let _url = null, _initPromise = null, _ready = false;
 export function isReady() { return _ready; }
 
 const COLS = ['flare_id', 'lat', 'lon', 'date', 'clear', 'detected', 'rh_mw', 'temp_k',
-              'type', 'category', 'country', 'facility_type', 'facility_name'];
+              'type', 'category', 'country'];
 
 /**
  * Initialize the VNF parquet: open it (remote: footer bytes only) so
@@ -38,7 +38,7 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
         let s = by.get(r.flare_id);
         if (!s) by.set(r.flare_id, s = {
             flare_id: Number(r.flare_id), lat: Number(r.lat), lon: Number(r.lon),
-            type: '', category: '', country: '', facility_type: '', facility_name: '',
+            type: '', category: '', country: '',
             total_dates: 0, clear_dates: 0, detection_dates: 0, avg_rh: 0, max_rh: 0, detections: [],
         });
         s.total_dates++;
@@ -49,7 +49,7 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
             s.max_rh = Math.max(s.max_rh, Number(r.rh_mw) || 0);
             s.detections.push({ date: String(r.date).slice(0, 10), rh_mw: Number(r.rh_mw) || 0, temp_k: Number(r.temp_k) || 0 });
         }
-        for (const k of ['type', 'category', 'country', 'facility_type', 'facility_name']) s[k] ||= r[k] || '';
+        for (const k of ['type', 'category', 'country']) s[k] ||= r[k] || '';
     }
     const sites = [...by.values()].filter(s => !detectedOnly || s.detection_dates > 0)
         .sort((a, b) => b.max_rh - a.max_rh);
