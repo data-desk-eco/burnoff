@@ -35,7 +35,7 @@ export const MODE = {
         subtitle: 'VIIRS Nightfire Flares',
         label: 'Radiant heat (MW)',
         prop: 'max_rh',
-        col2: 'RH', col3: 'MCM',
+        col2: 'RH', col3: 'MCM/d',
         stops: [1, 7, 20],
         log: true,
         chartRange: [0.5, 50],
