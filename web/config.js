@@ -94,14 +94,17 @@ let _s2Timer = null;
 
 // archive builds serve precomputed clusters, so the local-worker detect path —
 // and the p2p mesh that shares its workload — only make sense where the archive
-// has no coverage: reveal Detect / peer status there, hide them where the
-// archive serves. a running detection pins them visible so the progress bar
+// doesn't serve: reveal Detect / peer status outside coverage AND where a
+// covered viewport is blank for the selected quarters (_s2Blank, set by
+// updateQuarterIndicators — coverage boxes are tiny AOIs, so "covered" alone
+// overreaches). a running detection pins them visible so the progress bar
 // (which lives in #detect-area) stays on screen. no-op in pure detect builds,
 // which always expose the controls.
+let _s2Blank = false;
 function updateS2Controls() {
     if (!S2_ARCHIVE) return;
     const show = mode === 's2' && (isDetecting() || (s2ArchiveReady() &&
-        CTX.map.getZoom() >= MIN_DETECT_ZOOM && !isCovered(viewportBbox(CTX.map))));
+        CTX.map.getZoom() >= MIN_DETECT_ZOOM && (_s2Blank || !isCovered(viewportBbox(CTX.map)))));
     if (show) ensureDetect();   // outside coverage the detect/p2p path is live
     for (const sel of ['#peer-status', '#detect-area'])
         document.querySelector(sel)?.style.setProperty('display', show ? '' : 'none');
@@ -157,7 +160,9 @@ function ensureS2Archive() {
 // 'dd-unavailable' (archive/vnf, no data in this viewport). a null `avail`
 // means the data source isn't ready / zoomed-out — leave everything enabled.
 // uncovered s2 viewports fall through to the detect branch (same coverage test
-// that reveals the Detect button) so quarters stay selectable for the fallback.
+// that reveals the Detect button) so quarters stay selectable for the fallback —
+// as do covered-but-blank ones (hint kept), where the archive holds nothing for
+// the selected quarters and the local detect fallback is the only way forward.
 async function updateQuarterIndicators() {
     const q = CTX.quarters, btns = [...q.buttons()];
 
@@ -177,14 +182,15 @@ async function updateQuarterIndicators() {
         // every selected quarter is unavailable here -> the map is blank; say why
         const blank = !!avail && !btns.some(b => b.classList.contains('dd-active') && avail.has(q.key(b)));
         q.hint(blank ? `No ${isVnf() ? 'VNF' : 'archive'} data for the selected quarters here` : '');
-        return;
-    }
+        _s2Blank = !isVnf() && blank;
+        if (!_s2Blank) { updateS2Controls(); return; }
+    } else { _s2Blank = false; q.hint(''); }
 
-    q.hint('');
     btns.forEach(b => b.classList.remove('dd-unavailable'));
     const done = getDetectedQuarters();
     btns.forEach(b => b.classList.toggle('detected', done.has(q.key(b))));
     updateDetectButton(done);
+    updateS2Controls();
 }
 
 // ---------------------------------------------------------------------------
