@@ -155,5 +155,13 @@ export function initDetail(m, config, getFeatures) {
 
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
 
+    // deep links into an already-open tab: internal selection writes the hash
+    // via replaceState (no event), so hashchange only fires for external
+    // navigation — re-resolve the id or close if it was removed
+    addEventListener('hashchange', () => {
+        const id = getHashParam(location.hash, cfg.hashKey || 'id');
+        id ? restorePermalink() : closeDetail();
+    });
+
     restorePermalink();
 }
