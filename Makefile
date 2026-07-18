@@ -1,4 +1,4 @@
-.PHONY: serve signal test deploy terminals vnf vnf-upload vnf-deploy vnf-raw vnf-raw-upload vnf-backfill vnf-backfill-deploy profiles vendor help
+.PHONY: serve signal test deploy terminals vendor help
 
 terminals: web/terminals.geojson
 
@@ -34,43 +34,7 @@ web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
 	) TO 'web/terminals.geojson' (FORMAT CSV, HEADER false, QUOTE '', DELIMITER '');"
 	@echo "web/terminals.geojson: $$(python3 -c "import json; print(len(json.load(open('web/terminals.geojson'))['features']))" 2>/dev/null) features"
 
-profiles:
-	uv run --with requests,beautifulsoup4,duckdb,lxml scripts/fetch_vnf_profiles.py
-
-vnf: web/vnf.parquet
-
-web/vnf.parquet: scripts/build_vnf.py
-	uv run --with duckdb scripts/build_vnf.py
-
-# VNF parquet ships to the central datadesk store (CloudFerro) at the stable key
-# vnf/data.parquet — burnoff's prefix alongside s2e' detections/ + clusters/.
-# creds come from ~/Tools/data-desk/store.sh (env aws keys in CI).
-vnf-upload: web/vnf.parquet
-	@bash scripts/upload_vnf.sh
-	@[ -f web/flares.parquet ] && bash scripts/upload_vnf.sh web/flares.parquet vnf/flares.parquet || true
-	@[ -f web/quarters.parquet ] && bash scripts/upload_vnf.sh web/quarters.parquet vnf/quarters.parquet || true
-
-vnf-deploy: vnf vnf-upload
-
-# raw per-pass VNF: the EOG profile CSVs concatenated verbatim (EOG's own
-# columns, 999999 sentinels kept) so the store carries the unaggregated source
-# of truth alongside the daily rollup — verify the aggregation against it.
-# rows arrive file-by-file, so row groups stay clustered by flare_id (cheap
-# remote per-flare reads). ships to vnf/passes/data.parquet.
-vnf-raw: data/vnf_passes.parquet
-
-data/vnf_passes.parquet:
-	duckdb -c "SET temp_directory='/tmp/duckdb_vnf_raw'; SET memory_limit='8GB'; \
-	COPY (SELECT * FROM read_csv('data/vnf_profiles/site_*.csv', auto_detect=true, union_by_name=true, ignore_errors=true)) \
-	TO '$@' (FORMAT parquet, COMPRESSION zstd)"
-
-vnf-raw-upload: vnf-raw
-	@bash scripts/upload_vnf.sh data/vnf_passes.parquet vnf/passes/data.parquet
-
-vnf-backfill:
-	uv run --with requests,beautifulsoup4,lxml,duckdb scripts/backfill_vnf.py
-
-vnf-backfill-deploy: vnf-backfill vnf-upload
+# vnf etl (rollup, backfill, raw passes, uploads) lives in ~/Tools/etl now
 
 vendor: web/vendor/.ok
 
@@ -94,13 +58,6 @@ test:
 help:
 	@echo "make serve      - Dev server on :8000 + signaling on :4444"
 	@echo "make signal     - Signaling server only"
-	@echo "make vendor     - Vendor dependencies via cartograph (MapLibre, DuckDB, Inter, dd, cartograph)"
+	@echo "make vendor     - Vendor dependencies via cartograph + the s2e wasm core"
 	@echo "make test       - Run determinism tests"
-	@echo "make vnf        - Build VNF parquet from EOG profile CSVs"
-	@echo "make vnf-upload - Upload VNF parquet to the datadesk store (vnf/data.parquet)"
-	@echo "make vnf-deploy - Build + upload VNF parquet (one step)"
-	@echo "make vnf-raw    - Concatenate raw profile CSVs into data/vnf_passes.parquet"
-	@echo "make vnf-raw-upload - Upload raw passes to the store (vnf/passes/data.parquet)"
-	@echo "make vnf-backfill - Backfill recent nightly VNF data into parquet"
-	@echo "make profiles    - Download VNF profiles for facility-adjacent flares"
 	@echo "make deploy     - Deploy signaling worker to Cloudflare"
