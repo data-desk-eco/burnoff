@@ -44,7 +44,7 @@ web/vnf.parquet: scripts/build_vnf.py
 
 # VNF parquet ships to the central datadesk store (CloudFerro) at the stable key
 # vnf/data.parquet — burnoff's prefix alongside s2-flares' detections/ + clusters/.
-# creds come from ~/Tools/s2-flares/cloud/store.sh (env aws keys in CI).
+# creds come from ~/Tools/data-desk/store.sh (env aws keys in CI).
 vnf-upload: web/vnf.parquet
 	@bash scripts/upload_vnf.sh
 	@[ -f web/flares.parquet ] && bash scripts/upload_vnf.sh web/flares.parquet vnf/flares.parquet || true

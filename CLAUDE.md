@@ -37,7 +37,7 @@ framing — is hand-rolled using web standards.
 ```
 
 **S2 mode:** The default data source reads the precomputed *cluster view*
-straight from the CloudFerro public parquet archive (s2-flares `box.sh publish`).
+straight from the CloudFerro public parquet archive (`data-desk/store.sh publish`).
 The archive co-produces a derived cluster view partitioned by MGRS tile,
 `clusters/mgrs=<tile>/data.parquet` — one row per cluster (scalar score columns +
 a nested `detections` list). `web/s2archive.js` enumerates those per-tile objects
