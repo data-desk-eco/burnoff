@@ -121,8 +121,7 @@ web/
   index.html          Entry point (~30 lines: meta config + vendor includes)
   style.css           Burnoff-specific UI on top of cartograph's shell.css
 scripts/
-  build_vnf.py        Build VNF parquet from EOG profile CSVs
-  vendor.sh           Thin wrapper over ~/Tools/cartograph/scripts/vendor.sh + flare index
+  vendor.sh           Thin wrapper over ~/Tools/cartograph/scripts/vendor.sh + s2e wasm
 signal/
   server.js           WebSocket signaling relay for local dev (RFC 6455 over node:http)
   worker.js           Cloudflare Worker + Durable Object signaling relay (production)
@@ -217,9 +216,10 @@ and shown in the detail card, NOT yet a gate. The formula was tuned in
 
 ## VNF Data Pipeline
 
-EOG profile CSVs (one per flare site, every satellite pass since 2012)
-are aggregated to daily level per flare by `scripts/build_vnf.py` and
-written to a ZSTD-compressed Parquet file (~6 MB, ~1.8M rows).
+The pipeline lives in the sibling etl repo (`~/Tools/etl`): EOG profile CSVs
+(one per flare site, every satellite pass since 2012) are aggregated to daily
+level per flare and written to a ZSTD-compressed Parquet file (~6 MB, ~1.8M
+rows), refreshed nightly by `etl/vnf.yml`.
 
 ```
 Profile CSVs → nighttime filter → daily aggregation → parquet
@@ -242,9 +242,8 @@ The store also carries the RAW per-pass form at `vnf/passes/data.parquet`
 (`make vnf-raw vnf-raw-upload`): the EOG profile CSVs concatenated verbatim —
 EOG's own columns (`Date_Mscan, Temp_BB, RH, RHI, Flow_Rate, Cloud_Mask,
 QF_Detect, …`), 999999 sentinels kept, row groups clustered by `flare_id` —
-so queries can go straight to EOG's numbers without trusting the aggregation
-in `build_vnf.py`. Rebuild + re-upload after `make profiles` refreshes the
-CSVs. (The nightly backfill appends to the AGGREGATE only; the raw parquet is
+so queries can go straight to EOG's numbers without trusting the aggregation.
+Rebuild + re-upload after `make -C ../etl profiles` refreshes the CSVs. (The nightly backfill appends to the AGGREGATE only; the raw parquet is
 profiles-only and regenerates from the CSV corpus.)
 
 The web query groups by `flare_id`, computes `total_dates`, `clear_dates`,
