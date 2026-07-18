@@ -1,5 +1,5 @@
 // S2 archive reader — reads the precomputed Sentinel-2 SWIR flare *cluster view*
-// straight from the CloudFerro public parquet archive (s2-flares `box.sh archive`).
+// straight from the CloudFerro public parquet archive (s2e `box.sh archive`).
 // The archive co-produces a derived cluster view partitioned by MGRS tile,
 // `clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
 // nested `detections` list). We enumerate those per-tile objects from the bucket

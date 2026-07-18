@@ -1,5 +1,5 @@
 // local-detect + P2P subsystem: the LWW-Map CRDT document, WebRTC mesh, IndexedDB
-// persistence, the detect Web Worker (s2-flares wasm core) with distributed help
+// persistence, the detect Web Worker (s2e wasm core) with distributed help
 // from idle peers, and the cross-date clusterer over the CRDT maps. the CRDT stack
 // (crdt/sync/rtc/store) is imported lazily by ensureDetect() — only outside the
 // archive's coverage, where the Detect button + mesh come into play — so a
@@ -13,7 +13,7 @@ let LWWMap, Store, PeerMesh, geohash3, SyncManager, validateDetection;   // lazy
 
 export const MIN_DETECT_ZOOM = 11;    // local-worker COG detect (heavy) + its controls
 const AWARENESS_HEARTBEAT_MS = 15_000;
-const MERGE_DISTANCE_M = 135;         // the bulk pipeline's cluster default (s2-flares ClusterOptions)
+const MERGE_DISTANCE_M = 135;         // the bulk pipeline's cluster default (s2e ClusterOptions)
 const BLOCK_DEG = 0.046;              // block grid: 256px at 20m = ~5120m ≈ 0.046° lat
 
 const _sigMeta = document.querySelector('meta[name="signaling-url"]');
@@ -242,7 +242,7 @@ export function crossDateCluster(allDetections, obs) {
         });
     }
 
-    // Delegate spatial clustering to s2-flares. The avg-B12 slider remains the
+    // Delegate spatial clustering to s2e. The avg-B12 slider remains the
     // active quality gate. The vision-validated score is computed for display only
     // — not gated — until we commit to syncing the B12/B11 ratio (a binary-format
     // change, deferred). `observations` gives the cloud-free denominator for both
@@ -254,7 +254,7 @@ export function crossDateCluster(allDetections, obs) {
         observations: obsByDate,
     });
 
-    // Wrap s2-flares cluster results into GeoJSON Features with burnoff-specific
+    // Wrap s2e cluster results into GeoJSON Features with burnoff-specific
     // persistence, terminal naming, and detection detail fields. Index the raw
     // detections by date+coord once so the per-cluster metadata lookups stay O(1).
     const origByKey = new Map();
@@ -309,7 +309,7 @@ export function crossDateCluster(allDetections, obs) {
                 max_b12: cl.max_b12,
                 detection_count: cl.detection_count,
                 seasonal: cl.seasonal,
-                // s2-flares vision-validated quality score
+                // s2e vision-validated quality score
                 total_score: cl.total_score,
                 ratio_score: cl.ratio_score,
                 persistence_score: cl.persistence_score,

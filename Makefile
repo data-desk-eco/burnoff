@@ -43,7 +43,7 @@ web/vnf.parquet: scripts/build_vnf.py
 	uv run --with duckdb scripts/build_vnf.py
 
 # VNF parquet ships to the central datadesk store (CloudFerro) at the stable key
-# vnf/data.parquet — burnoff's prefix alongside s2-flares' detections/ + clusters/.
+# vnf/data.parquet — burnoff's prefix alongside s2e' detections/ + clusters/.
 # creds come from ~/Tools/data-desk/store.sh (env aws keys in CI).
 vnf-upload: web/vnf.parquet
 	@bash scripts/upload_vnf.sh

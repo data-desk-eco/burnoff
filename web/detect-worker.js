@@ -12,9 +12,9 @@
 import { searchSTAC } from './s2/stac.js';
 import { openCOG, readWindow, enumerateBlocks, BLOCK_SIZE, BLOCK_OVERLAP } from './s2/cog.js';
 import { utmToWgs84, utmParams } from './s2/geo.js';
-import initWasm, { detectBlock as wasmDetectBlock } from './s2/wasm/s2_flares_wasm.js';
+import initWasm, { detectBlock as wasmDetectBlock } from './s2/wasm/s2e_wasm.js';
 
-// The block detector is the s2-flares rust core, compiled to wasm — the SAME
+// The block detector is the s2e rust core, compiled to wasm — the SAME
 // methodology the server-side archive run uses; STAC/COG I/O and clustering stay JS
 // (web/s2/). There is no JS fallback detector: a silently drifting copy is
 // exactly how the in-browser pixel counts diverged from the core.
@@ -176,7 +176,7 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
                         const canonRow = Math.floor((det.peak_img_row ?? det._peakImgRow) / BLOCK_SIZE);
                         const canonCol = Math.floor((det.peak_img_col ?? det._peakImgCol) / BLOCK_SIZE);
                         if (canonRow === br && canonCol === bc) {
-                            // Map s2-flares field names to burnoff's expected names
+                            // Map s2e field names to burnoff's expected names
                             kept.push({
                                 date: det.date,
                                 max_b12: det.max_b12,
@@ -184,7 +184,7 @@ async function processImageBlocks(item, viewportBbox, cachedBlockDates) {
                                 flare_lon: det.lon,
                                 flare_lat: det.lat,
                                 avg_b12: det.avg_b12,
-                                // s2-flares glint/spectral annotations
+                                // s2e glint/spectral annotations
                                 peak_b11: det.peak_b11,
                                 b12_b11_ratio: det.b12_b11_ratio,
                                 sun_elevation: det.sun_elevation,

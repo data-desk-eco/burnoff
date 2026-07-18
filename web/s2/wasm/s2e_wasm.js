@@ -1,4 +1,4 @@
-/* @ts-self-types="./s2_flares_wasm.d.ts" */
+/* @ts-self-types="./s2e_wasm.d.ts" */
 
 /**
  * cluster an array of (possibly partial) detection objects into scored sites.
@@ -265,7 +265,7 @@ function __wbg_get_imports() {
     };
     return {
         __proto__: null,
-        "./s2_flares_wasm_bg.js": import0,
+        "./s2e_wasm_bg.js": import0,
     };
 }
 
@@ -566,7 +566,7 @@ async function __wbg_init(module_or_path) {
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL('s2_flares_wasm_bg.wasm', import.meta.url);
+        module_or_path = new URL('s2e_wasm_bg.wasm', import.meta.url);
     }
     const imports = __wbg_get_imports();
 

@@ -5,7 +5,7 @@ VIIRS Nightfire (VNF) mode for browsing EOG's satellite flare catalog.
 
 Zero npm dependencies. The only external libraries are MapLibre GL (map
 rendering), geotiff.js (COG reads), hyparquet (parquet reads, pure js), and the
-s2-flares rust core compiled to wasm (the flare detector) — all vendored under
+s2e rust core compiled to wasm (the flare detector) — all vendored under
 `web/vendor/` and `web/s2/`. Everything else — CRDT, WebRTC mesh, sync protocol,
 IndexedDB persistence, UTM projection math, and the signal server's WebSocket
 framing — is hand-rolled using web standards.
@@ -47,7 +47,7 @@ viewports are served from those cached tiles (bbox + date-overlap filter), so a
 far-out or uncovered viewport fetches nothing. `archiveFeature` maps a row straight
 to the Feature shape `crossDateCluster` emits, so the avg-B12 slider gates
 client-side but the server-side clustering is not re-run. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
-button) is the fallback for areas not yet archived: it runs the s2-flares rust core
+button) is the fallback for areas not yet archived: it runs the s2e rust core
 compiled to wasm (`web/s2/wasm/`), the SAME binary methodology as the server-side
 archive — there is no JS detector port (it drifted from the core and was removed).
 Peers share a single CRDT document, idle peers read
@@ -109,7 +109,7 @@ web/
   vnf.js              VNF data module: hyparquet reads + per-flare aggregation
   s2archive.js        S2 archive reader: hyparquet over the cluster parquet
   detect-worker.js    Module Web Worker: wasm block detector + COG I/O
-  s2/                 The s2-flares methodology core, adopted in-tree (no submodule):
+  s2/                 The s2e methodology core, adopted in-tree (no submodule):
                       stac/cog/geo I/O + cluster/score JS + the rust core compiled to
                       wasm in s2/wasm/. detect-worker runs the wasm — the same binary
                       methodology as the archive; cog.js holds the block tiling glue.
@@ -140,7 +140,7 @@ test/
 |---------|---------|-------------|
 | MapLibre GL 5.1 | WebGL map rendering | Vendored (`web/vendor/`) |
 | geotiff.js 2.1 | Cloud Optimized GeoTIFF reads | Vendored in `web/s2/vendor/` (ESM, one copy) |
-| s2-flares wasm 2.0 | Block flare detector (rust core) | Vendored in `web/s2/wasm/` |
+| s2e wasm 2.0 | Block flare detector (rust core) | Vendored in `web/s2/wasm/` |
 | hyparquet 1.26 | VNF + S2-archive Parquet reads | Vendored (`web/vendor/hyparquet/`) |
 
 Everything else uses browser/Node.js builtins:
@@ -172,7 +172,7 @@ Per-block pipeline (fused into minimal passes):
   8. Cluster filters: size, peak, peakedness, single-pixel, warm-region halo
   9. Overlap dedup: canonical block via floor(pixel / 256)
 
-Each detection also carries glint/spectral annotations (s2-flares core; the
+Each detection also carries glint/spectral annotations (s2e core; the
 glint geometry helpers are re-exported from `web/s2/score.js`):
   - sun_elevation/sun_azimuth (STAC view extension, via stac.js)
   - glint_angle = 90 - sun_elevation; glint_score (1.0 ≤25°, →0 at 65°)

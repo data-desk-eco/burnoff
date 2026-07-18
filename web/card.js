@@ -376,7 +376,7 @@ async function loadImageryForDetection(det) {
     document.querySelector('.event-item.active')?.classList.add('loading');
 
     try {
-        // windowed read via the s2-flares COG glue — same I/O path as the detector
+        // windowed read via the s2e COG glue — same I/O path as the detector
         const { image, bbox: imgBbox, width, height, resX, resY } = await openCOG(url);
         const [imgMinX, imgMinY, imgMaxX, imgMaxY] = imgBbox;
 
