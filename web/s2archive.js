@@ -1,7 +1,7 @@
 // S2 archive reader — reads the precomputed Sentinel-2 SWIR flare *cluster view*
 // straight from the CloudFerro public parquet archive (s2e `box.sh archive`).
 // The archive co-produces a derived cluster view partitioned by MGRS tile,
-// `clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
+// `views/clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
 // nested `detections` list). We enumerate those per-tile objects from the bucket
 // listing, then range-read only the tiles a viewport overlaps through cartograph's
 // hyparquet data layer — each tile's parquet is loaded once, lazily, and cached.
@@ -69,18 +69,18 @@ function loadTiles() {
         try {
             const clusters = new Set();
             for (let token = ''; ;) {
-                const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000`
+                const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000&prefix=views/clusters/`
                     + (token && `&continuation-token=${encodeURIComponent(token)}`))).text();
-                for (const m of xml.matchAll(/clusters\/mgrs=(\d+[C-X][A-Z]{2})/g)) clusters.add(m[1]);
+                for (const m of xml.matchAll(/views\/clusters\/mgrs=(\d+[C-X][A-Z]{2})/g)) clusters.add(m[1]);
                 if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
                 token = xml.match(/<NextContinuationToken>([^<]+)</)?.[1] ?? '';
                 if (!token) break;
             }
             _clusterTiles = [...clusters].map(id => ({
-                id, key: `${_base}/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id)) }));
+                id, key: `${_base}/views/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id)) }));
         } catch { _clusterTiles = null; }
         try {
-            _coverage = await (await fetch(`${_base}/coverage.geojson`)).json();
+            _coverage = await (await fetch(`${_base}/web/coverage.geojson`)).json();
             _tiles = _coverage.features.map(f => ringBbox(f.geometry.coordinates[0]));
         } catch { _coverage = null; _tiles = null; }
     })();
