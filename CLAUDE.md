@@ -239,11 +239,11 @@ validated). EOG's `Flow_Rate` implements the legacy Cedigaz power law, which
 that paper shows overestimates dim flares and underestimates bright ones.
 
 The store also carries the RAW per-pass form at `vnf/passes/data.parquet`
-(`make vnf-raw vnf-raw-upload`): the EOG profile CSVs concatenated verbatim —
+(`make -C ../etl vnf-raw`): the EOG profile CSVs concatenated verbatim —
 EOG's own columns (`Date_Mscan, Temp_BB, RH, RHI, Flow_Rate, Cloud_Mask,
 QF_Detect, …`), 999999 sentinels kept, row groups clustered by `flare_id` —
 so queries can go straight to EOG's numbers without trusting the aggregation.
-Rebuild + re-upload after `make -C ../etl profiles` refreshes the CSVs. (The nightly backfill appends to the AGGREGATE only; the raw parquet is
+Rebuild + re-upload after `make -C ../etl vnf-profiles` refreshes the CSVs. (The nightly backfill appends to the AGGREGATE only; the raw parquet is
 profiles-only and regenerates from the CSV corpus.)
 
 The web query groups by `flare_id`, computes `total_dates`, `clear_dates`,
