@@ -1,4 +1,4 @@
-// same exports as data-core.js, with initData/meta/read proxied to a shared
+// same exports as data-core.js, with initData/meta/read/sql proxied to a shared
 // module worker so heavy decodes never block panning. falls back to inline
 // data-core where module workers are unavailable (node tests, file://).
 import * as core from './data-core.js';
@@ -32,3 +32,4 @@ try {
 export const initData = c => void rpc('initData', cfg = c)?.catch?.(() => {});
 export const meta = (name, opts) => rpc('meta', name, opts);
 export const read = (name, opts) => rpc('read', name, opts);
+export const sql = query => rpc('sql', query);   // duckdb escalation; query in the `name` slot

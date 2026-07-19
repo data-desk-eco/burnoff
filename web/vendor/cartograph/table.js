@@ -10,6 +10,10 @@
 //   cols: [names],                column subset/order (default: keys of row 0)
 //   lat, lon: 'lat', 'lon',       coord columns (viewport filter + fly)
 //   pick: (row, ctx) => {},       row click; default opens detail by idProp
+//   filter: false,                opt out of the shared filter pipeline
+//                                 (config.filters + key preds follow the map
+//                                 by default; opt out tabs whose rows aren't
+//                                 feature properties)
 // }]
 
 import { escapeHtml, tableRows } from './util.js';
@@ -50,14 +54,17 @@ export function initTable(ctx) {
         ctx.map.setPadding({ right: w });
         document.getElementById('detail')?.style.setProperty('right', w ? w + 'px' : '');
         // search box only once there's room for it beside the tabs (which
-        // keep their natural width — the css never stretches or shrinks them)
-        el('.cg-drawer-q').style.display = w < el('.dd-toggle').offsetWidth + 200 ? 'none' : '';
+        // keep their natural width — the css never stretches or shrinks them).
+        // visibility, not display: it stays in layout so the head never
+        // changes height as the drawer crosses the threshold
+        el('.cg-drawer-q').style.visibility = w < el('.dd-toggle').offsetWidth + 200 ? 'hidden' : '';
     };
 
     async function render() {
         if (width < MIN) return;
         const t = tabs[active];
-        const all = await (cache[active] ??= Promise.resolve(t.rows(ctx)));
+        let all = await (cache[active] ??= Promise.resolve(t.rows(ctx)));
+        if (t.filter !== false && ctx.preds?.length) all = all.filter(r => ctx.preds.every(p => p(r)));
         const cols = t.cols || Object.keys(all[0] || {});
         const { rows, total } = tableRows(all, {
             cols, q, sortCol, sortDir, lat: t.lat, lon: t.lon, bounds: viewportBbox(ctx.map) });
@@ -107,6 +114,7 @@ export function initTable(ctx) {
         render();
     });
     ctx.map.on('moveend', render);
+    addEventListener('cg-filters', render);
 
     handle.addEventListener('pointerdown', e => {
         e.preventDefault();

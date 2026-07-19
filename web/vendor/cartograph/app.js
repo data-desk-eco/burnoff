@@ -5,10 +5,10 @@
 // common fields declarative forms so simple maps ship no js at all.
 
 import { createMap, addSatellite, wireWorldmap, wireCollapse, hoverPopup } from './shell.js';
-import { initData, read, meta, fc } from './data.js';
+import { initData, read, meta, sql, fc } from './data.js';
 import { buildShell, initKey, wireSliders } from './ui.js';
 import { initQuarters } from './quarters.js';
-import { initDetail } from './detail.js';
+import { initDetail, restorePermalink } from './detail.js';
 import { initTable } from './table.js';
 import { initStory } from './story.js';
 import { compileConfig } from './util.js';
@@ -40,10 +40,11 @@ function wireSearch(map) {
 function wireFilters(map, config, sources, extra, ctx) {
     const state = Object.fromEntries((config.filters || []).map(f => [f.key, f.value ?? 'all']));
     const apply = () => {
-        const preds = [...(config.filters || []).map(f => f.pred?.(state[f.key])), ...extra()].filter(Boolean);
+        const preds = ctx.preds = [...(config.filters || []).map(f => f.pred?.(state[f.key])), ...extra()].filter(Boolean);
         for (const [id, fc] of Object.entries(sources))
             map.getSource(id)?.setData(preds.length
                 ? { ...fc, features: fc.features.filter(f => preds.every(p => p(f.properties))) } : fc);
+        dispatchEvent(new Event('cg-filters'));   // the table re-renders in step
     };
     for (const group of document.querySelectorAll('.cg-filter')) {
         group.addEventListener('click', e => {
@@ -73,7 +74,7 @@ export async function mount(config) {
     }
     if (config.data) initData(config.data);
 
-    const ctx = { map, config, read, meta, fc, sources: {} };
+    const ctx = { map, config, read, meta, sql, fc, sources: {} };
     if (config.quarters) ctx.quarters = initQuarters(document.getElementById('quarters'),
         () => config.quarters.onChange?.(ctx), config.quarters.years);
     wireSliders(config, ctx);
@@ -106,6 +107,8 @@ export async function mount(config) {
     }
 
     await config.ready?.(ctx);
+    // only after ready: onShow hooks may depend on handles wired there
+    restorePermalink();
     window.cartograph = ctx;   // console + test handle
     return ctx;
 }

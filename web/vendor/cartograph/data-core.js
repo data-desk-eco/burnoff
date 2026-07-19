@@ -5,6 +5,7 @@
 // inside data-worker.js in browsers, inline via data.js elsewhere.
 
 const HYP = new URL('../hyparquet/', import.meta.url).href;
+const DDB = new URL('../duckdb/', import.meta.url).href;   // duckdb-wasm-lite release, sibling vendor dir
 
 let lib;   // hyparquet + compressors module namespace, loaded on first open
 const load = () => lib ??= Promise.all(
@@ -45,6 +46,26 @@ export async function read(name, { columns, where, range } = {}) {
         h.parquetReadObjects({ file, compressors: h.compressors, columns, rowStart, rowEnd })));
     const rows = parts.flat().map(norm);
     return where ? rows.filter(r => matches(r, where)) : rows;
+}
+
+// sql escalation: real sql over remote parquet when a map outgrows the
+// hyparquet predicate scans above (client-side joins, arbitrary group-bys).
+// nothing loads until the first query, then duckdb-wasm-lite (worker + wasm,
+// ~4.4 MB brotli) is imported from the ../duckdb/ sibling vendor dir and kept
+// alive. remote parquet needs no registration — `select * from 'https://…'`
+// range-reads directly. rows normalise like read() (bigints/dates); see the
+// duckdb-wasm-lite readme for the geometry/spatial predicates it ships.
+let ddb;
+export async function sql(query) {
+    ddb ??= (async () => {
+        const d = await import(`${DDB}duckdb-browser.mjs`);
+        const db = new d.AsyncDuckDB(new d.VoidLogger(), new Worker(`${DDB}duckdb-browser-eh.worker.js`));
+        await db.instantiate(`${DDB}duckdb-eh.wasm`);
+        return db;
+    })();
+    const c = await (await ddb).connect();
+    try { return (await c.query(query)).toArray().map(r => norm(r.toJSON())); }
+    finally { await c.close(); }
 }
 
 // bigints -> numbers, dates -> iso strings (date-only at utc midnight),
