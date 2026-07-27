@@ -30,7 +30,7 @@ const VNF_URL = document.querySelector('meta[name="vnf-url"]')?.content || '';
 const vnfUrl = () => (location.hostname === 'localhost' || !VNF_URL) ? 'vnf.parquet' : VNF_URL;
 
 // s2 mode reads the precomputed cluster view straight from the CloudFerro parquet
-// archive (`data-desk/store.sh publish`); the in-browser COG worker ("Detect")
+// archive (`data-desk/infra/store.sh publish`); the in-browser COG worker ("Detect")
 // stays as the fallback for areas not yet archived. warm the archive
 // cache at page parse, overlapping maplibre init.
 const S2_ARCHIVE = document.querySelector('meta[name="s2-archive"]')?.content || '';
