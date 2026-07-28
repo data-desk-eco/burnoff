@@ -246,9 +246,16 @@ so queries can go straight to EOG's numbers without trusting the aggregation.
 Rebuild + re-upload after `make -C ../etl vnf-profiles` refreshes the CSVs. (The nightly backfill appends to the AGGREGATE only; the raw parquet is
 profiles-only and regenerates from the CSV corpus.)
 
-The web query groups by `flare_id`, computes `total_dates`, `clear_dates`,
-`detection_dates`, and returns a detection list with `date, rh_mw, temp_k`.
-Persistence = `detection_dates / clear_dates` (real cloud-free denominator).
+The web query groups by `flare_id`, computes `total_dates`, `profiled_dates`,
+`clear_dates`, `detection_dates`, and returns a detection list with
+`date, rh_mw, temp_k`. Persistence = `detection_dates / clear_dates` (real
+cloud-free denominator), **but only where `coverage` clears `COVERAGE_MIN`**.
+EOG stopped recording an overpass for every flare every night on 2025-10-01, so
+`clear_dates` can be a fraction of the window it appears to cover while
+`detection_dates` is intact — which roughly doubles the ratio. `coverage` is
+`profiled_dates` over the nights in the selected quarters; below 0.8 persistence
+is null, the card shows '—' and the layer filter drops the flare rather than
+ranking it. See `data-desk/docs/archive/vnf.md`.
 
 ## P2P Sync
 

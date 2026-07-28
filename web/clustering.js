@@ -7,6 +7,10 @@
 export const DEG_TO_RAD = Math.PI / 180;
 const R_EARTH = 6371000;
 const TERMINAL_MATCH_M = 7500;
+// eog stopped recording an overpass for every flare every night on 2025-10-01,
+// so a cloud-free denominator can be a fraction of the window it looks like.
+// below this share of the window, persistence is not a number we have.
+const COVERAGE_MIN = 0.8;
 
 // Fast equirectangular distance — accurate to <0.1% under 1 km and below ~70° lat.
 function fastDistM(lat1, lon1, lat2, lon2) {
@@ -102,7 +106,11 @@ export function enrichVNFFeatures(features, minRh) {
         const passes = p.total_dates;
         const detection_count = p.detection_dates;
         const observations = Math.max(p.clear_dates, detection_count);
-        const persistence = observations > 0 ? detection_count / observations : 0;
+        // null, not 0, where eog recorded too little of the window to divide by:
+        // an unmeasured flare is not an unlit one. the card renders it as '—'
+        // and the persistence layer filter drops it rather than ranking it.
+        const persistence = p.coverage < COVERAGE_MIN ? null
+            : observations > 0 ? detection_count / observations : 0;
 
         result.push({
             type: 'Feature',

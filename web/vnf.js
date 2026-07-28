@@ -19,8 +19,12 @@ let _url = null, _initPromise = null, _ready = false;
 export function isReady() { return _ready; }
 
 const sibling = f => _url.replace(/[^/]*$/, f);
-const COLS = ['flare_id', 'lat', 'lon', 'quarter', 'days', 'clear_days',
+const COLS = ['flare_id', 'lat', 'lon', 'quarter', 'days', 'profiled_days', 'clear_days',
               'detected_days', 'rh_sum', 'rh_max', 'type', 'category', 'country'];
+// nights in a quarter, near enough. a flare's profiled_days over this is the
+// share of the window eog actually recorded an overpass for, and persistence
+// divides by a cloud-free count that only means something when it is high.
+const QUARTER_NIGHTS = 91;
 
 /**
  * Initialize VNF: open the quarterly rollup (remote: footer bytes only) so
@@ -54,9 +58,12 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
         if (!s) by.set(r.flare_id, s = {
             flare_id: Number(r.flare_id), lat: Number(r.lat), lon: Number(r.lon),
             type: '', category: '', country: '',
-            total_dates: 0, clear_dates: 0, detection_dates: 0, rh_sum: 0, max_rh: 0,
+            total_dates: 0, profiled_dates: 0, clear_dates: 0, detection_dates: 0,
+            rh_sum: 0, max_rh: 0, quarters: new Set(),
         });
+        s.quarters.add(String(r.quarter));
         s.total_dates += Number(r.days);
+        s.profiled_dates += Number(r.profiled_days);
         s.clear_dates += Number(r.clear_days);
         s.detection_dates += Number(r.detected_days);
         s.rh_sum += Number(r.rh_sum);
@@ -67,11 +74,17 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
         .sort((a, b) => b.max_rh - a.max_rh);
     return {
         type: 'FeatureCollection',
-        features: sites.map(({ lat, lon, rh_sum, ...p }) => ({
+        features: sites.map(({ lat, lon, rh_sum, quarters, ...p }) => ({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [lon, lat] },
             properties: {
                 ...p, lat, lon,
+                // share of the selected window eog recorded an overpass for.
+                // since 2025-10-01 it can be low, and a low one makes every
+                // cloud-free denominator below it meaningless — see
+                // data-desk/docs/archive/vnf.md
+                coverage: quarters.size
+                    ? p.profiled_dates / (quarters.size * QUARTER_NIGHTS) : 0,
                 avg_rh: p.detection_dates ? rh_sum / p.detection_dates : 0,
                 detections: [],
             },
