@@ -271,7 +271,10 @@ async function resolveFlare(id) {
     const range = CTX.quarters.range();
     if (!vnfReady() || !range) return null;
     const fc = await queryVNFFlare(id, range.startDate, range.endDate);
-    return enrichVNFFeatures(fc.features.slice(0, 1), GATE.vnf)[0] ?? null;
+    // gate 0, not GATE.vnf: the intensity slider is a browsing filter, and a
+    // link that names one flare has already chosen it. under the 3 MW default
+    // every dim flare — most onshore gas plants — resolved to nothing at all.
+    return enrichVNFFeatures(fc.features.slice(0, 1), 0)[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------
