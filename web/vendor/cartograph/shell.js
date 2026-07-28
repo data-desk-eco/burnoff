@@ -32,25 +32,43 @@ export function ensureMark(map, id) {
 // grayscale, underexposed satellite imagery fades in over the dark basemap on
 // zoom (guidelines: gradient-map grayscale, approximated with full desaturation
 // + a lowered brightness ceiling). call from map load.
+//
+// esri's world imagery cache runs out somewhere between z17 and z19 depending on
+// where you stand — measured over 700 real plume and flare sites, 26% have
+// nothing at z18 and 53% nothing at z19 — and past its edge it answers 200 with
+// an opaque "map data not yet available" jpeg rather than 404ing. maplibre can't
+// tell that from imagery, so it paints the grey sheet instead of overzooming
+// what it already has. so: swap that placeholder for a transparent tile as it
+// arrives, and stack the source at each of the three depths its cache tends to
+// stop at. every tier is blank wherever esri stopped short, and the sharpest one
+// that did resolve shows through.
+const ESRI = 'esri://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const GAP = 2521;   // byte length of the placeholder jpeg
+const BLANK = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII='), c => c.charCodeAt(0)).buffer;
+const SAT = [['satellite', 7, 17], ['satellite-mid', 17, 18], ['satellite-deep', 18, 19]];
+
+maplibregl.addProtocol('esri', async ({ url }, abort) => {
+    const data = await (await fetch(url.replace('esri:', 'https:'), { signal: abort.signal })).arrayBuffer();
+    return { data: data.byteLength === GAP ? BLANK : data };
+});
+
 export function addSatellite(map) {
-    map.addSource('satellite', {
-        type: 'raster',
-        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-        tileSize: 256
-    });
-    map.addLayer({
-        id: 'satellite', type: 'raster', source: 'satellite', minzoom: 7,
-        paint: {
-            'raster-saturation': -1,
-            'raster-brightness-max': 0.75,
-            'raster-opacity': ['interpolate', ['linear'], ['zoom'], 7.5, 0, 9, 1]
-        }
-    });
+    for (const [id, minzoom, maxzoom] of SAT) {
+        map.addSource(id, { type: 'raster', tiles: [ESRI], tileSize: 256, maxzoom });
+        map.addLayer({
+            id, type: 'raster', source: id, minzoom,
+            paint: {
+                'raster-saturation': -1,
+                'raster-brightness-max': 0.75,
+                'raster-opacity': ['interpolate', ['linear'], ['zoom'], 7.5, 0, 9, 1]
+            }
+        });
+    }
 }
 
 // drop the brightness ceiling further while an image overlay is up
 export const dimSatellite = (map, dim) =>
-    map.setPaintProperty('satellite', 'raster-brightness-max', dim ? 0.25 : 0.75);
+    SAT.forEach(([id]) => map.setPaintProperty(id, 'raster-brightness-max', dim ? 0.25 : 0.75));
 
 export function viewportBbox(map) {
     const b = map.getBounds();
