@@ -26,13 +26,21 @@ jobs:
           # tags, so a deploy can never pair a fresh module with a stale cached one
           # (github pages caches for 10 min). vendor bundles keep their own paths —
           # they only change when revendored.
+          #
+          # the last rule strips the stamp back off vendor specifiers. vendor files
+          # are pruned from the rewrite, so cartograph's own `from './detail.js'`
+          # stays bare; stamping our `from './vendor/cartograph/detail.js'` would
+          # name a second url for the same file and the browser would hold two
+          # module instances of it — app.js initialising one while card.js calls
+          # the other, whose cfg is still undefined.
           V=${GITHUB_SHA::8}
           find dist -path dist/vendor -prune -o -path dist/s2/vendor -prune -o \
             \( -name '*.js' -o -name '*.html' \) -print0 | xargs -0 sed -i -E \
             -e "s|(from ')(\.[^']+\.m?js)(')|\1\2?v=$V\3|g" \
             -e "s|(import\(')(\.[^']+\.m?js)('\))|\1\2?v=$V\3|g" \
             -e "s|(new Worker\(')([^'?]+\.js)(')|\1\2?v=$V\3|g" \
-            -e "s|\?v=[0-9a-z]+|?v=$V|g"
+            -e "s|\?v=[0-9a-z]+|?v=$V|g" \
+            -e "s|(vendor/[^']*\.m?js)\?v=[0-9a-z]+|\1|g"
 
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
