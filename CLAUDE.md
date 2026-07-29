@@ -216,21 +216,27 @@ and shown in the detail card, NOT yet a gate. The formula was tuned in
 
 ## VNF Data Pipeline
 
-The pipeline lives in the sibling etl repo (`~/Tools/etl`): EOG profile CSVs
-(one per flare site, every satellite pass since 2012) are aggregated to daily
-level per flare and written to a ZSTD-compressed Parquet file (~6 MB, ~1.8M
-rows), refreshed nightly by `etl/vnf.yml`.
+The pipeline lives in the sibling etl repo (`~/Tools/etl`, see `vnf/REBUILD.md`).
+It generates the calendar itself — every flare, every night from 2012-03-01 to
+today — and lets EOG supply detections only, so a night with no detection is a
+row saying "nothing seen", not an absence. Whether we could have seen anything
+is our own call: ERA5 total cloud cover sampled at each site's real VIIRS
+overpass hours, clear at `tcc < 0.6`.
 
 ```
-Profile CSVs → nighttime filter → daily aggregation → parquet
-                                       ↑
-                  terminals.geojson → haversine filter (6 km)
-                  flare index      → metadata enrichment (type, category, country)
+flare × night calendar → EOG profile CSVs   → detections (Planck fits)
+                       → ERA5 tcc at overpass hours → clear / unobserved
+                       → terminals.geojson (6 km) → flare index (type, category, country)
 ```
 
-Parquet schema: `flare_id, lat, lon, date, clear, detected, rh_mw, temp_k,
-flow_mcm, n_passes, type, category, country`. Coordinates are stable per-flare
-averages (from profile passes), not per-pass positions. `flow_mcm` carries
+Daily parquet (`views/vnf/data.parquet`): `flare_id, lat, lon, date, clear,
+detected, tcc, rh_mw, temp_k, flow_mcm, looks, profiled`. `clear` is BOOLEAN and
+NULL means unobserved — never conflate it with cloudy. `profiled` survives from
+the old build and still gates the same way, but it now says a satellite flew and
+we read the sky rather than that EOG chose to write a row; 98.8% of flare-nights
+across the archive are observed. `type, category, country` moved out to
+`views/vnf/flares.parquet` and `n_passes` is gone. Coordinates are stable
+per-flare averages (from profile passes), not per-pass positions. `flow_mcm` carries
 EOG's own per-pass `Flow_Rate` (daily-averaged like `rh_mw`; 0 on
 nightly-backfilled rows — the ez CSVs have no flow) but is NOT displayed:
 the UI's MCM/d column is `rh_mw × 0.0315`, the JZ-RH VNF v3 calibration
@@ -246,16 +252,33 @@ so queries can go straight to EOG's numbers without trusting the aggregation.
 Rebuild + re-upload after `make -C ../etl vnf-profiles` refreshes the CSVs. (The nightly backfill appends to the AGGREGATE only; the raw parquet is
 profiles-only and regenerates from the CSV corpus.)
 
-The web query groups by `flare_id`, computes `total_dates`, `profiled_dates`,
-`clear_dates`, `detection_dates`, and returns a detection list with
-`date, rh_mw, temp_k`. Persistence = `detection_dates / clear_dates` (real
-cloud-free denominator), **but only where `coverage` clears `COVERAGE_MIN`**.
-EOG stopped recording an overpass for every flare every night on 2025-10-01, so
-`clear_dates` can be a fraction of the window it appears to cover while
-`detection_dates` is intact — which roughly doubles the ratio. `coverage` is
-`profiled_dates` over the nights in the selected quarters; below 0.8 persistence
-is null, the card shows '—' and the layer filter drops the flare rather than
-ranking it. See `data-desk/docs/archive/vnf.md`.
+The viewport tier is `views/vnf/quarters.parquet` (flare × quarter, last four
+calendar years): `days, profiled_days, clear_days, detected_days,
+detected_any_days, rh_sum, rh_max`. `days` is the exact night count in the
+quarter, `detected_days` counts detections on nights we could see, and
+`detected_any_days` counts every detection including cloudy ones. **Never divide
+`detected_any_days` by `clear_days`** — that pairing is what broke `lng-flaring`.
+
+The web query sums those to `total_dates`, `profiled_dates`, `clear_dates`,
+`detection_dates`, `detection_any` per flare, and returns a detection list with
+`date, rh_mw`. Two ratios come out of it:
+
+- `persistence` = `detection_dates / clear_dates` — numerator and denominator on
+  the same nights, so it is a rate. Null, not 0, where `clear_dates` is 0 (a
+  window holding no clear night measures nothing) or where `coverage` falls
+  below `COVERAGE_MIN`. The card shows '—' and the layer filter drops the flare
+  rather than ranking it.
+- `avg_rh` = `rh_sum / detection_any` — `rh_sum` spans every detection, so its
+  mean divides by every detection.
+
+`coverage` is `profiled_dates / total_dates`: the share of the selected window's
+nights we read the sky for, over the exact night count rather than a 91-night
+approximation. Whole nights are missing globally or not at all, so it catches
+platform outages and the trailing weeks the ERA5 series has not reached, not
+per-site absence. Quarters run 0.93–1.00 read against 0.68 for one still
+filling, and `COVERAGE_MIN` (0.8) sits in that gap — so the current quarter
+selected alone greys out until the backfill has caught up on ~80% of its
+nights. See `data-desk/docs/archive/vnf.md`.
 
 ## P2P Sync
 
