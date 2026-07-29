@@ -103,17 +103,21 @@ export function cardTitle(p) {
 
 export function cardHtml(p) {
     const cfg = modeConf();
+    const vnf = isVnf();
     // vnf features carry range-scoped aggregates from the quarterly rollup
     // (detections load lazily); s2 derives metrics from the embedded list
-    const m = isVnf()
+    const m = vnf
         ? { detection_count: p.detection_count, observations: p.observations, persistence: p.persistence }
         : quarterMetrics(p, parseDets(p), quarterKeys());
     const cfLabel = p.passes && m.observations != null
         ? `Cloud-free (${Math.round(m.observations / p.passes * 100)}%)` : 'Cloud-free obs.';
+    // vnf: the count is the nights we could see the site and it was lit — fewer
+    // than the dates listed below, which include cloudy ones — over nights a
+    // satellite flew and we read the sky. the four read as one chain.
     const stats = [
-        ['Detections', m.detection_count],
+        [vnf ? 'Detections (clear)' : 'Detections', m.detection_count],
         ['Persistence', m.persistence != null ? `${Math.round(m.persistence * 100)}%` : '—'],
-        ['Passes', p.passes ?? '—'],
+        [vnf ? 'Nights read' : 'Passes', p.passes ?? '—'],
         [cfLabel, m.observations ?? '—'],
     ].map(([k, v]) => `<div><span class="dd-secondary">${k}</span><span>${v}</span></div>`).join('');
     return `

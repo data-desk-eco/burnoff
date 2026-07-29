@@ -20,11 +20,7 @@ export function isReady() { return _ready; }
 
 const sibling = f => _url.replace(/[^/]*$/, f);
 const COLS = ['flare_id', 'lat', 'lon', 'quarter', 'days', 'profiled_days', 'clear_days',
-              'detected_days', 'rh_sum', 'rh_max', 'type', 'category', 'country'];
-// nights in a quarter, near enough. a flare's profiled_days over this is the
-// share of the window eog actually recorded an overpass for, and persistence
-// divides by a cloud-free count that only means something when it is high.
-const QUARTER_NIGHTS = 91;
+              'detected_days', 'detected_any_days', 'rh_sum', 'rh_max', 'type', 'category', 'country'];
 
 /**
  * Initialize VNF: open the quarterly rollup (remote: footer bytes only) so
@@ -59,18 +55,21 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
             flare_id: Number(r.flare_id), lat: Number(r.lat), lon: Number(r.lon),
             type: '', category: '', country: '',
             total_dates: 0, profiled_dates: 0, clear_dates: 0, detection_dates: 0,
-            rh_sum: 0, max_rh: 0, quarters: new Set(),
+            detection_any: 0, rh_sum: 0, max_rh: 0, quarters: new Set(),
         });
         s.quarters.add(String(r.quarter));
         s.total_dates += Number(r.days);
         s.profiled_dates += Number(r.profiled_days);
         s.clear_dates += Number(r.clear_days);
         s.detection_dates += Number(r.detected_days);
+        s.detection_any += Number(r.detected_any_days);
         s.rh_sum += Number(r.rh_sum);
         s.max_rh = Math.max(s.max_rh, Number(r.rh_max));
         for (const k of ['type', 'category', 'country']) s[k] ||= r[k] || '';
     }
-    const sites = [...by.values()].filter(s => !detectedOnly || s.detection_dates > 0)
+    // any night the site was seen lit, cloudy ones included — a flare only ever
+    // caught under cloud still burned, and dropping it would be a false negative
+    const sites = [...by.values()].filter(s => !detectedOnly || s.detection_any > 0)
         .sort((a, b) => b.max_rh - a.max_rh);
     return {
         type: 'FeatureCollection',
@@ -79,13 +78,14 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
             geometry: { type: 'Point', coordinates: [lon, lat] },
             properties: {
                 ...p, lat, lon,
-                // share of the selected window eog recorded an overpass for.
-                // since 2025-10-01 it can be low, and a low one makes every
-                // cloud-free denominator below it meaningless — see
+                // share of the window's nights we read the sky for, over the
+                // exact night count (`days`), not a 91-night approximation.
+                // low means a platform was grounded over this site — see
                 // data-desk/docs/archive/vnf.md
-                coverage: quarters.size
-                    ? p.profiled_dates / (quarters.size * QUARTER_NIGHTS) : 0,
-                avg_rh: p.detection_dates ? rh_sum / p.detection_dates : 0,
+                coverage: p.total_dates ? p.profiled_dates / p.total_dates : 0,
+                // rh_sum spans every detection, cloudy nights included, so its
+                // mean divides by detection_any — not the clear-night count
+                avg_rh: p.detection_any ? rh_sum / p.detection_any : 0,
                 detections: [],
             },
         })),
@@ -120,7 +120,10 @@ export async function queryVNFFlare(flareId, startDate, endDate) {
 
 /**
  * Daily detection history for one flare (card open) — the only reader of the
- * big daily parquet. Full history; the card filters to the quarter window.
+ * big daily parquet. That parquet now carries a row for every flare on every
+ * night from 2012-03 to wherever the cloud series ends, lit or not, so the
+ * detected filter is what keeps this read small. Full history; the card filters
+ * to the quarter window.
  */
 export async function fetchVNFDetections(flareId) {
     const f = (await flareIndex()).get(Number(flareId));
@@ -137,8 +140,8 @@ export async function availableQuartersVNF(bbox, startDate, endDate) {
     if (!_ready) return new Set();
     const [west, south, east, north] = bbox;
     const rows = await read(sibling('quarters.parquet'),
-        { columns: ['lat', 'lon', 'quarter', 'detected_days'],
+        { columns: ['lat', 'lon', 'quarter', 'detected_any_days'],
           where: { lat: [south, north], lon: [west, east],
-                   quarter: [startDate, endDate], detected_days: [1, null] } });
+                   quarter: [startDate, endDate], detected_any_days: [1, null] } });
     return new Set(rows.map(r => quarterOf(r.quarter)));
 }

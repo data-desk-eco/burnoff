@@ -7,9 +7,12 @@
 export const DEG_TO_RAD = Math.PI / 180;
 const R_EARTH = 6371000;
 const TERMINAL_MATCH_M = 7500;
-// eog stopped recording an overpass for every flare every night on 2025-10-01,
-// so a cloud-free denominator can be a fraction of the window it looks like.
-// below this share of the window, persistence is not a number we have.
+// the denominator is ours now: a night counts as read when a satellite flew and
+// we sampled the sky at the site's overpass hours, so a low share means one
+// platform was grounded over this site — not eog's silence, and no longer the
+// calendar running past the cloud series, which now ends where it does. it is a
+// per-site gate: whole quarters average 0.86–1.00 read, and what falls below is
+// the sites under an outage. below it, persistence is not a number we have.
 const COVERAGE_MIN = 0.8;
 
 // Fast equirectangular distance — accurate to <0.1% under 1 km and below ~70° lat.
@@ -103,14 +106,19 @@ export function enrichVNFFeatures(features, minRh) {
         const typeCat = [p.type, p.category].filter(Boolean).join(' — ');
         const name = terminal ? terminal.name : typeCat || `Flare #${p.flare_id}`;
 
-        const passes = p.total_dates;
+        const passes = p.profiled_dates;
+        // both restricted to nights we could see, so the ratio is a rate. the
+        // old max() guarded a numerator larger than its denominator, which the
+        // archive can no longer produce; what it left behind was a window
+        // holding no clear night at all reading 0% — never seen is not unlit.
         const detection_count = p.detection_dates;
-        const observations = Math.max(p.clear_dates, detection_count);
-        // null, not 0, where eog recorded too little of the window to divide by:
-        // an unmeasured flare is not an unlit one. the card renders it as '—'
-        // and the persistence layer filter drops it rather than ranking it.
-        const persistence = p.coverage < COVERAGE_MIN ? null
-            : observations > 0 ? detection_count / observations : 0;
+        const observations = p.clear_dates;
+        // null, not 0, where we read too little of the window to divide by, or
+        // never caught the site under clear sky: an unmeasured flare is not an
+        // unlit one. the card renders it as '—' and the persistence layer
+        // filter drops it rather than ranking it.
+        const persistence = p.coverage < COVERAGE_MIN || observations === 0
+            ? null : detection_count / observations;
 
         result.push({
             type: 'Feature',
