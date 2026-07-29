@@ -218,8 +218,9 @@ and shown in the detail card, NOT yet a gate. The formula was tuned in
 
 The pipeline lives in the sibling etl repo (`~/Tools/etl`, see `vnf/REBUILD.md`).
 It generates the calendar itself — every flare, every night from 2012-03-01 to
-today — and lets EOG supply detections only, so a night with no detection is a
-row saying "nothing seen", not an absence. Whether we could have seen anything
+wherever the cloud series ends, about five days back — and lets EOG supply
+detections only, so a night with no detection is a row saying "nothing seen",
+not an absence. Whether we could have seen anything
 is our own call: ERA5 total cloud cover sampled at each site's real VIIRS
 overpass hours, clear at `tcc < 0.6`.
 
@@ -273,12 +274,15 @@ The web query sums those to `total_dates`, `profiled_dates`, `clear_dates`,
 
 `coverage` is `profiled_dates / total_dates`: the share of the selected window's
 nights we read the sky for, over the exact night count rather than a 91-night
-approximation. Whole nights are missing globally or not at all, so it catches
-platform outages and the trailing weeks the ERA5 series has not reached, not
-per-site absence. Quarters run 0.93–1.00 read against 0.68 for one still
-filling, and `COVERAGE_MIN` (0.8) sits in that gap — so the current quarter
-selected alone greys out until the backfill has caught up on ~80% of its
-nights. See `data-desk/docs/archive/vnf.md`.
+approximation. The calendar ends where the cloud series ends, so it no longer
+counts nights ERA5 has not reached; what is left to catch is platform outages,
+and those are per-site — one platform grounded still leaves the other flying,
+and a single platform does not reach every site every night. `COVERAGE_MIN`
+(0.8) is therefore a per-site gate rather than a per-quarter one: whole quarters
+average 0.86–1.00 read, and the flares falling below the threshold are the ones
+an outage covered — 708 and 644 of ~11,800 mapped flares in the two 2024 outage
+quarters, 289 of 6,982 in the quarter in progress. See
+`data-desk/docs/archive/vnf.md`.
 
 ## P2P Sync
 

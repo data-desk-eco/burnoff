@@ -8,10 +8,11 @@ export const DEG_TO_RAD = Math.PI / 180;
 const R_EARTH = 6371000;
 const TERMINAL_MATCH_M = 7500;
 // the denominator is ours now: a night counts as read when a satellite flew and
-// we sampled the sky at the site's overpass hours, so a low share means a
-// platform outage or a stretch the cloud series has not reached yet — not eog's
-// silence. quarters run 0.93–1.00 read, against 0.68 for one still filling, so
-// the threshold sits in that gap. below it, persistence is not a number we have.
+// we sampled the sky at the site's overpass hours, so a low share means one
+// platform was grounded over this site — not eog's silence, and no longer the
+// calendar running past the cloud series, which now ends where it does. it is a
+// per-site gate: whole quarters average 0.86–1.00 read, and what falls below is
+// the sites under an outage. below it, persistence is not a number we have.
 const COVERAGE_MIN = 0.8;
 
 // Fast equirectangular distance — accurate to <0.1% under 1 km and below ~70° lat.

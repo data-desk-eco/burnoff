@@ -78,7 +78,11 @@ async function refreshVNF() {
     try {
         const fc = await queryVNF(viewportBbox(CTX.map), range.startDate, range.endDate);
         _vnfRaw = fc.features;
-        if (isVnf()) updateVNFSource();
+        // an open card holds the previous window's aggregates, so reconcile it
+        // against the re-query the way the slider path does — otherwise a card
+        // keeps a persistence for quarters that are no longer selected, and the
+        // '—' a window with no clear night should show never appears
+        if (isVnf()) { updateVNFSource(); reselectCurrentFeature(); }
     } catch (err) { console.error('VNF query error:', err); }
 }
 

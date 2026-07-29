@@ -80,8 +80,8 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
                 ...p, lat, lon,
                 // share of the window's nights we read the sky for, over the
                 // exact night count (`days`), not a 91-night approximation.
-                // low means a platform outage or a stretch the cloud series
-                // has not reached — see data-desk/docs/archive/vnf.md
+                // low means a platform was grounded over this site — see
+                // data-desk/docs/archive/vnf.md
                 coverage: p.total_dates ? p.profiled_dates / p.total_dates : 0,
                 // rh_sum spans every detection, cloudy nights included, so its
                 // mean divides by detection_any — not the clear-night count
@@ -121,8 +121,9 @@ export async function queryVNFFlare(flareId, startDate, endDate) {
 /**
  * Daily detection history for one flare (card open) — the only reader of the
  * big daily parquet. That parquet now carries a row for every flare on every
- * night since 2012-03, lit or not, so the detected filter is what keeps this
- * read small. Full history; the card filters to the quarter window.
+ * night from 2012-03 to wherever the cloud series ends, lit or not, so the
+ * detected filter is what keeps this read small. Full history; the card filters
+ * to the quarter window.
  */
 export async function fetchVNFDetections(flareId) {
     const f = (await flareIndex()).get(Number(flareId));
