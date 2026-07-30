@@ -132,11 +132,20 @@ merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**
 sits outside the archive's coverage — a pure-archive session never fetches it. The
 archive base is set via `<meta name="s2-archive">` in index.html.
 
-**VNF mode:** hyparquet reads a pre-built Parquet file containing per-flare
-daily observations from EOG profile CSVs. In production it lives in the shared
-datadesk CloudFerro archive at `views/vnf/data.parquet` (`<meta name="vnf-url">`); dev
-falls back to a local `web/vnf.parquet`. Each row has `clear`/`detected` booleans
-for real cloud-free persistence metrics.
+**VNF mode:** hyparquet reads pre-built Parquet holding per-flare daily
+observations from EOG profile CSVs. In production it lives in the shared
+datadesk CloudFerro archive under the prefix `views/vnf/`
+(`<meta name="vnf-url">` — the prefix, not a file); dev falls back to a build
+laid out the same way under `web/`. Each row has `clear`/`detected` booleans for
+real cloud-free persistence metrics.
+
+The daily series is **64 spatial cells**, `views/vnf/data/cell=<n>/data.parquet`,
+sorted by `(flare_id, date)` inside each one, so a card open range-reads one row
+group of one ~9 MB object behind a 114 KB footer — 6 requests and 539 KB against
+the 69 requests and 3.4 MB the single 539 MB file cost. `flares.parquet` carries
+each flare's `cell`, so an id resolves to its object with no bucket listing, and
+a bbox reader filters that same file to the cells it must open. See
+`~/Tools/etl/vnf/REBUILD.md`.
 
 ## Commands
 
@@ -305,13 +314,16 @@ flare × night calendar → EOG profile CSVs   → detections (Planck fits)
                        → terminals.geojson (6 km) → flare index (type, category, country)
 ```
 
-Daily parquet (`views/vnf/data.parquet`): `flare_id, lat, lon, date, clear,
-detected, tcc, rh_mw, temp_k, flow_mcm, looks, profiled`. `clear` is BOOLEAN and
-NULL means unobserved — never conflate it with cloudy. `profiled` survives from
-the old build and still gates the same way, but it now says a satellite flew and
-we read the sky rather than that EOG chose to write a row; 98.8% of flare-nights
-across the archive are observed. `type, category, country` moved out to
-`views/vnf/flares.parquet` and `n_passes` is gone. Coordinates are stable
+Daily parquet (`views/vnf/data/cell=<n>/data.parquet`, 64 cells): `flare_id,
+date, clear, detected, tcc, rh_mw, temp_k, flow_mcm, looks, profiled`. `clear` is
+BOOLEAN and NULL means unobserved — never conflate it with cloudy. `profiled`
+survives from the old build and still gates the same way, but it now says a
+satellite flew and we read the sky rather than that EOG chose to write a row;
+98.8% of flare-nights across the archive are observed. `type, category, country`
+moved out to `views/vnf/flares.parquet` and `n_passes` is gone. **`lat` and `lon`
+moved there too** (2026-07-30) — a per-flare constant belongs in the index, and
+they only ever rode along so a remote reader could prune spatially on a file
+sorted by position. Join `flares.parquet` for coordinates; they are stable
 per-flare averages (from profile passes), not per-pass positions. `flow_mcm` carries
 EOG's own per-pass `Flow_Rate` (daily-averaged like `rh_mw`; 0 on
 nightly-backfilled rows — the ez CSVs have no flow) but is NOT displayed:
