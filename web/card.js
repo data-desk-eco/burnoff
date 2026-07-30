@@ -7,7 +7,7 @@
 import { openCOG } from './s2/cog.js';
 import { wgs84ToUtm, utmToWgs84, utmParams } from './s2/geo.js';
 import { rampRGB, scaleT, chartNorm, formatDate } from './render.js';
-import { showDetail, closeDetail } from './vendor/cartograph/detail.js';
+import { showDetail, refreshDetail, closeDetail } from './vendor/cartograph/detail.js';
 import { dimSatellite } from './vendor/cartograph/shell.js';
 import { dateInQuarters } from './vendor/cartograph/util.js';
 import { DEG_TO_RAD } from './clustering.js';
@@ -225,9 +225,15 @@ export function onCardClose() {
 
 // ── selection maintenance across re-renders ──
 
-// re-filter the open card to the current quarter window (map reconciles async)
+// a re-render must not pull the reader's selected date back to the first row
+const rerender = fn => { _skipAuto = true; fn(); _skipAuto = false; };
+const reopen = p => rerender(() => showDetail(featureOf(p), true));
+
+// re-filter the open card to the current quarter window (map reconciles async).
+// the properties don't move, only the window they're read through, so this is
+// the forced re-render — showDetail alone would see an unchanged card
 export function refreshCard() {
-    if (current) reopen(current);
+    if (current) rerender(refreshDetail);
 }
 
 // re-open the card on the feature at the previous selection's coordinates
@@ -239,21 +245,8 @@ export function reselectCurrentFeature() {
     const [lon, lat] = coords(current);
     const match = features.find(f =>
         Math.abs(f.geometry.coordinates[0] - lon) < 1e-4 && Math.abs(f.geometry.coordinates[1] - lat) < 1e-4);
-    if (!match) closeDetail();
-    // only rebuild when the numbers moved. a window resize resizes the map,
-    // which fires moveend, which re-runs the viewport query — and the aggregates
-    // come back identical, so rebuilding would drop the reader's selected date
-    // and re-fetch the daily history for nothing
-    else if (sig(match.properties) !== sig(current)) reopen(match.properties);
-}
-
-// queryRenderedFeatures serialises nested props, so normalise before comparing
-const sig = p => JSON.stringify({ ...p, detections: parseDets(p) });
-
-function reopen(p) {
-    _skipAuto = true;
-    showDetail(featureOf(p), true);
-    _skipAuto = false;
+    if (match) reopen(match.properties);
+    else closeDetail();
 }
 
 // ── intensity chart ──

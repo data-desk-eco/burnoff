@@ -5,7 +5,7 @@
 // s2 (archive clusters, detect fallback) and vnf (viirs nightfire).
 
 import { mount } from './vendor/cartograph/app.js';
-import { showDetail, closeDetail } from './vendor/cartograph/detail.js';
+import { closeDetail } from './vendor/cartograph/detail.js';
 import { viewportBbox, boxesWorldmap, ensureMark } from './vendor/cartograph/shell.js';
 import { padBbox, featureBbox, getHashParam } from './vendor/cartograph/util.js';
 import { MODE, RAMP, DD, markIconExpr, ICON_SIZE } from './render.js';

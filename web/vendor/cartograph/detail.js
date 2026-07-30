@@ -49,7 +49,33 @@ function setHighlight(features) {
     map.getSource('cg-highlight')?.setData({ type: 'FeatureCollection', features });
 }
 
+// the same feature reaches us from a source (real values) and from a click
+// (queryRenderedFeatures serialises nested values to json and drops null ones),
+// so compare in a form both agree on: nested to json, nothing to ''
+const norm = v => v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+const sameProps = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .every(k => norm(a[k]) === norm(b[k]));
+
+let shown = null;   // {feature, n, i} — the card on screen and its overlap position
+
+// apps re-set their sources as the viewport, filters or sliders move, and hand
+// the current feature back here each time. a resize does it too: maplibre's
+// resize fires moveend, so viewport queries re-run for a camera that never
+// moved. re-rendering an unchanged card would throw away whatever the reader
+// had selected inside it, so an identical feature is a no-op.
 export function showDetail(feature, fromPermalink) {
+    if (shown && shown.n === overlapping.length && shown.i === overlapIndex
+        && sameProps(shown.feature.properties, feature.properties)) return;
+    render(feature, fromPermalink);
+}
+
+// re-render in place, for a body that reads state outside the feature (a date
+// window, a unit toggle) and so must rebuild even when the properties hold
+export function refreshDetail() {
+    if (shown) render(shown.feature, true);
+}
+
+function render(feature, fromPermalink) {
     const p = feature.properties;
     const id = p[cfg.idProp || 'id'];
     if (!fromPermalink && id != null) setHash(id);
@@ -73,11 +99,13 @@ export function showDetail(feature, fromPermalink) {
         </div>
         ${cfg.html?.(p) || ''}`;
     el.classList.add('visible');
+    shown = { feature, n, i: overlapIndex };
     cfg.onShow?.(p, el);
 }
 
 export function closeDetail() {
     if (!panel().classList.contains('visible')) return;
+    shown = null;
     overlapping = [];
     overlapIndex = 0;
     setHash(null);
