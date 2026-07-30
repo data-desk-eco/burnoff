@@ -46,15 +46,28 @@ viewport overlaps** — each tile's parquet is loaded once, lazily, and cached;
 viewports are served from those cached tiles (bbox + date-overlap filter), so a
 far-out or uncovered viewport fetches nothing. `archiveFeature` maps a row straight
 to the Feature shape `crossDateCluster` emits, so the avg-B12 slider gates
-client-side but the server-side clustering is not re-run. The cluster view's
-`persistence` column is **NULL for all but 8 of the 9,603 published clusters**
-(`s2e cluster` reads its clear-sky denominator from `ops/clouds`, and evidently
-does not find it), so archive rows carry no persistence and no observation count:
-the card reads '—' for both, and the Minimum-persistence gate coalesces a missing
-persistence to *pass* in S2 mode. VNF keeps the opposite branch — there a null is
-a finding (no clear night) and the flare is dropped. Do not "simplify" the two
-branches back into one: coalescing to 0 in S2 mode hides the entire archive
-everywhere except the Qatar clusters. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
+client-side but the server-side clustering is not re-run.
+
+**Known upstream regression (2026-07-28): the archive's `persistence` and
+`total_score` are wrong.** `persistence` is NULL and `persistence_score` is 0 for
+9,595 of the 9,603 published clusters, so `total_score` loses its
+`0.40·persistence_score` term while keeping the glint penalty — the archive's mean
+total score is −0.126. Do not rank on the published score until this is rebuilt.
+The mechanism is an asymmetry in `s2e views`: `views/detections/` is partitioned
+by MGRS tile so runs accumulate, but `ops/clouds/data.parquet` is a **single flat
+object rebuilt from whatever is in `observations/` at that moment**. A small run
+(three GEM terminal AOIs, four scenes each) rewrote it on 2026-07-28 with a
+UK-only mask, and `s2e cluster` then reclustered all 112 accumulated detection
+tiles against that remnant — every cluster whose ~100 m cell had no mask row was
+left unmeasured. It cannot simply be re-derived: the global LNG runs' raw
+`observations/**/clouds-*.geojson` are no longer in the bucket. See PR #58.
+
+Because of that, archive rows carry no persistence and no observation count: the
+card reads '—' for both, and the Minimum-persistence gate treats a missing
+persistence as *unrated* (it passes) in S2 mode. VNF keeps the opposite branch —
+there a null is a finding (no clear night) and the flare is dropped. Do not
+"simplify" the two branches back into one: coalescing to 0 in S2 mode sinks the
+whole archive below the slider's 25% default. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
 button) is the fallback for areas not yet archived: it runs the s2e rust core
 compiled to wasm (`web/s2/wasm/`), the SAME binary methodology as the server-side
 archive — there is no JS detector port (it drifted from the core and was removed).
