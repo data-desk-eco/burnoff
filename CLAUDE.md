@@ -46,7 +46,15 @@ viewport overlaps** — each tile's parquet is loaded once, lazily, and cached;
 viewports are served from those cached tiles (bbox + date-overlap filter), so a
 far-out or uncovered viewport fetches nothing. `archiveFeature` maps a row straight
 to the Feature shape `crossDateCluster` emits, so the avg-B12 slider gates
-client-side but the server-side clustering is not re-run. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
+client-side but the server-side clustering is not re-run. The cluster view's
+`persistence` column is **NULL for all but 8 of the 9,603 published clusters**
+(`s2e cluster` reads its clear-sky denominator from `ops/clouds`, and evidently
+does not find it), so archive rows carry no persistence and no observation count:
+the card reads '—' for both, and the Minimum-persistence gate coalesces a missing
+persistence to *pass* in S2 mode. VNF keeps the opposite branch — there a null is
+a finding (no clear night) and the flare is dropped. Do not "simplify" the two
+branches back into one: coalescing to 0 in S2 mode hides the entire archive
+everywhere except the Qatar clusters. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
 button) is the fallback for areas not yet archived: it runs the s2e rust core
 compiled to wasm (`web/s2/wasm/`), the SAME binary methodology as the server-side
 archive — there is no JS detector port (it drifted from the core and was removed).
