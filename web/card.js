@@ -239,9 +239,16 @@ export function reselectCurrentFeature() {
     const [lon, lat] = coords(current);
     const match = features.find(f =>
         Math.abs(f.geometry.coordinates[0] - lon) < 1e-4 && Math.abs(f.geometry.coordinates[1] - lat) < 1e-4);
-    if (match) reopen(match.properties);
-    else closeDetail();
+    if (!match) closeDetail();
+    // only rebuild when the numbers moved. a window resize resizes the map,
+    // which fires moveend, which re-runs the viewport query — and the aggregates
+    // come back identical, so rebuilding would drop the reader's selected date
+    // and re-fetch the daily history for nothing
+    else if (sig(match.properties) !== sig(current)) reopen(match.properties);
 }
+
+// queryRenderedFeatures serialises nested props, so normalise before comparing
+const sig = p => JSON.stringify({ ...p, detections: parseDets(p) });
 
 function reopen(p) {
     _skipAuto = true;

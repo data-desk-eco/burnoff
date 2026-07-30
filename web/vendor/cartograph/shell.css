@@ -24,7 +24,9 @@ a { color: inherit; text-decoration: underline; }
 
 /* --- main panel --- */
 
-.cg-main { top: 0; left: 0; width: 250px; max-height: calc(100vh - 20px); overflow-y: auto; }
+/* the left column's width: main panel and key share it so their boxes line up */
+:root { --cg-panel: 250px; }
+.cg-main { top: 0; left: 0; width: var(--cg-panel); max-height: calc(100vh - 20px); overflow-y: auto; }
 .cg-main.collapsed > :not(.dd-head) { display: none; }
 #worldmap { width: 100%; display: block; }
 
@@ -44,7 +46,7 @@ a { color: inherit; text-decoration: underline; }
 
 /* --- key --- */
 
-.cg-key { bottom: 0; left: 0; padding: 15px 30px 20px; display: flex; flex-direction: column; gap: 25px; min-width: 105px; }
+.cg-key { bottom: 0; left: 0; width: var(--cg-panel); padding: 15px 30px 20px; display: flex; flex-direction: column; gap: 25px; }
 /* hanging chevron per dd heading rule: -(chevron 8px + gap 11px) into the L padding */
 .cg-key-head { display: flex; align-items: center; gap: 11px; cursor: pointer; user-select: none; }
 .cg-key-head .dd-chevron { margin-left: -19px; }
@@ -56,9 +58,11 @@ a { color: inherit; text-decoration: underline; }
 .cg-ring { display: inline-block; border: 1.5px solid; border-radius: 50%; flex-shrink: 0; }
 .cg-dot { border: none; }
 
-/* dd key rule: sections go side by side rather than overlap the main panel */
+/* dd key rule: sections go side by side rather than overlap the main panel.
+   the panel width is fixed, so they spread across it — the 20px gap is a floor
+   that keeps them apart when the labels are long, not the spacing */
 @media (max-height: 960px) and (min-width: 769px) {
-    .cg-key { flex-direction: row; gap: 38px; }
+    .cg-key { flex-direction: row; justify-content: space-between; gap: 20px; }
 }
 
 /* --- detail panel --- */
@@ -118,7 +122,9 @@ a { color: inherit; text-decoration: underline; }
 @media (max-width: 768px) {
     .cg-main { width: 210px; }
     #worldmap { display: none; }
-    .cg-key { bottom: auto; top: 0; right: 0; left: auto; }
+    /* the key moves to the opposite corner, so it sizes to its own content
+       rather than sharing the main panel's width */
+    .cg-key { bottom: auto; top: 0; right: 0; left: auto; width: auto; }
     /* width:auto so left+right size it inside the dd-panel 10px margins;
        width:100% would override right:0 and overflow the viewport */
     .cg-detail { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 45vh; }
