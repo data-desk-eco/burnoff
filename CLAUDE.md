@@ -37,7 +37,7 @@ framing — is hand-rolled using web standards.
 ```
 
 **S2 mode:** The default data source reads the precomputed *cluster view*
-straight from the CloudFerro public parquet archive (`data-desk/infra/store.sh publish`).
+straight from the CloudFerro public parquet archive (`data-desk/infra/archive.sh publish`).
 The archive co-produces a derived cluster view partitioned by MGRS tile,
 `views/clusters/mgrs=<tile>/data.parquet` — one row per cluster (scalar score columns +
 a nested `detections` list). `web/s2archive.js` enumerates those per-tile objects
@@ -59,7 +59,7 @@ archive base is set via `<meta name="s2-archive">` in index.html.
 
 **VNF mode:** hyparquet reads a pre-built Parquet file containing per-flare
 daily observations from EOG profile CSVs. In production it lives in the shared
-datadesk CloudFerro store at `views/vnf/data.parquet` (`<meta name="vnf-url">`); dev
+datadesk CloudFerro archive at `views/vnf/data.parquet` (`<meta name="vnf-url">`); dev
 falls back to a local `web/vnf.parquet`. Each row has `clear`/`detected` booleans
 for real cloud-free persistence metrics.
 
@@ -70,7 +70,7 @@ make serve        # Dev server on :8000 + signaling on :4444
 make signal       # Signaling server only
 make test         # Run determinism + P2P retry tests
 make vnf          # Build VNF parquet from EOG profile CSVs
-make vnf-upload   # Upload VNF parquet to the datadesk store (vnf/data.parquet)
+make vnf-upload   # Upload VNF parquet to the datadesk archive (vnf/data.parquet)
 make deploy       # Deploy signaling worker to Cloudflare
 git push          # Deploy static site via GitHub Pages (auto on push to main)
 ```
@@ -245,7 +245,7 @@ the UI's MCM/d column is `rh_mw × 0.0315`, the JZ-RH VNF v3 calibration
 validated). EOG's `Flow_Rate` implements the legacy Cedigaz power law, which
 that paper shows overestimates dim flares and underestimates bright ones.
 
-The store also carries the RAW per-pass form at `views/vnf/passes/data.parquet`
+The archive also carries the RAW per-pass form at `views/vnf/passes/data.parquet`
 (`make -C ../etl vnf-raw`): the EOG profile CSVs concatenated verbatim —
 EOG's own columns (`Date_Mscan, Temp_BB, RH, RHI, Flow_Rate, Cloud_Mask,
 QF_Detect, …`), 999999 sentinels kept, row groups clustered by `flare_id` —
