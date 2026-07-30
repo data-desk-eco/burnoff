@@ -57,7 +57,16 @@ let CTX;                                    // cartograph ctx (set in sources)
 let readyResolve;
 const whenReady = new Promise(r => readyResolve = r);
 
-const persistenceFilter = v => ['>=', ['coalesce', ['get', 'persistence'], 0], v];
+// a minimum gate can only exclude what was measured, and the two modes mean
+// different things by a null persistence. vnf's null is a finding — no clear
+// night in the window, so the flare is dropped rather than ranked. the s2
+// cluster view publishes no denominator at all (9,595 of 9,603 archived
+// clusters carry persistence NULL), so scoring those as 0 hid the entire
+// archive everywhere except the handful of qatar clusters that do have one.
+const persistenceFilter = v =>
+    ['>=', ['coalesce', ['get', 'persistence'], isVnf() ? 0 : 1], v];
+const applyPersistenceFilter = () =>
+    CTX.map.setFilter('detections', persistenceFilter(PERSISTENCE_MIN));
 const setDetections = features =>
     CTX.map.getSource('detections')?.setData({ type: 'FeatureCollection', features });
 
@@ -250,6 +259,7 @@ function switchMode(m) {
 
     updateS2Controls();
     CTX.map.setLayoutProperty('detections', 'icon-image', markIconExpr(cfg));
+    applyPersistenceFilter();   // the null branch is mode-dependent
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +390,7 @@ mount({
         {
             key: 'persistence', label: 'Minimum persistence',
             min: 0, max: 1, step: 0.05, value: 0.25, format: v => `${Math.round(v * 100)}%`,
-            onInput: v => { PERSISTENCE_MIN = v; CTX.map.setFilter('detections', persistenceFilter(v)); },
+            onInput: v => { PERSISTENCE_MIN = v; applyPersistenceFilter(); },
         },
     ],
 

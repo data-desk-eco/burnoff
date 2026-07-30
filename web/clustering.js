@@ -67,12 +67,15 @@ export function findNearestTerminal(lat, lon) {
 // shape crossDateCluster emits, so rendering/detail/CSV are unchanged. The view is
 // pre-clustered server-side, so the avg-B12 slider gates these rows client-side and
 // the merge-distance/score controls don't re-run. The view carries no cloud counts,
-// only the published persistence, so we report the cloud-free observation count
-// (detections / persistence) and leave passes null — there is no total-pass figure
-// to compute a meaningful cloud-free fraction from.
+// only the published persistence, so we back the cloud-free observation count out of
+// it (detections / persistence) and leave passes null — there is no total-pass figure
+// to compute a meaningful cloud-free fraction from. Where the view publishes no
+// persistence — which is nearly everywhere — there is no denominator to back out
+// either, so observations stays null and the card reads '—' rather than passing off
+// date_count, the detection dates themselves, as the nights we could have seen.
 export function archiveFeature(c) {
     const terminal = findNearestTerminal(c.lat, c.lon);
-    const observations = c.persistence ? Math.round(c.detection_count / c.persistence) : c.date_count;
+    const observations = c.persistence ? Math.round(c.detection_count / c.persistence) : null;
     return {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
