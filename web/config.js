@@ -141,9 +141,11 @@ async function refreshS2Archive() {
         const features = clusters.filter(c => c.avg_b12 >= GATE.s2).map(c => archiveFeature(c, qKeys));
         if (!features.length) { updateDetectionSource(); return; }
         setDetections(features);
-        // the features carry the selected quarters' looks now, so an open card is
-        // one window behind until it is re-read from the rebuilt feature — the same
-        // reconciliation the vnf path does after its own re-query
+        // every feature above was just rebuilt for the ticked quarters. an open card
+        // holds a COPY of the old feature's numbers, taken when it was clicked, so
+        // without this it keeps showing the previous selection's persistence and
+        // looks. re-open it from the rebuilt feature at the same coordinates, as the
+        // vnf path does after its own re-query.
         reselectCurrentFeature();
     } catch (err) {
         console.error('S2 archive query error:', err);

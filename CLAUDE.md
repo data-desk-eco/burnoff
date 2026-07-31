@@ -94,13 +94,20 @@ looks: numerator and denominator over the same looks, no browser-side estimate.
 Below ten looks in the selection it publishes no rate at all, the floor s2e
 applies to the whole-window count (`MIN_LOOKS`, clustering.js).
 
-Two consequences worth knowing. The archive features are now window-scoped, so an
-open card is one window behind after a quarter change until `refreshS2Archive`
-re-reads it — hence the `reselectCurrentFeature()` there, matching the VNF path.
-And `card.js` no longer computes persistence at all; it reports what the feature
-carries. What it replaced: `detections / persistence` to recover the denominator,
-then prorating that denominator by the share of quarters selected and re-dividing
-— a guess wearing a measurement's clothes.
+`card.js` therefore computes no rate at all: it reports what the feature carries.
+What it replaced was `detections / persistence` to recover the denominator, then
+prorating that denominator by the share of quarters selected and re-dividing — a
+guess wearing a measurement's clothes.
+
+**Which means the card can go stale, and `refreshS2Archive` has to un-stale it.**
+Each map dot now carries the numbers for the ticked quarters alone, rather than
+the numbers for all time. Opening a card copies that dot's numbers; it does not
+hold a live reference. So when the quarter picker changes, `refreshS2Archive`
+rebuilds every dot with new numbers and the open card is left showing the copy it
+took under the old selection — Q4 alone, still reading 90% over 60 looks. The last
+line of that function calls `reselectCurrentFeature()`, which finds the dot at the
+same coordinates and re-opens the card from it. VNF has always needed this;
+before the features were quarter-scoped, S2 did not.
 
 The `--clouds` fold-in path never had this bug: those masks are written during
 detection, so they only ever cover scenes the detector actually read. It is the
