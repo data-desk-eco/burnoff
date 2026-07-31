@@ -64,9 +64,30 @@ at `ops/s2e-coverage/`) rebuilt the view on 2026-07-31 — all 9,603 clusters no
 carry a measured persistence. Re-deriving it costs ~20 s via
 `s2e cluster --coverage-scan <dir> --coverage-reuse`.
 
-One consequence to keep in mind: real persistence is low (median ~0.018), so the
-`0.40·persistence_score` term is small even when correct, and the UI's 25%
-default gate passes only ~158 of 9,603 clusters.
+**That rebuild then deflated every persistence by roughly four (found 2026-07-31,
+fixed in s2e, view not yet republished).** The scan dir is windowless and
+resumable: it holds every scene ever sampled, 2015→2026. The detections it is the
+denominator for cover whatever window was actually run — 2025 for most tiles. The
+aggregation read the whole dir, so this year's detections were divided by a
+decade of clear looks. The Sabine Pass flare, lit on 54 of its 60 clear looks in
+2025, published 18%. This is the VNF calendar bug in another guise, and the rule
+is the one that repo settled on: **numerator and denominator over the same looks,
+or the rate is not a rate.** s2e now counts a clear look only where the detector
+ran, evidenced by a detection in that tile on that date, and publishes no
+persistence at all below ten measured looks.
+
+Once the view is rebuilt (`s2e cluster --archive … --coverage-scan cov
+--coverage-reuse --out s3://…/views/clusters`, needs a box that can build the
+binary — gdal and candle do not compile on macOS) expect median persistence
+1.8% → 4.3%, the median denominator 169 → 83 looks, and the clusters clearing the
+UI's 25% default 314 → ~1,240. Until then the map understates persistence
+everywhere and the card's "Cloud-free obs." — which burnoff back-calculates as
+`detections / persistence` — overstates by the same factor.
+
+The `--clouds` fold-in path never had this bug: those masks are written during
+detection, so they only ever cover scenes the detector actually read. It is the
+default for a reason; the coverage scan is the fallback for the tiles whose
+canonical records (and cloud masks) the bulk import lost.
 
 A row that still lacks a persistence — none do today, but that is the state the
 above describes — carries no observation count either, so the card reads '—' for
