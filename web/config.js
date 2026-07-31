@@ -303,7 +303,7 @@ async function resolveFlare(id) {
 mount({
     title: 'Burnoff',
     subtitle: MODE.s2.subtitle,
-    map: { center: [51.52, 25.92], zoom: 12, minZoom: 1.5, maxZoom: 18 },
+    map: { center: [52.8720, 25.1676], zoom: 12, minZoom: 1.5, maxZoom: 18 },
     about: `
         <div class="region-row">
             <div><div class="dd-secondary">Regions covered:</div><div>Data Desk archive</div></div>
