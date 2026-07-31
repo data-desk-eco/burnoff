@@ -70,9 +70,9 @@ export function findNearestTerminal(lat, lon) {
 // only the published persistence, so we back the cloud-free observation count out of
 // it (detections / persistence) and leave passes null — there is no total-pass figure
 // to compute a meaningful cloud-free fraction from. Where the view publishes no
-// persistence — which is nearly everywhere — there is no denominator to back out
-// either, so observations stays null and the card reads '—' rather than passing off
-// date_count, the detection dates themselves, as the nights we could have seen.
+// persistence there is no denominator to back out either, so observations stays
+// null and the card reads '—' rather than passing off date_count, the detection
+// dates themselves, as the nights we could have seen.
 export function archiveFeature(c) {
     const terminal = findNearestTerminal(c.lat, c.lon);
     const observations = c.persistence ? Math.round(c.detection_count / c.persistence) : null;
