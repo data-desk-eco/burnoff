@@ -60,12 +60,14 @@ const whenReady = new Promise(r => readyResolve = r);
 // a minimum gate can only exclude what was measured, and the two modes mean
 // different things by a null persistence. vnf's null is a finding — no clear
 // night in the window, so the flare is dropped rather than ranked. s2's is a
-// gap: 9,595 of the 9,603 published clusters carry persistence NULL because
-// the archive's cloud mask was clobbered (see CLAUDE.md), and scoring an
-// unmeasured site 0 sank all of them below the 25% default at once. treat the
-// gap as unrated rather than as a zero — the slider still gates every cluster
-// that has a real persistence, so this branch retires itself once the mask is
-// rebuilt.
+// gap in the archive, so treat it as unrated rather than as a zero.
+//
+// this branch is idle today: the cluster view has carried a real persistence for
+// every cluster since the 2026-07-31 coverage rebuild. it is here because for a
+// while it did not — the detections were bulk-imported without the cloud masks
+// that make the denominator, so 9,595 of 9,603 clusters had none — and scoring
+// an unmeasured site 0 put every one of them under the 25% default at once. the
+// map went blank everywhere it was covered and nothing said why.
 const persistenceFilter = v =>
     ['>=', ['coalesce', ['get', 'persistence'], isVnf() ? 0 : 1], v];
 const applyPersistenceFilter = () =>

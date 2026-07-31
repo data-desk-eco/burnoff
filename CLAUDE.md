@@ -48,26 +48,34 @@ far-out or uncovered viewport fetches nothing. `archiveFeature` maps a row strai
 to the Feature shape `crossDateCluster` emits, so the avg-B12 slider gates
 client-side but the server-side clustering is not re-run.
 
-**Known upstream regression (2026-07-28): the archive's `persistence` and
-`total_score` are wrong.** `persistence` is NULL and `persistence_score` is 0 for
-9,595 of the 9,603 published clusters, so `total_score` loses its
-`0.40·persistence_score` term while keeping the glint penalty — the archive's mean
-total score is −0.126. Do not rank on the published score until this is rebuilt.
-The mechanism is an asymmetry in `s2e views`: `views/detections/` is partitioned
-by MGRS tile so runs accumulate, but `ops/clouds/data.parquet` is a **single flat
-object rebuilt from whatever is in `observations/` at that moment**. A small run
-(three GEM terminal AOIs, four scenes each) rewrote it on 2026-07-28 with a
-UK-only mask, and `s2e cluster` then reclustered all 112 accumulated detection
-tiles against that remnant — every cluster whose ~100 m cell had no mask row was
-left unmeasured. It cannot simply be re-derived: the global LNG runs' raw
-`observations/**/clouds-*.geojson` are no longer in the bucket. See PR #58.
+**Persistence history (resolved 2026-07-31).** For a period the cluster view
+carried `persistence` NULL and `persistence_score` 0 for 9,595 of its 9,603
+clusters, so `total_score` lost its `0.40·persistence_score` term while keeping
+the glint penalty and the archive's mean score was −0.126. The cause was not a
+deletion: 125 of the 126 detection tiles arrived in a single bulk parquet import
+(2026-07-18) with no canonical records and **no cloud masks**, so the clear-sky
+denominator was never computed for them rather than lost. Compounding it, the
+detector ran `--source cdse-l1c` while its cloud mask reads SCL, which only L2A
+carries — so flare runs wrote empty cloud records regardless.
 
-Because of that, archive rows carry no persistence and no observation count: the
-card reads '—' for both, and the Minimum-persistence gate treats a missing
-persistence as *unrated* (it passes) in S2 mode. VNF keeps the opposite branch —
-there a null is a finding (no clear night) and the flare is dropped. Do not
-"simplify" the two branches back into one: coalescing to 0 in S2 mode sinks the
-whole archive below the slider's 25% default. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
+Both are fixed: `s2e` v0.2.0 resolves SCL from the L2A twin of each acquisition
+whatever `--source` asks for, and a full coverage scan (139,478 scenes, archived
+at `ops/s2e-coverage/`) rebuilt the view on 2026-07-31 — all 9,603 clusters now
+carry a measured persistence. Re-deriving it costs ~20 s via
+`s2e cluster --coverage-scan <dir> --coverage-reuse`.
+
+One consequence to keep in mind: real persistence is low (median ~0.018), so the
+`0.40·persistence_score` term is small even when correct, and the UI's 25%
+default gate passes only ~158 of 9,603 clusters.
+
+A row that still lacks a persistence — none do today, but that is the state the
+above describes — carries no observation count either, so the card reads '—' for
+both rather than passing off `date_count` as the nights we could have seen, and
+the Minimum-persistence gate treats it as *unrated* (it passes) in S2 mode. VNF
+keeps the opposite branch: there a null is a finding (no clear night in the
+window) and the flare is dropped rather than ranked. Do not "simplify" the two
+branches back into one — coalescing to 0 in S2 mode is what sank the whole
+archive below the slider's 25% default. The in-browser COG detection worker (`detect-worker.js`, the "Detect"
 button) is the fallback for areas not yet archived: it runs the s2e rust core
 compiled to wasm (`web/s2/wasm/`), the SAME binary methodology as the server-side
 archive — there is no JS detector port (it drifted from the core and was removed).
