@@ -64,34 +64,45 @@ at `ops/s2e-coverage/`) rebuilt the view on 2026-07-31 — all 9,603 clusters no
 carry a measured persistence. Re-deriving it costs ~20 s via
 `s2e cluster --coverage-scan <dir> --coverage-reuse`.
 
-**That rebuild then deflated every persistence by roughly four (found 2026-07-31,
-fixed in s2e, view not yet republished).** The scan dir is windowless and
+**That rebuild then deflated every persistence by roughly four (found and fixed
+2026-07-31, view republished the same day).** The scan dir is windowless and
 resumable: it holds every scene ever sampled, 2015→2026. The detections it is the
 denominator for cover whatever window was actually run — 2025 for most tiles. The
 aggregation read the whole dir, so this year's detections were divided by a
 decade of clear looks. The Sabine Pass flare, lit on 54 of its 60 clear looks in
 2025, published 18%. This is the VNF calendar bug in another guise, and the rule
 is the one that repo settled on: **numerator and denominator over the same looks,
-or the rate is not a rate.** s2e now counts a clear look only where the detector
-ran, evidenced by a detection in that tile on that date, and publishes no
+or the rate is not a rate.** s2e v0.2.2 counts a clear look only where the
+detector ran, evidenced by a detection in that tile on that date, and publishes no
 persistence at all below ten measured looks.
 
-Once the view is rebuilt (`s2e cluster --archive … --coverage-scan cov
---coverage-reuse --out s3://…/views/clusters`, needs a box that can build the
-binary — gdal and candle do not compile on macOS) expect median persistence
-1.8% → 4.3%, the median denominator 169 → 83 looks, and the clusters clearing the
-UI's 25% default 314 → ~1,240. Until then the map understates persistence
-everywhere and the card's "Cloud-free obs." — which burnoff back-calculates as
-`detections / persistence` — overstates by the same factor.
+The republished view (s2e v0.2.2 on a fleet box, `s2e cluster --archive …
+--coverage-scan cov --coverage-reuse --out s3://…/views/clusters`; the binary does
+not build on macOS — gdal and candle both fail): Sabine Pass 54/60 = 90%, median
+persistence 1.8% → 4.3%, median denominator 169 → 84 looks, clusters clearing the
+UI's 25% default 314 → 1,178, mean `total_score` −0.126 → −0.097, and 68 of 9,603
+rows now carry no persistence because fewer than ten looks were measured. Repeat
+it in ~2 min from the scan tarball in `ops/s2e-coverage/`, which is why that
+tarball is kept.
+
+**The looks are published, so do not recompute them.** The view carries
+`observations` — the clear-sky looks persistence divides by — alongside the ratio,
+and `archiveFeature` passes it straight through. It used to be backed out in the
+browser as `detections / persistence`, off a rounded ratio. The card's remaining
+quarter arithmetic went with it: narrowing the quarter picker filters the
+detection list, and the published rate is then labelled with the years it covers
+(`Persistence (2025)`) rather than being prorated onto the selection. Slicing it
+properly needs per-quarter look counts in the view — the S2 analogue of
+`views/vnf/quarters.parquet` — which do not exist yet.
 
 The `--clouds` fold-in path never had this bug: those masks are written during
 detection, so they only ever cover scenes the detector actually read. It is the
 default for a reason; the coverage scan is the fallback for the tiles whose
 canonical records (and cloud masks) the bulk import lost.
 
-A row that still lacks a persistence — none do today, but that is the state the
-above describes — carries no observation count either, so the card reads '—' for
-both rather than passing off `date_count` as the nights we could have seen, and
+A row that lacks a persistence — the 68 thin-look sites, and any tile a future
+scan has not reached — carries no observation count either, so the card reads '—'
+for both rather than passing off `date_count` as the nights we could have seen, and
 the Minimum-persistence gate treats it as *unrated* (it passes) in S2 mode. VNF
 keeps the opposite branch: there a null is a finding (no clear night in the
 window) and the flare is dropped rather than ranked. Do not "simplify" the two

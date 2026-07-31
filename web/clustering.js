@@ -66,16 +66,14 @@ export function findNearestTerminal(lat, lon) {
 // Map a precomputed archive cluster (clusters/data.parquet row) to the same Feature
 // shape crossDateCluster emits, so rendering/detail/CSV are unchanged. The view is
 // pre-clustered server-side, so the avg-B12 slider gates these rows client-side and
-// the merge-distance/score controls don't re-run. The view carries no cloud counts,
-// only the published persistence, so we back the cloud-free observation count out of
-// it (detections / persistence) and leave passes null — there is no total-pass figure
-// to compute a meaningful cloud-free fraction from. Where the view publishes no
-// persistence there is no denominator to back out either, so observations stays
-// null and the card reads '—' rather than passing off date_count, the detection
-// dates themselves, as the nights we could have seen.
+// the merge-distance/score controls don't re-run. `observations` — the clear-sky
+// looks persistence divides by — is published alongside it, so the card reports the
+// archive's own denominator rather than dividing it back out of a rounded ratio; a
+// row with no persistence has no observation count either and the card reads '—'
+// for both. `passes` stays null: the view carries no total-pass figure to make a
+// cloud-free fraction from.
 export function archiveFeature(c) {
     const terminal = findNearestTerminal(c.lat, c.lon);
-    const observations = c.persistence ? Math.round(c.detection_count / c.persistence) : null;
     return {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
@@ -87,7 +85,7 @@ export function archiveFeature(c) {
             total_score: c.total_score, ratio_score: c.ratio_score,
             persistence_score: c.persistence_score, glint_penalty: c.glint_penalty,
             max_ratio: c.max_ratio, min_glint: c.min_glint, glint_suspect: c.glint_suspect,
-            persistence: c.persistence, passes: null, observations,
+            persistence: c.persistence, passes: null, observations: c.observations ?? null,
             detections: c.detections.map(d => ({
                 date: d.date, max_b12: d.max_b12, pixels: d.pixels,
                 raw_lon: d.lon, raw_lat: d.lat, b12_corrected: d.max_b12,
