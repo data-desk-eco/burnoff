@@ -23,11 +23,13 @@ if (/^#vnf\/\d+$/.test(location.hash))
 // build config (index.html meta tags) + mode state ('s2' or 'vnf')
 // ---------------------------------------------------------------------------
 
-// vnf parquet lives in the central datadesk store (CloudFerro) at a stable key
-// (vnf/data.parquet) — public-read, hyparquet range-reads it remotely. set via
-// <meta name="vnf-url">; localhost (or an unset url) falls back to a local build.
+// vnf lives in the central datadesk archive (CloudFerro) under a stable prefix
+// (views/vnf/) — public-read, hyparquet range-reads it remotely. the prefix, not
+// a file: the rollup and flare index sit in it and the daily series is 64 cells
+// below it. set via <meta name="vnf-url">; localhost (or an unset url) falls
+// back to a build laid out the same way under web/.
 const VNF_URL = document.querySelector('meta[name="vnf-url"]')?.content || '';
-const vnfUrl = () => (location.hostname === 'localhost' || !VNF_URL) ? 'vnf.parquet' : VNF_URL;
+const vnfUrl = () => (location.hostname === 'localhost' || !VNF_URL) ? '' : VNF_URL;
 
 // s2 mode reads the precomputed cluster view straight from the CloudFerro parquet
 // archive (`data-desk/infra/archive.sh publish`); the in-browser COG worker ("Detect")
