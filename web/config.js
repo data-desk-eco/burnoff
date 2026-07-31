@@ -137,9 +137,14 @@ async function refreshS2Archive() {
     try {
         const clusters = await queryS2Archive(viewportBbox(CTX.map), range.startDate, range.endDate);
         if (mode !== 's2' || isDetecting()) return;
-        const features = clusters.filter(c => c.avg_b12 >= GATE.s2).map(archiveFeature);
+        const qKeys = CTX.quarters.keys();
+        const features = clusters.filter(c => c.avg_b12 >= GATE.s2).map(c => archiveFeature(c, qKeys));
         if (!features.length) { updateDetectionSource(); return; }
         setDetections(features);
+        // the features carry the selected quarters' looks now, so an open card is
+        // one window behind until it is re-read from the rebuilt feature — the same
+        // reconciliation the vnf path does after its own re-query
+        reselectCurrentFeature();
     } catch (err) {
         console.error('S2 archive query error:', err);
         updateDetectionSource();

@@ -4,6 +4,8 @@
 // via setTerminals(). No app/CRDT state — crossDateCluster lives in detect.js
 // since it reads the processedMap.
 
+import { dateInQuarters } from './vendor/cartograph/util.js';
+
 export const DEG_TO_RAD = Math.PI / 180;
 const R_EARTH = 6371000;
 const TERMINAL_MATCH_M = 7500;
@@ -14,6 +16,10 @@ const TERMINAL_MATCH_M = 7500;
 // per-site gate: whole quarters average 0.86–1.00 read, and what falls below is
 // the sites under an outage. below it, persistence is not a number we have.
 const COVERAGE_MIN = 0.8;
+// s2: the same floor the archive applies to the whole-window count. a quarter
+// selection can thin the looks the same way a sparse tile does, and a rate off
+// three looks is noise — report the count and no rate.
+const MIN_LOOKS = 10;
 
 // Fast equirectangular distance — accurate to <0.1% under 1 km and below ~70° lat.
 function fastDistM(lat1, lon1, lat2, lon2) {
@@ -66,27 +72,39 @@ export function findNearestTerminal(lat, lon) {
 // Map a precomputed archive cluster (clusters/data.parquet row) to the same Feature
 // shape crossDateCluster emits, so rendering/detail/CSV are unchanged. The view is
 // pre-clustered server-side, so the avg-B12 slider gates these rows client-side and
-// the merge-distance/score controls don't re-run. `observations` — the clear-sky
-// looks persistence divides by — is published alongside it, so the card reports the
-// archive's own denominator rather than dividing it back out of a rounded ratio; a
-// row with no persistence has no observation count either and the card reads '—'
-// for both. `passes` stays null: the view carries no total-pass figure to make a
-// cloud-free fraction from.
-export function archiveFeature(c) {
+// the merge-distance/score controls don't re-run.
+//
+// the view publishes the clear-sky looks persistence divides by — `observations`,
+// and the same count split by calendar quarter — so a selection sums the quarters
+// it shows and divides the detections it shows by exactly those looks. that keeps
+// numerator and denominator over the same looks, which neither the old
+// back-calculation (detections ÷ a rounded ratio) nor the old proration did.
+// `passes` stays null: the view carries no total-pass figure to make a cloud-free
+// fraction from.
+export function archiveFeature(c, qKeys = new Set()) {
     const terminal = findNearestTerminal(c.lat, c.lon);
+    const detections = c.detections.filter(d => dateInQuarters(d.date, qKeys));
+    const detection_count = detections.length;
+    // the quarter key is a date in its own quarter, so the same predicate windows
+    // both sides. no quarters published (the rescore measured nothing) → no rate.
+    const observations = c.quarters?.length
+        ? c.quarters.reduce((n, q) => n + (dateInQuarters(q.quarter, qKeys) ? q.observations : 0), 0)
+        : null;
+    const persistence = observations >= MIN_LOOKS
+        ? Math.min(1, detection_count / observations) : null;
     return {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
         properties: {
-            name: terminal ? terminal.name : `${c.detection_count} detection${c.detection_count !== 1 ? 's' : ''}`,
+            name: terminal ? terminal.name : `${detection_count} detection${detection_count !== 1 ? 's' : ''}`,
             terminal: terminal?.name || null,
             lat: c.lat, lon: c.lon,   // exact coords for detail/highlight
-            max_b12: c.max_b12, detection_count: c.detection_count, seasonal: c.seasonal,
+            max_b12: c.max_b12, detection_count, seasonal: c.seasonal,
             total_score: c.total_score, ratio_score: c.ratio_score,
             persistence_score: c.persistence_score, glint_penalty: c.glint_penalty,
             max_ratio: c.max_ratio, min_glint: c.min_glint, glint_suspect: c.glint_suspect,
-            persistence: c.persistence, passes: null, observations: c.observations ?? null,
-            detections: c.detections.map(d => ({
+            persistence, passes: null, observations,
+            detections: detections.map(d => ({
                 date: d.date, max_b12: d.max_b12, pixels: d.pixels,
                 raw_lon: d.lon, raw_lat: d.lat, b12_corrected: d.max_b12,
             })),

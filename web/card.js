@@ -70,21 +70,17 @@ function copernicusUrl(date) {
     return `https://browser.dataspace.copernicus.eu/?zoom=${zoom}&lat=${lat}&lng=${lng}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=6-SWIR&upsampling=NEAREST&downsampling=NEAREST&dateMode=SINGLE`;
 }
 
-// quarter-aware card metrics. only the detection count follows the quarter
-// picker. persistence and the clear-sky looks it divides by are the archive's
-// own, measured over the window the detector ran, and the view carries no
-// per-date breakdown to slice them with — so a narrowed selection reports them
-// as published and says which years they cover. this used to prorate the look
-// count by the share of quarters selected and re-divide it in the browser: a
-// guess wearing a measurement's clothes, and the same mismatched-window error
-// that made the archive's own persistence four times too low.
+// the feature already carries the selected quarters' numbers — archiveFeature
+// sums the looks the archive published for those quarters and divides the
+// detections in them by exactly those looks, so nothing here recomputes a rate.
+// the count is re-derived from the list only because a locally detected cluster
+// (crossDateCluster) carries every date it found.
 function quarterMetrics(props, dets, qKeys) {
-    const detection_count = dets.filter(d => dateInQuarters(d.date, qKeys)).length;
-    const years = [...new Set(dets.map(d => d.date.slice(0, 4)))].sort();
-    const span = years.length && detection_count < dets.length
-        ? (years[0] === years[years.length - 1] ? years[0] : `${years[0]}–${years[years.length - 1]}`)
-        : '';
-    return { detection_count, observations: props.observations, persistence: props.persistence, span };
+    return {
+        detection_count: dets.filter(d => dateInQuarters(d.date, qKeys)).length,
+        observations: props.observations,
+        persistence: props.persistence,
+    };
 }
 
 // ── detail hooks ──
@@ -111,8 +107,7 @@ export function cardHtml(p) {
     // satellite flew and we read the sky. the four read as one chain.
     const stats = [
         [vnf ? 'Detections (clear)' : 'Detections', m.detection_count],
-        [`Persistence${m.span ? ` (${m.span})` : ''}`,
-            m.persistence != null ? `${Math.round(m.persistence * 100)}%` : '—'],
+        ['Persistence', m.persistence != null ? `${Math.round(m.persistence * 100)}%` : '—'],
         [vnf ? 'Nights read' : 'Passes', p.passes ?? '—'],
         [cfLabel, m.observations ?? '—'],
     ].map(([k, v]) => `<div><span class="dd-secondary">${k}</span><span>${v}</span></div>`).join('');

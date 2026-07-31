@@ -86,14 +86,21 @@ it in ~2 min from the scan tarball in `ops/s2e-coverage/`, which is why that
 tarball is kept.
 
 **The looks are published, so do not recompute them.** The view carries
-`observations` — the clear-sky looks persistence divides by — alongside the ratio,
-and `archiveFeature` passes it straight through. It used to be backed out in the
-browser as `detections / persistence`, off a rounded ratio. The card's remaining
-quarter arithmetic went with it: narrowing the quarter picker filters the
-detection list, and the published rate is then labelled with the years it covers
-(`Persistence (2025)`) rather than being prorated onto the selection. Slicing it
-properly needs per-quarter look counts in the view — the S2 analogue of
-`views/vnf/quarters.parquet` — which do not exist yet.
+`observations` — the clear-sky looks persistence divides by — and `quarters`, the
+same count split by calendar quarter on the first-day-of-quarter key
+`views/vnf/quarters.parquet` uses. So `archiveFeature` sums the quarters the
+picker is showing and divides the detections in those quarters by exactly those
+looks: numerator and denominator over the same looks, no browser-side estimate.
+Below ten looks in the selection it publishes no rate at all, the floor s2e
+applies to the whole-window count (`MIN_LOOKS`, clustering.js).
+
+Two consequences worth knowing. The archive features are now window-scoped, so an
+open card is one window behind after a quarter change until `refreshS2Archive`
+re-reads it — hence the `reselectCurrentFeature()` there, matching the VNF path.
+And `card.js` no longer computes persistence at all; it reports what the feature
+carries. What it replaced: `detections / persistence` to recover the denominator,
+then prorating that denominator by the share of quarters selected and re-dividing
+— a guess wearing a measurement's clothes.
 
 The `--clouds` fold-in path never had this bug: those masks are written during
 detection, so they only ever cover scenes the detector actually read. It is the
