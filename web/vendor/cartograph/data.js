@@ -1,7 +1,7 @@
 // One lazy DuckDB-WASM connection serves Parquet reads, metadata and SQL. DuckDB
 // runs in its own worker, so Cartograph needs no data worker or decode library.
 const DDB = new URL('../duckdb/', import.meta.url).href;
-const DUCKDB_RELEASE = 'v1.5.5-lite.1';
+const DUCKDB_RELEASE = 'v1.5.5-lite.2';
 const duckdbAsset = name => `${DDB}${name}?v=${DUCKDB_RELEASE}`;
 
 let files = {}, base, connection;
