@@ -1,12 +1,12 @@
 // S2 archive reader — reads the precomputed Sentinel-2 SWIR flare *cluster view*
-// straight from the CloudFerro public parquet archive (s2e `box.sh archive`).
+// straight from the CloudFerro public Parquet archive (s2e `box.sh archive`).
 // The archive co-produces a derived cluster view partitioned by MGRS tile,
-// `views/clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
+// `data-desk/clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
 // nested `detections` list). We enumerate those per-tile objects from the bucket
-// listing, then range-read only the tiles a viewport overlaps through cartograph's
-// hyparquet data layer — each tile's parquet is loaded once, lazily, and cached.
+// listing, then read only the tiles a viewport overlaps through Cartograph's
+// DuckDB data layer. Each tile's Parquet file is loaded once and cached.
 // Viewports are then served from those cached tiles (bbox + date-overlap filter).
-// Zero npm deps, no wasm.
+// Zero npm dependencies.
 
 import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
 import { read, meta } from './vendor/cartograph/data.js';
@@ -69,18 +69,18 @@ function loadTiles() {
         try {
             const clusters = new Set();
             for (let token = ''; ;) {
-                const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000&prefix=views/clusters/`
+                const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000&prefix=data-desk/clusters/`
                     + (token && `&continuation-token=${encodeURIComponent(token)}`))).text();
-                for (const m of xml.matchAll(/views\/clusters\/mgrs=(\d+[C-X][A-Z]{2})/g)) clusters.add(m[1]);
+                for (const m of xml.matchAll(/data-desk\/clusters\/mgrs=(\d+[C-X][A-Z]{2})/g)) clusters.add(m[1]);
                 if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
                 token = xml.match(/<NextContinuationToken>([^<]+)</)?.[1] ?? '';
                 if (!token) break;
             }
             _clusterTiles = [...clusters].map(id => ({
-                id, key: `${_base}/views/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id)) }));
+                id, key: `${_base}/data-desk/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id)) }));
         } catch { _clusterTiles = null; }
         try {
-            _coverage = await (await fetch(`${_base}/web/coverage.geojson`)).json();
+            _coverage = await (await fetch(`${_base}/data-desk/coverage.geojson`)).json();
             _tiles = _coverage.features.map(f => ringBbox(f.geometry.coordinates[0]));
         } catch { _coverage = null; _tiles = null; }
     })();
@@ -119,7 +119,7 @@ export function initS2Archive(base) {
 }
 
 /** Load one MGRS tile's cluster parquet once, lazily, and cache it by tile id.
- *  hyparquet + norm hand back numbers, iso date strings and nested detections
+ *  DuckDB returns numbers, ISO date strings, and nested detections
  *  as plain objects directly. */
 function loadTile(t) {
     if (!_tileCache.has(t.id)) _tileCache.set(t.id, read(t.key));

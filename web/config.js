@@ -1,6 +1,6 @@
 // burnoff on cartograph — this config plus the hook modules: render.js (mode
 // look-up tables + ramp), card.js (detail card body), detect.js (local detect
-// + p2p, lazy), s2archive.js / vnf.js (hyparquet parquet readers) and
+// + p2p, lazy), s2archive.js / vnf.js (DuckDB Parquet readers) and
 // clustering.js (feature builders). two data modes share one detection layer:
 // s2 (archive clusters, detect fallback) and vnf (viirs nightfire).
 
@@ -24,12 +24,12 @@ if (/^#vnf\/\d+$/.test(location.hash))
 // ---------------------------------------------------------------------------
 
 // vnf lives in the central datadesk archive (CloudFerro) under a stable prefix
-// (views/vnf/) — public-read, hyparquet range-reads it remotely. the prefix, not
+// (data-desk/vnf/) — public-read, with remote range requests. the prefix, not
 // a file: the rollup and flare index sit in it and the daily series is 64 cells
-// below it. set via <meta name="vnf-url">; localhost (or an unset url) falls
-// back to a build laid out the same way under web/.
+// below it. set via <meta name="vnf-url">; an unset URL falls back to a build
+// laid out the same way under web/.
 const VNF_URL = document.querySelector('meta[name="vnf-url"]')?.content || '';
-const vnfUrl = () => (location.hostname === 'localhost' || !VNF_URL) ? '' : VNF_URL;
+const vnfUrl = () => VNF_URL;
 
 // s2 mode reads the precomputed cluster view straight from the CloudFerro parquet
 // archive (`data-desk/infra/archive.sh publish`); the in-browser COG worker ("Detect")

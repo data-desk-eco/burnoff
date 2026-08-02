@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # vendor dependencies into web/vendor: everything cartograph needs (maplibre,
-# hyparquet, inter, dd design system, cartograph itself). geotiff + the
+# DuckDB, Inter, the Data Desk design system, and Cartograph). GeoTIFF + the
 # s2e wasm core live in web/s2/ (the methodology core), not here.
 set -euo pipefail
 

@@ -4,7 +4,7 @@ Client-side Sentinel-2 SWIR flare detection with P2P sync, plus a
 VIIRS Nightfire (VNF) mode for browsing EOG's satellite flare catalog.
 
 Zero npm dependencies. The only external libraries are MapLibre GL (map
-rendering), geotiff.js (COG reads), hyparquet (parquet reads, pure js), and the
+rendering), geotiff.js (COG reads), DuckDB-Wasm with spatial support, and the
 s2e rust core compiled to wasm (the flare detector) — all vendored under
 `web/vendor/` and `web/s2/`. Everything else — CRDT, WebRTC mesh, sync protocol,
 IndexedDB persistence, UTM projection math, and the signal server's WebSocket
@@ -31,7 +31,7 @@ framing — is hand-rolled using web standards.
  └──────────┼───────────┘                 └──────────┼───────────┘
             │ HTTP range requests                    │
             ▼                                        ▼
-     Element84 STAC API          hyparquet
+     Element84 STAC API          DuckDB-Wasm
      Sentinel-2 L2A COGs         VNF Parquet (CloudFerro archive)
      (B12, B11, B8A, SCL)
 ```
@@ -39,9 +39,9 @@ framing — is hand-rolled using web standards.
 **S2 mode:** The default data source reads the precomputed *cluster view*
 straight from the CloudFerro public parquet archive (`data-desk/infra/archive.sh publish`).
 The archive co-produces a derived cluster view partitioned by MGRS tile,
-`views/clusters/mgrs=<tile>/data.parquet` — one row per cluster (scalar score columns +
+`data-desk/clusters/mgrs=<tile>/data.parquet` — one row per cluster (scalar score columns +
 a nested `detections` list). `web/s2archive.js` enumerates those per-tile objects
-from the bucket listing, then range-reads with hyparquet **only the tiles the
+from the bucket listing, then reads with Cartograph's DuckDB layer **only the tiles the
 viewport overlaps** — each tile's parquet is loaded once, lazily, and cached;
 viewports are served from those cached tiles (bbox + date-overlap filter), so a
 far-out or uncovered viewport fetches nothing. `archiveFeature` maps a row straight
@@ -77,7 +77,7 @@ detector ran, evidenced by a detection in that tile on that date, and publishes 
 persistence at all below ten measured looks.
 
 The republished view (s2e v0.2.2 on a fleet box, `s2e cluster --archive …
---coverage-scan cov --coverage-reuse --out s3://…/views/clusters`; the binary does
+--coverage-scan cov --coverage-reuse --out s3://…/data-desk/clusters`; the binary does
 not build on macOS — gdal and candle both fail): Sabine Pass 54/60 = 90%, median
 persistence 1.8% → 4.3%, median denominator 169 → 84 looks, clusters clearing the
 UI's 25% default 314 → 1,178, mean `total_score` −0.126 → −0.097, and 68 of 9,603
@@ -88,7 +88,7 @@ tarball is kept.
 **The looks are published, so do not recompute them.** The view carries
 `observations` — the clear-sky looks persistence divides by — and `quarters`, the
 same count split by calendar quarter on the first-day-of-quarter key
-`views/vnf/quarters.parquet` uses. So `archiveFeature` sums the quarters the
+`data-desk/vnf/quarters.parquet` uses. So `archiveFeature` sums the quarters the
 picker is showing and divides the detections in those quarters by exactly those
 looks: numerator and denominator over the same looks, no browser-side estimate.
 Below ten looks in the selection it publishes no rate at all, the floor s2e
@@ -132,20 +132,20 @@ merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**
 sits outside the archive's coverage — a pure-archive session never fetches it. The
 archive base is set via `<meta name="s2-archive">` in index.html.
 
-**VNF mode:** hyparquet reads pre-built Parquet holding per-flare daily
+**VNF mode:** Cartograph's DuckDB layer reads pre-built Parquet holding per-flare daily
 observations from EOG profile CSVs. In production it lives in the shared
-datadesk CloudFerro archive under the prefix `views/vnf/`
+Data Desk CloudFerro archive under the prefix `data-desk/vnf/`
 (`<meta name="vnf-url">` — the prefix, not a file); dev falls back to a build
 laid out the same way under `web/`. Each row has `clear`/`detected` booleans for
 real cloud-free persistence metrics.
 
-The daily series is **64 spatial cells**, `views/vnf/data/cell=<n>/data.parquet`,
+The daily series is **64 spatial cells**, `data-desk/vnf/data/cell=<n>/data.parquet`,
 sorted by `(flare_id, date)` inside each one, so a card open range-reads one row
 group of one ~9 MB object behind a 114 KB footer — 6 requests and 539 KB against
 the 69 requests and 3.4 MB the single 539 MB file cost. `flares.parquet` carries
 each flare's `cell`, so an id resolves to its object with no bucket listing, and
 a bbox reader filters that same file to the cells it must open. See
-`~/Tools/etl/vnf/REBUILD.md`.
+`~/Tools/etl/providers/data-desk/vnf/REBUILD.md`.
 
 ## Commands
 
@@ -154,7 +154,7 @@ make serve        # Dev server on :8000 + signaling on :4444
 make signal       # Signaling server only
 make test         # Run determinism + P2P retry tests
 make vnf          # Build VNF parquet from EOG profile CSVs
-make vnf-upload   # Upload VNF parquet to the datadesk archive (vnf/data.parquet)
+make vnf-upload   # Upload VNF Parquet below data-desk/vnf/
 make deploy       # Deploy signaling worker to Cloudflare
 git push          # Deploy static site via GitHub Pages (auto on push to main)
 ```
@@ -190,8 +190,8 @@ web/
   vendor/dd/          Vendored data desk design system dist (map.css, style.dark.json,
                       markings, palette, worldmap) from ~/Tools/design
   clustering.js       Terminal grid + archive/VNF feature builders
-  vnf.js              VNF data module: hyparquet reads + per-flare aggregation
-  s2archive.js        S2 archive reader: hyparquet over the cluster parquet
+  vnf.js              VNF data module: DuckDB reads + per-flare aggregation
+  s2archive.js        S2 archive reader: DuckDB over the cluster Parquet
   detect-worker.js    Module Web Worker: wasm block detector + COG I/O
   s2/                 The s2e methodology core, adopted in-tree (no submodule):
                       stac/cog/geo I/O + cluster/score JS + the rust core compiled to
@@ -224,7 +224,7 @@ test/
 | MapLibre GL 5.1 | WebGL map rendering | Vendored (`web/vendor/`) |
 | geotiff.js 2.1 | Cloud Optimized GeoTIFF reads | Vendored in `web/s2/vendor/` (ESM, one copy) |
 | s2e wasm 2.0 | Block flare detector (rust core) | Vendored in `web/s2/wasm/` |
-| hyparquet 1.26 | VNF + S2-archive Parquet reads | Vendored (`web/vendor/hyparquet/`) |
+| DuckDB-Wasm lite | VNF and S2 archive Parquet reads | Vendored by Cartograph (`web/vendor/duckdb/`) |
 
 Everything else uses browser/Node.js builtins:
 WebRTC, IndexedDB, Web Workers, Fetch, Canvas, WebSocket,
@@ -314,13 +314,13 @@ flare × night calendar → EOG profile CSVs   → detections (Planck fits)
                        → terminals.geojson (6 km) → flare index (type, category, country)
 ```
 
-Daily parquet (`views/vnf/data/cell=<n>/data.parquet`, 64 cells): `flare_id,
+Daily parquet (`data-desk/vnf/data/cell=<n>/data.parquet`, 64 cells): `flare_id,
 date, clear, detected, tcc, rh_mw, temp_k, flow_mcm, looks, profiled`. `clear` is
 BOOLEAN and NULL means unobserved — never conflate it with cloudy. `profiled`
 survives from the old build and still gates the same way, but it now says a
 satellite flew and we read the sky rather than that EOG chose to write a row;
 98.8% of flare-nights across the archive are observed. `type, category, country`
-moved out to `views/vnf/flares.parquet` and `n_passes` is gone. **`lat` and `lon`
+moved out to `data-desk/vnf/flares.parquet` and `n_passes` is gone. **`lat` and `lon`
 moved there too** (2026-07-30) — a per-flare constant belongs in the index, and
 they only ever rode along so a remote reader could prune spatially on a file
 sorted by position. Join `flares.parquet` for coordinates; they are stable
@@ -332,7 +332,7 @@ the UI's MCM/d column is `rh_mw × 0.0315`, the JZ-RH VNF v3 calibration
 validated). EOG's `Flow_Rate` implements the legacy Cedigaz power law, which
 that paper shows overestimates dim flares and underestimates bright ones.
 
-The archive also carries the RAW per-pass form at `views/vnf/passes/data.parquet`
+The archive also carries the raw per-pass form at `data-desk/vnf/passes/data.parquet`
 (`make -C ../etl vnf-raw`): the EOG profile CSVs concatenated verbatim —
 EOG's own columns (`Date_Mscan, Temp_BB, RH, RHI, Flow_Rate, Cloud_Mask,
 QF_Detect, …`), 999999 sentinels kept, row groups clustered by `flare_id` —
@@ -340,7 +340,7 @@ so queries can go straight to EOG's numbers without trusting the aggregation.
 Rebuild + re-upload after `make -C ../etl vnf-profiles` refreshes the CSVs. (The nightly backfill appends to the AGGREGATE only; the raw parquet is
 profiles-only and regenerates from the CSV corpus.)
 
-The viewport tier is `views/vnf/quarters.parquet` (flare × quarter, last four
+The viewport tier is `data-desk/vnf/quarters.parquet` (flare × quarter, last four
 calendar years): `days, profiled_days, clear_days, detected_days,
 detected_any_days, rh_sum, rh_max`. `days` is the exact night count in the
 quarter, `detected_days` counts detections on nights we could see, and

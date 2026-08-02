@@ -22,6 +22,9 @@ jobs:
         run: |
           mkdir -p dist
           cp -r web/* dist/          # whole tracked web tree (modules, s2/ wasm, vendor)
+          test -f dist/vendor/duckdb/duckdb-eh.wasm
+          test "$(wc -c < dist/vendor/duckdb/duckdb-eh.wasm)" -lt 25000000
+          grep -q "duckdbAsset('duckdb-eh\.wasm')" dist/vendor/cartograph/data.js
           # stamp the sha into every first-party module specifier + the html asset
           # tags, so a deploy can never pair a fresh module with a stale cached one
           # (github pages caches for 10 min). vendor bundles keep their own paths —

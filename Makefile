@@ -44,7 +44,7 @@ web/vendor/.ok:
 
 serve: vendor signal
 	@echo "http://localhost:8000  (signaling on :4444)"
-	@python3 -m http.server 8000 -d web
+	@python3 scripts/serve.py 8000 web
 
 signal:
 	@node signal/server.js &

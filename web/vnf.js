@@ -1,7 +1,6 @@
-// VNF (VIIRS Nightfire) data module — reads parquet (local or remote) through
-// cartograph's hyparquet data layer: remote urls are range-read (footer first,
-// then only the row groups a query's bbox/date filter touches via row-group
-// stats). Zero npm dependencies.
+// VNF (VIIRS Nightfire) data module — reads Parquet through Cartograph's
+// DuckDB data layer. Remote URLs use range requests, column selection, and
+// row-group statistics. Zero npm dependencies.
 //
 // Two tiers. The viewport reads a small flare x quarter rollup
 // (quarters.parquet, hilbert-ordered over (lon, lat) so a bbox prunes row
@@ -9,7 +8,7 @@
 // read only per flare, on card open, via fetchVNFDetections.
 //
 // That daily series is 64 spatial cells, not one file, and inside a cell the
-// rows are sorted by (flare_id, date) — so a card range-reads one row group of
+// rows are sorted by (flare_id, date) — so a card reads one row group of
 // one ~9 MB object behind a 114 KB footer. It used to be one 539 MB file
 // hilbert-ordered end to end, where a flare's nights were scattered over a
 // dozen row groups and a card decoded 559,574 rows to show 958 detections.
@@ -35,6 +34,10 @@ const COLS = ['flare_id', 'lat', 'lon', 'quarter', 'days', 'profiled_days', 'cle
  */
 export function initVNF(base) {
     _base = base;
+    // The first detail card needs the flare-to-cell index before it can read
+    // that flare's daily row group. Warm the small index while the quarterly
+    // footer loads so the card does not serialize both requests.
+    flareIndex().catch(err => console.warn('VNF flare index warm-up failed:', err));
     return _initPromise ??= meta(url('quarters.parquet')).then(() => { _ready = true; });
 }
 
@@ -48,7 +51,8 @@ export function resetVNF() {
 
 let _flares = null;
 const flareIndex = () => _flares ??= read(url('flares.parquet'))
-    .then(rows => new Map(rows.map(r => [Number(r.flare_id), r])));
+    .then(rows => new Map(rows.map(r => [Number(r.flare_id), r])))
+    .catch(err => { _flares = null; throw err; });
 
 // Rollup rows grouped to one feature per flare with summed quarter aggregates
 // (detections load per flare on card open, so features carry none).
