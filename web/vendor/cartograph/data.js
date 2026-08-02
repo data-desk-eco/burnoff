@@ -7,9 +7,13 @@ const duckdbAsset = name => `${DDB}${name}?v=${DUCKDB_RELEASE}`;
 let files = {}, base, connection;
 const metadata = new Map();
 
+// the engine is ~6 MB over the wire, so start it here rather than on the first
+// read: it then downloads and compiles while the map loads its own style and
+// tiles, instead of after.
 export function initData({ files: f = {}, prefetch = [], base: b } = {}) {
     files = f;
     base = b ?? globalThis.location?.href;
+    connect().catch(() => {});
     for (const name of prefetch) meta(name).catch(() => {});
 }
 
@@ -39,10 +43,8 @@ const url = name => {
     if (Array.isArray(value)) return value.map(url);
     return base ? new URL(value, base).href : value;
 };
-export const parquetInput = name => {
-    const source = url(name);
-    return Array.isArray(source) ? `[${source.map(quote).join(', ')}]` : quote(source);
-};
+const list = source => Array.isArray(source) ? `[${source.map(quote).join(', ')}]` : quote(source);
+export const parquetInput = name => list(url(name));
 
 export async function sql(statement) {
     const result = await (await connect()).query(statement);
@@ -71,7 +73,7 @@ export function read(name, { columns, where } = {}) {
     });
     const source = url(name);
     const options = Array.isArray(source) ? ', union_by_name = true' : '';
-    return sql(`SELECT ${select} FROM read_parquet(${parquetInput(name)}${options})${tests.length ? ` WHERE ${tests.join(' AND ')}` : ''}`);
+    return sql(`SELECT ${select} FROM read_parquet(${list(source)}${options})${tests.length ? ` WHERE ${tests.join(' AND ')}` : ''}`);
 }
 
 // Keep the former footer shape for consumers that inspect row-group bounds.

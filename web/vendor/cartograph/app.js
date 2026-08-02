@@ -39,8 +39,11 @@ function wireSearch(map) {
 // instead of (or besides) pred — e.g. a mode toggle. returns apply for re-runs.
 function wireFilters(map, config, sources, extra, ctx) {
     const state = Object.fromEntries((config.filters || []).map(f => [f.key, f.value ?? 'all']));
-    const apply = () => {
+    const apply = (init) => {
         const preds = ctx.preds = [...(config.filters || []).map(f => f.pred?.(state[f.key])), ...extra()].filter(Boolean);
+        // the sources were just added with the whole collection; re-setting it
+        // would re-index and re-cluster every feature for nothing
+        if (init && !preds.length) return dispatchEvent(new Event('cg-filters'));
         for (const [id, fc] of Object.entries(sources))
             map.getSource(id)?.setData(preds.length
                 ? { ...fc, features: fc.features.filter(f => preds.every(p => p(f.properties))) } : fc);
@@ -57,7 +60,7 @@ function wireFilters(map, config, sources, extra, ctx) {
             (config.filters || []).find(f => f.key === group.dataset.key)?.onChange?.(btn.dataset.value, ctx);
         });
     }
-    apply();
+    apply(true);
     return apply;
 }
 
@@ -65,6 +68,11 @@ export async function mount(config) {
     if (typeof config === 'string') config = await (await fetch(config)).json();
     config = compileConfig(config);
     buildShell(config);
+    // the splash covers the engine download and the first query; a boot that
+    // throws must still lift it rather than leave a black screen
+    const reveal = () => document.getElementById('cg-loading')?.classList.add('done');
+    addEventListener('unhandledrejection', reveal);
+    addEventListener('error', reveal);
     // story mode scrolls the camera, so the #map= hash would only fight it
     const map = createMap({ hash: config.story ? undefined : 'map', ...config.map });
     if (!config.story) {
@@ -79,7 +87,9 @@ export async function mount(config) {
         () => config.quarters.onChange?.(ctx), config.quarters.years);
     wireSliders(config, ctx);
 
-    await new Promise(r => (map.loaded() ? r() : map.on('load', r)));
+    // style.load, not load: sources and layers only need the style sheet, so
+    // the data query starts without waiting for the first tiles to paint
+    await new Promise(r => (map.isStyleLoaded() ? r() : map.once('style.load', r)));
     if (config.map?.satellite !== false) addSatellite(map);
 
     // a sources entry is a FeatureCollection or {data, ...geojson source
@@ -109,6 +119,11 @@ export async function mount(config) {
     await config.ready?.(ctx);
     // only after ready: onShow hooks may depend on handles wired there
     restorePermalink();
+    // the markings arrive with the layers, so hold the splash for the first
+    // painted frame rather than flashing a bare basemap; capped, because a
+    // stalled tile (or a long permalink flight) must not keep the page dark
+    await Promise.race([new Promise(r => map.once('idle', r)), new Promise(r => setTimeout(r, 2000))]);
+    reveal();
     window.cartograph = ctx;   // console + test handle
     return ctx;
 }
