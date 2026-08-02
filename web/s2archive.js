@@ -1,46 +1,24 @@
-// S2 archive reader — reads the precomputed Sentinel-2 SWIR flare *cluster view*
-// straight from the CloudFerro public Parquet archive (s2e `box.sh archive`).
-// The archive co-produces a derived cluster view partitioned by MGRS tile,
-// `data-desk/clusters/mgrs=<tile>/data.parquet`: one row per cluster (scalar score columns + a
-// nested `detections` list). We enumerate those per-tile objects from the bucket
-// listing, then read only the tiles a viewport overlaps through Cartograph's
-// DuckDB data layer. Each tile's Parquet file is loaded once and cached.
-// Viewports are then served from those cached tiles (bbox + date-overlap filter).
-// Zero npm dependencies.
+// S2 archive reader — reads the Data Desk Sentinel-2 flare tables straight from
+// the CloudFerro public Parquet archive. `data-desk/flares/data.parquet` is one
+// row per cluster: one object, so there is nothing to enumerate — the archive
+// only partitions a table past 250 MB, and it partitions on `cell`, an H3
+// index a reader calculates from a position rather than discovers by listing.
+// The bucket listing this module used to page is gone with the mgrs= keys.
+// The per-date series left the cluster row with it: it now lives in
+// `data-desk/detections/data.parquet` and is read per cluster, on card open.
+// `data-desk/coverage.geojson` gives the real scanned AOI boxes for the
+// coverage test and the intro-modal worldmap. Zero npm dependencies.
 
-import { wgs84ToUtm, utmToWgs84 } from './s2/geo.js';
-import { read, meta } from './vendor/cartograph/data.js';
+import { read } from './vendor/cartograph/data.js';
 import { quarterOf } from './vendor/cartograph/util.js';
 
-let _base = '', _tiles = null, _coverage = null, _tilesPromise = null, _clusterTiles = null;
-const _tileCache = new Map();   // mgrs id -> Promise<cluster[]>
-const _bboxDone = new Set();    // tile ids whose bbox has been refined from footer stats
+let _base = '', _tiles = null, _coverage = null, _initPromise = null, _flares = null;
 const overlaps = ([w, s, e, n], [tw, ts, te, tn]) => w <= te && e >= tw && s <= tn && n >= ts;
-const PAD = 0.25;               // granule overhang slack (~25 km): a cluster anchor can sit outside its tile square
-const padBox = ([w, s, e, n]) => [w - PAD, s - PAD, e + PAD, n + PAD];
+const inBox = ([w, s, e, n], c) => c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n;
 
 export function isReady() { return !!_base; }
 
-// MGRS 100km-square id (e.g. "39RWJ") -> closed WGS84 corner ring [[lng,lat]×4, close].
-// Only a fallback bound for which per-tile cluster parquet a viewport overlaps: each
-// tile's true data bbox comes from refineBboxes() (footer stats), and the coverage
-// *display* + isCovered() come from the published coverage.geojson (the real scanned AOI
-// boxes) — neither the cluster loading nor the overlay relies on these nominal squares.
-const MGRS_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];   // 100km easting letters, by (zone-1)%3
-const MGRS_ROWS = 'ABCDEFGHJKLMNPQRSTUV';                 // 100km northing letters, period 2,000,000 m
-const MGRS_BANDS = 'CDEFGHJKLMNPQRSTUVWX';                // 8° latitude bands from -80°
-function mgrsTileRing(id) {
-    const [, z, band, col, row] = /^(\d+)([C-X])([A-Z])([A-Z])$/.exec(id);
-    const zone = +z, isNorth = band >= 'N';
-    const east = (MGRS_COLS[(zone - 1) % 3].indexOf(col) + 1) * 1e5;
-    let north = (MGRS_ROWS.indexOf(row) + (zone % 2 ? 0 : 15)) * 1e5;  // even zones start the row letters at 'F' (≡ −5, i.e. +15 mod 20)
-    const ref = wgs84ToUtm((zone - 1) * 6 - 177, -80 + 8 * MGRS_BANDS.indexOf(band) + 4, zone, isNorth)[1];
-    north += Math.round((ref - north) / 2e6) * 2e6;                    // resolve 2,000,000 m ambiguity via band
-    const [e0, e1, n0, n1] = [east, east + 1e5, north, north + 1e5];
-    const [sw, se, nw, ne] = [[e0, n0], [e1, n0], [e0, n1], [e1, n1]]
-        .map(([e, n]) => utmToWgs84(e, n, zone, isNorth));
-    return [sw, se, ne, nw, sw];   // [lng,lat] ring
-}
+const url = f => `${_base}/${f}`;
 const ringBbox = r => [Math.min(...r.map(c => c[0])), Math.min(...r.map(c => c[1])),
                        Math.max(...r.map(c => c[0])), Math.max(...r.map(c => c[1]))];
 
@@ -51,7 +29,7 @@ export function isCovered(bbox) {
 }
 
 /** Resolves once the coverage geojson has been fetched. */
-export function whenCovered() { return _tilesPromise || Promise.resolve(); }
+export function whenCovered() { return _initPromise || Promise.resolve(); }
 
 /** The published scanned-AOI boxes (coverage.geojson) for the coverage overlay.
  *  Null until it lands / if absent. */
@@ -59,106 +37,70 @@ export function coverageTiles() {
     return _coverage && _coverage.features.length ? _coverage : null;
 }
 
-/** Init fetch: (1) page the `clusters/mgrs=…` listing (ListObjectsV2 caps at
- *  1000/response) to know which per-tile parquet a viewport can range-read; (2) load
- *  the published coverage.geojson — the real scanned AOI boxes — for the overlay + the
- *  isCovered() test. Independent: a missing coverage.geojson leaves data loading intact
- *  (isCovered then falls back to assume-covered). */
-function loadTiles() {
-    return _tilesPromise ??= (async () => {
+/** Remember the archive base URL and load the published coverage.geojson — the
+ *  real scanned AOI boxes — for the overlay + the isCovered() test (memoized).
+ *  Independent of the flare table: a missing coverage.geojson leaves data
+ *  loading intact (isCovered then falls back to assume-covered). */
+export function initS2Archive(base) {
+    _base = base.replace(/\/$/, '');
+    // the whole archive is one object, so start pulling it here rather than on
+    // the first viewport: it downloads while maplibre loads its style and tiles
+    flares().catch(err => console.warn('S2 archive warm-up failed:', err));
+    return _initPromise ??= (async () => {
         try {
-            const clusters = new Set();
-            for (let token = ''; ;) {
-                const xml = await (await fetch(`${_base}?list-type=2&max-keys=1000&prefix=data-desk/clusters/`
-                    + (token && `&continuation-token=${encodeURIComponent(token)}`))).text();
-                for (const m of xml.matchAll(/data-desk\/clusters\/mgrs=(\d+[C-X][A-Z]{2})/g)) clusters.add(m[1]);
-                if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
-                token = xml.match(/<NextContinuationToken>([^<]+)</)?.[1] ?? '';
-                if (!token) break;
-            }
-            _clusterTiles = [...clusters].map(id => ({
-                id, key: `${_base}/data-desk/clusters/mgrs=${id}/data.parquet`, bbox: ringBbox(mgrsTileRing(id)) }));
-        } catch { _clusterTiles = null; }
-        try {
-            _coverage = await (await fetch(`${_base}/data-desk/coverage.geojson`)).json();
+            _coverage = await (await fetch(url('data-desk/coverage.geojson'))).json();
             _tiles = _coverage.features.map(f => ringBbox(f.geometry.coordinates[0]));
         } catch { _coverage = null; _tiles = null; }
     })();
 }
 
-// Refine the given tiles' bboxes to their TRUE data extent (min/max lon/lat of the
-// clusters each holds), read once from the parquet footer statistics — footer-only
-// range reads, not full scans. This catches granule overhang (a cluster anchor can
-// sit ~10 km outside its tile's square), which a nominal-square filter would drop
-// once the viewport zoomed past the square. Refined per tile and cached (_bboxDone)
-// so each footer is read AT MOST ONCE, and only the handful of tiles near a viewport
-// are touched — not the whole archive on first load. On failure the nominal square
-// set in loadTiles remains as a (smaller) fallback.
-async function refineBboxes(tiles) {
-    await Promise.all(tiles.filter(t => !_bboxDone.has(t.id)).map(async t => {
-        try {
-            const md = await meta(t.key);
-            let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
-            for (const g of md.row_groups) for (const c of g.columns) {
-                const p = c.meta_data?.path_in_schema[0], st = c.meta_data?.statistics;
-                if (!st || st.min_value == null) continue;
-                if (p === 'lon') { w = Math.min(w, st.min_value); e = Math.max(e, st.max_value); }
-                if (p === 'lat') { s = Math.min(s, st.min_value); n = Math.max(n, st.max_value); }
-            }
-            if (w <= e && s <= n) t.bbox = [w, s, e, n];
-            _bboxDone.add(t.id);
-        } catch (err) { console.error('S2 archive cluster-bbox stats failed:', err); }
-    }));
-}
-
-/** Remember the archive base URL and start the tile/coverage listing (memoized;
- *  isCovered assumes archived until the listing lands). */
-export function initS2Archive(base) {
-    _base = base.replace(/\/$/, '');
-    return loadTiles();
-}
-
-/** Load one MGRS tile's cluster parquet once, lazily, and cache it by tile id.
- *  DuckDB returns numbers, ISO date strings, and nested detections
- *  as plain objects directly. */
-function loadTile(t) {
-    if (!_tileCache.has(t.id)) _tileCache.set(t.id, read(t.key));
-    return _tileCache.get(t.id);
-}
-
-/** Clusters from every archived tile the viewport bbox overlaps (loaded lazily). */
-async function loadViewport(bbox) {
-    await loadTiles();   // tile list (listing) + coverage geojson
-    // candidates = tiles whose nominal square (padded for granule overhang) meets the
-    // viewport; refine only those true bboxes from footer stats — so first load touches
-    // a handful of nearby footers, not every archived tile.
-    const cands = (_clusterTiles || []).filter(t => overlaps(bbox, padBox(t.bbox)));
-    await refineBboxes(cands);
-    const tiles = cands.filter(t => overlaps(bbox, t.bbox));
-    return (await Promise.all(tiles.map(loadTile))).flat();
-}
+// One object for the whole archive, so read it once and hold the rows: every
+// viewport, quarter indicator and re-score is then served from memory, where
+// the old per-tile cache served only the tiles a viewport had already touched.
+const flares = () => _flares ??= read(url('data-desk/flares/data.parquet'))
+    .catch(err => { _flares = null; throw err; });
 
 /**
- * Precomputed clusters intersecting a viewport bbox + date window. Only the archive
- * tiles the viewport overlaps are range-read (and cached), so a far-out or
- * uncovered viewport fetches nothing. The date window is an overlap filter on each
- * cluster's [first_date, last_date]; the published scalar scores are passed through.
+ * Archive clusters intersecting a viewport bbox + date window. The date window
+ * is an overlap filter on each cluster's [first_seen, last_seen]; the published
+ * scalar columns are passed through.
  */
 export async function queryS2Archive(bbox, startDate, endDate) {
     if (!_base) throw new Error('S2 archive not initialized');
-    const [w, s, e, n] = bbox;
-    return (await loadViewport(bbox)).filter(c =>
-        c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n &&
-        c.last_date >= startDate && c.first_date <= endDate);
+    return (await flares()).filter(c => inBox(bbox, c) &&
+        c.last_seen >= startDate && c.first_seen <= endDate);
 }
 
 /** Set of `year_quarter` keys that have any detection in the viewport (all dates). */
 export async function availableQuartersS2(bbox) {
     if (!_base) return new Set();
-    const [w, s, e, n] = bbox;
     const qs = new Set();
-    for (const c of await loadViewport(bbox))
-        if (c.lon >= w && c.lon <= e && c.lat >= s && c.lat <= n)
-            for (const d of c.detections) qs.add(quarterOf(d.date));
+    for (const c of await flares())
+        if (inBox(bbox, c))
+            // the quarters list carries the count the nested date list used to
+            // be counted from, so this no longer walks every detection
+            for (const q of c.quarters ?? []) if (q.detections > 0) qs.add(quarterOf(q.quarter));
     return qs;
+}
+
+/**
+ * Per-date history for one cluster (card open). The flares row carries a
+ * detection count, not a list, so the dates come from data-desk/detections —
+ * one object today, filtered to this site. Rows there are written in
+ * (cell, site_id, date) order, so passing the cluster's own `cell` alongside
+ * its id prunes row groups off the footer instead of scanning the table; it is
+ * also the address if the object ever partitions. `kind` is in the predicate
+ * because this provider writes its methane plumes to the same table.
+ */
+export async function fetchS2Detections({ id, cell }) {
+    if (!id) return [];
+    const rows = await read(url('data-desk/detections/data.parquet'),
+        { columns: ['date', 'lat', 'lon', 'max_b12', 'pixels'],
+          where: { site_id: [String(id), String(id)], kind: ['flare', 'flare'],
+                   ...(cell ? { cell: [cell, cell] } : {}) } });
+    return rows.map(r => ({
+        date: String(r.date).slice(0, 10),
+        max_b12: Number(r.max_b12), b12_corrected: Number(r.max_b12),
+        pixels: Number(r.pixels), raw_lon: Number(r.lon), raw_lat: Number(r.lat),
+    })).sort((a, b) => a.date < b.date ? -1 : 1);
 }

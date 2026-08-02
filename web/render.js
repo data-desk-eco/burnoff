@@ -19,6 +19,10 @@ export const MODE = {
     s2: {
         subtitle: 'Sentinel-2 Flare Detection',
         label: 'B12 reflectance',
+        // the site-level ramp key. the shared flares schema has no b12 column,
+        // so this is a data-desk extension on the row; markIconExpr coalesces a
+        // missing one to stops[0], which flattens the ramp rather than hiding
+        // the site. locally detected clusters set it themselves.
         prop: 'max_b12',
         col2: 'B12', col3: 'px',
         stops: [0.9, 1.15, 1.5],

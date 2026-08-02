@@ -23,18 +23,19 @@ if (/^#vnf\/\d+$/.test(location.hash))
 // build config (index.html meta tags) + mode state ('s2' or 'vnf')
 // ---------------------------------------------------------------------------
 
-// vnf lives in the central datadesk archive (CloudFerro) under a stable prefix
-// (data-desk/vnf/) — public-read, with remote range requests. the prefix, not
-// a file: the rollup and flare index sit in it and the daily series is 64 cells
-// below it. set via <meta name="vnf-url">; an unset URL falls back to a build
-// laid out the same way under web/.
+// vnf lives in the central datadesk archive (CloudFerro) under the eog provider
+// prefix — public-read, with remote range requests. the prefix, not a file:
+// flares/ (the sites, with their quarterly history nested) and detections/ (the
+// daily series, partitioned on an h3 cell the flares row carries) sit in it.
+// set via <meta name="vnf-url">; an unset URL falls back to a build laid out
+// the same way under web/.
 const VNF_URL = document.querySelector('meta[name="vnf-url"]')?.content || '';
 const vnfUrl = () => VNF_URL;
 
-// s2 mode reads the precomputed cluster view straight from the CloudFerro parquet
-// archive (`data-desk/infra/archive.sh publish`); the in-browser COG worker ("Detect")
-// stays as the fallback for areas not yet archived. warm the archive
-// cache at page parse, overlapping maplibre init.
+// s2 mode reads the data-desk flares and detections tables straight from the
+// CloudFerro parquet archive; the in-browser COG worker ("Detect") stays as the
+// fallback for areas not yet archived. warm the archive cache at page parse,
+// overlapping maplibre init.
 const S2_ARCHIVE = document.querySelector('meta[name="s2-archive"]')?.content || '';
 if (S2_ARCHIVE) initS2Archive(S2_ARCHIVE);
 
@@ -140,7 +141,11 @@ async function refreshS2Archive() {
         const clusters = await queryS2Archive(viewportBbox(CTX.map), range.startDate, range.endDate);
         if (mode !== 's2' || isDetecting()) return;
         const qKeys = CTX.quarters.keys();
-        const features = clusters.filter(c => c.avg_b12 >= GATE.s2).map(c => archiveFeature(c, qKeys));
+        // negated, so a cluster the table gives no intensity for passes rather
+        // than vanishing: the shared flares schema has no site-level b12, and
+        // `undefined >= 0.85` is false for every row — the slider would empty
+        // the map with nothing in the console, the 2026-07-31 failure again
+        const features = clusters.filter(c => !(c.avg_b12 < GATE.s2)).map(c => archiveFeature(c, qKeys));
         if (!features.length) { updateDetectionSource(); return; }
         setDetections(features);
         // every feature above was just rebuilt for the ticked quarters. an open card
@@ -412,7 +417,7 @@ mount({
 
     detail: {
         layers: ['detections'],
-        hashKey: 'vnf', idProp: 'flare_id',
+        hashKey: 'vnf', idProp: 'id',
         flyZoom: 15, minZoom: 10,
         title: cardTitle,
         html: cardHtml,

@@ -34,7 +34,9 @@ web/terminals.geojson: data/GEM-GGIT-LNG-Teminals-2025-09.xlsx
 	) TO 'web/terminals.geojson' (FORMAT CSV, HEADER false, QUOTE '', DELIMITER '');"
 	@echo "web/terminals.geojson: $$(python3 -c "import json; print(len(json.load(open('web/terminals.geojson'))['features']))" 2>/dev/null) features"
 
-# vnf etl (rollup, backfill, raw passes, uploads) lives in ~/Tools/etl now
+# the etl that publishes what this map reads lives in ~/Tools/etl: the eog
+# provider builds eog/flares, eog/detections and eog/observations; data-desk
+# builds the sentinel-2 pair. nothing here reads the archive.
 
 vendor: web/vendor/.ok
 

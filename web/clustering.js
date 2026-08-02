@@ -69,27 +69,50 @@ export function findNearestTerminal(lat, lon) {
     return best && bestDist <= TERMINAL_MATCH_M ? { name: best.properties.name, distance: bestDist } : null;
 }
 
-// Map a precomputed archive cluster (clusters/data.parquet row) to the same Feature
-// shape crossDateCluster emits, so rendering/detail/CSV are unchanged. The view is
-// pre-clustered server-side, so the avg-B12 slider gates these rows client-side and
-// the merge-distance/score controls don't re-run.
+// Both flares tables publish one `quarters` struct, so both modes window it the
+// same way. `clear` is the cloud-free day count a rate divides by; the wider
+// `observations` is every day an instrument looked, and `detections_clear` is
+// the only numerator that pairs with `clear`. Keeping the three in one reducer
+// is what stops a caller redefining persistence without changing how it reads.
+// `n` is the number of quarters kept — 0 means the window measured nothing,
+// which is not the same as measuring zero.
 //
-// the view publishes the clear-sky looks persistence divides by — `observations`,
-// and the same count split by calendar quarter — so a selection sums the quarters
-// it shows and divides the detections it shows by exactly those looks. that keeps
-// numerator and denominator over the same looks, which neither the old
-// back-calculation (detections ÷ a rounded ratio) nor the old proration did.
-// `passes` stays null: the view carries no total-pass figure to make a cloud-free
-// fraction from.
+// mind the grain: days/observations/clear count days, detections and
+// detections_clear count ROWS. only eog writes one row per site-day, so a
+// data-desk rate off these can exceed 1 and its caller has to clamp.
+export function sumQuarters(quarters, keep) {
+    const t = { n: 0, days: 0, observations: 0, clear: 0, detections: 0,
+                detections_clear: 0, rh_sum: 0, rh_max: 0 };
+    for (const q of quarters ?? []) {
+        if (!keep(q.quarter)) continue;
+        t.n++;
+        for (const k of ['days', 'observations', 'clear', 'detections', 'detections_clear', 'rh_sum'])
+            t[k] += Number(q[k] ?? 0);
+        t.rh_max = Math.max(t.rh_max, Number(q.rh_max ?? 0));
+    }
+    return t;
+}
+
+// Map an archive flares row (data-desk/flares/data.parquet) to the same Feature
+// shape crossDateCluster emits, so rendering/detail/CSV are unchanged. The table
+// is pre-clustered server-side, so the avg-B12 slider gates these rows
+// client-side and the merge-distance/score controls don't re-run.
+//
+// the table publishes the looks persistence divides by, split by calendar
+// quarter, so a selection sums the quarters it shows and divides the detections
+// in them by exactly those looks. that keeps numerator and denominator over the
+// same looks, which neither the old back-calculation (detections ÷ a rounded
+// ratio) nor the old proration did. the per-date series is no longer nested on
+// the row — the card fetches it from data-desk/detections when it opens.
 export function archiveFeature(c, qKeys = new Set()) {
     const terminal = findNearestTerminal(c.lat, c.lon);
-    const detections = c.detections.filter(d => dateInQuarters(d.date, qKeys));
-    const detection_count = detections.length;
     // the quarter key is a date in its own quarter, so the same predicate windows
     // both sides. no quarters published (the rescore measured nothing) → no rate.
-    const observations = c.quarters?.length
-        ? c.quarters.reduce((n, q) => n + (dateInQuarters(q.quarter, qKeys) ? q.observations : 0), 0)
-        : null;
+    const t = sumQuarters(c.quarters, q => dateInQuarters(q, qKeys));
+    const detection_count = t.detections_clear;
+    const observations = t.n ? t.clear : null;
+    // clamped because the numerator counts detection rows and s2 can write
+    // several blobs for one site on one day, while the denominator counts days
     const persistence = observations >= MIN_LOOKS
         ? Math.min(1, detection_count / observations) : null;
     return {
@@ -99,15 +122,12 @@ export function archiveFeature(c, qKeys = new Set()) {
             name: terminal ? terminal.name : `${detection_count} detection${detection_count !== 1 ? 's' : ''}`,
             terminal: terminal?.name || null,
             lat: c.lat, lon: c.lon,   // exact coords for detail/highlight
-            max_b12: c.max_b12, detection_count, seasonal: c.seasonal,
-            total_score: c.total_score, ratio_score: c.ratio_score,
-            persistence_score: c.persistence_score, glint_penalty: c.glint_penalty,
-            max_ratio: c.max_ratio, min_glint: c.min_glint, glint_suspect: c.glint_suspect,
-            persistence, passes: null, observations,
-            detections: detections.map(d => ({
-                date: d.date, max_b12: d.max_b12, pixels: d.pixels,
-                raw_lon: d.lon, raw_lat: d.lat, b12_corrected: d.max_b12,
-            })),
+            id: c.id, cell: c.cell, country: c.country || '', detail: c.detail || '',
+            // a data-desk extension column, not part of the shared flares
+            // schema — the ramp and the intensity gate both fail soft if the
+            // producer stops writing it. see render.js and config.js
+            max_b12: c.max_b12,
+            detection_count, persistence, passes: t.n ? t.observations : null, observations,
         },
     };
 }
@@ -122,16 +142,15 @@ export function enrichVNFFeatures(features, minRh) {
         if (minRh > 0 && p.avg_rh < minRh) continue;
 
         const terminal = findNearestTerminal(lat, lon);
-        const typeCat = [p.type, p.category].filter(Boolean).join(' — ');
-        const name = terminal ? terminal.name : typeCat || `Flare #${p.flare_id}`;
+        // `detail` is what type and category used to be, joined by the producer
+        const name = terminal ? terminal.name : p.detail || `Flare #${p.id}`;
 
-        const passes = p.profiled_dates;
         // both restricted to nights we could see, so the ratio is a rate. the
         // old max() guarded a numerator larger than its denominator, which the
         // archive can no longer produce; what it left behind was a window
         // holding no clear night at all reading 0% — never seen is not unlit.
         const detection_count = p.detection_dates;
-        const observations = p.clear_dates;
+        const observations = p.observations;
         // null, not 0, where we read too little of the window to divide by, or
         // never caught the site under clear sky: an unmeasured flare is not an
         // unlit one. the card renders it as '—' and the persistence layer
@@ -146,17 +165,16 @@ export function enrichVNFFeatures(features, minRh) {
                 name,
                 terminal: terminal?.name || null,
                 lat, lon,   // exact coords for detail/highlight
-                flare_id: p.flare_id,
-                type: p.type || '',
-                category: p.category || '',
+                id: p.id,
+                cell: p.cell,
+                detail: p.detail || '',
                 country: p.country || '',
                 avg_rh: p.avg_rh,
                 max_rh: p.max_rh,
                 detection_count,
-                passes,
+                passes: p.passes,
                 observations,
                 persistence,
-                detections: p.detections
             }
         });
     }

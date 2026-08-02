@@ -36,17 +36,19 @@ framing — is hand-rolled using web standards.
      (B12, B11, B8A, SCL)
 ```
 
-**S2 mode:** The default data source reads the precomputed *cluster view*
-straight from the CloudFerro public parquet archive (`data-desk/infra/archive.sh publish`).
-The archive co-produces a derived cluster view partitioned by MGRS tile,
-`data-desk/clusters/mgrs=<tile>/data.parquet` — one row per cluster (scalar score columns +
-a nested `detections` list). `web/s2archive.js` enumerates those per-tile objects
-from the bucket listing, then reads with Cartograph's DuckDB layer **only the tiles the
-viewport overlaps** — each tile's parquet is loaded once, lazily, and cached;
-viewports are served from those cached tiles (bbox + date-overlap filter), so a
-far-out or uncovered viewport fetches nothing. `archiveFeature` maps a row straight
-to the Feature shape `crossDateCluster` emits, so the avg-B12 slider gates
-client-side but the server-side clustering is not re-run.
+**S2 mode:** The default data source reads the Data Desk Sentinel-2 tables
+straight from the CloudFerro public parquet archive. `data-desk/flares/data.parquet`
+is **one object** — one row per cluster, with the site's quarterly history nested
+in a `quarters` list — so `web/s2archive.js` reads it once through Cartograph's
+DuckDB layer and serves every viewport from those rows (bbox + date-overlap
+filter). There is no bucket listing and no MGRS partition: the archive partitions
+only past 250 MB, and it partitions on `cell`, an H3 resolution-1 index a reader
+calculates from a position rather than discovers by listing. The per-date series
+left the cluster row with the old view — it lives in
+`data-desk/detections/data.parquet` (`kind = 'flare'`, joined on `site_id`) and is
+fetched per cluster when a card opens. `archiveFeature` maps a row straight to the
+Feature shape `crossDateCluster` emits, so the avg-B12 slider gates client-side
+but the server-side clustering is not re-run.
 
 **Persistence history (resolved 2026-07-31).** For a period the cluster view
 carried `persistence` NULL and `persistence_score` 0 for 9,595 of its 9,603
@@ -77,7 +79,7 @@ detector ran, evidenced by a detection in that tile on that date, and publishes 
 persistence at all below ten measured looks.
 
 The republished view (s2e v0.2.2 on a fleet box, `s2e cluster --archive …
---coverage-scan cov --coverage-reuse --out s3://…/data-desk/clusters`; the binary does
+--coverage-scan cov --coverage-reuse --out s3://…/data-desk/flares`; the binary does
 not build on macOS — gdal and candle both fail): Sabine Pass 54/60 = 90%, median
 persistence 1.8% → 4.3%, median denominator 169 → 84 looks, clusters clearing the
 UI's 25% default 314 → 1,178, mean `total_score` −0.126 → −0.097, and 68 of 9,603
@@ -85,14 +87,24 @@ rows now carry no persistence because fewer than ten looks were measured. Repeat
 it in ~2 min from the scan tarball in `ops/s2e-coverage/`, which is why that
 tarball is kept.
 
-**The looks are published, so do not recompute them.** The view carries
-`observations` — the clear-sky looks persistence divides by — and `quarters`, the
-same count split by calendar quarter on the first-day-of-quarter key
-`data-desk/vnf/quarters.parquet` uses. So `archiveFeature` sums the quarters the
-picker is showing and divides the detections in those quarters by exactly those
-looks: numerator and denominator over the same looks, no browser-side estimate.
-Below ten looks in the selection it publishes no rate at all, the floor s2e
-applies to the whole-window count (`MIN_LOOKS`, clustering.js).
+**The looks are published, so do not recompute them.** Every flares row carries
+`quarters`, its own history on the first-day-of-quarter key, and the struct is
+the same one both providers write: `quarter, days, observations, clear,
+detections, detections_clear, rh_sum, rh_max`. **`clear` is the cloud-free look
+count persistence divides by; `observations` is every look an instrument took.**
+Reading `observations` where `clear` belongs compiles, runs, and silently changes
+what persistence means — so both modes go through one reducer, `sumQuarters`
+(clustering.js), and the only numerator that pairs with `clear` is
+`detections_clear`. `archiveFeature` sums the quarters the picker is showing and
+divides the detections in those quarters by exactly those looks: numerator and
+denominator over the same looks, no browser-side estimate. Below ten looks in the
+selection it publishes no rate at all, the floor s2e applies to the whole-window
+count (`MIN_LOOKS`, clustering.js).
+
+The tables also publish a whole-history `persistence` column. **Do not wire it
+through.** The app deliberately recomputes the rate over exactly the ticked
+quarters; using the published one would compile, look right, and make the quarter
+picker stop affecting the number.
 
 `card.js` therefore computes no rate at all: it reports what the feature carries.
 What it replaced was `detections / persistence` to recover the denominator, then
@@ -132,20 +144,27 @@ merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**
 sits outside the archive's coverage — a pure-archive session never fetches it. The
 archive base is set via `<meta name="s2-archive">` in index.html.
 
-**VNF mode:** Cartograph's DuckDB layer reads pre-built Parquet holding per-flare daily
-observations from EOG profile CSVs. In production it lives in the shared
-Data Desk CloudFerro archive under the prefix `data-desk/vnf/`
-(`<meta name="vnf-url">` — the prefix, not a file); dev falls back to a build
-laid out the same way under `web/`. Each row has `clear`/`detected` booleans for
-real cloud-free persistence metrics.
+**VNF mode:** Cartograph's DuckDB layer reads the EOG tables in the shared Data
+Desk CloudFerro archive under the `eog/` provider prefix (`<meta name="vnf-url">`
+— the prefix, not a file); dev falls back to a build laid out the same way under
+`web/`. The viewport reads `eog/flares/data.parquet`: one row per site, 20,227 of
+them, each carrying its own quarterly history in a `quarters` list, so a bbox
+predicate and a JS window over that list are the whole viewport query.
 
-The daily series is **64 spatial cells**, `data-desk/vnf/data/cell=<n>/data.parquet`,
-sorted by `(flare_id, date)` inside each one, so a card open range-reads one row
-group of one ~9 MB object behind a 114 KB footer — 6 requests and 539 KB against
-the 69 requests and 3.4 MB the single 539 MB file cost. `flares.parquet` carries
-each flare's `cell`, so an id resolves to its object with no bucket listing, and
-a bbox reader filters that same file to the cells it must open. See
-`~/Tools/etl/providers/data-desk/vnf/REBUILD.md`.
+The daily series is `eog/detections/cell=<h3>/data.parquet`, sorted by `site_id`
+inside a cell, read only on card open. **Every row there is a positive
+detection** — there is no `detected` column, because the looks that found nothing
+are rows in `eog/observations` instead. `cell` is an H3 resolution-1 index of the
+site's position, and the flares row carries it, so a card resolves to exactly one
+object with no bucket listing and **no H3 library in the browser**: nothing in
+burnoff ever calculates a cell, it only ever passes one on. Plumb `cell` through
+any new feature builder for the same reason.
+
+Burnoff does not read `eog/observations` at all. The quarters list already
+carries the looks a rate divides by, windowed the same way the numerator is;
+fetching the daily denominator as well would be a second, larger read of a number
+the app already has, and two places to get the pairing wrong. See
+`~/Tools/etl/sql/tables/` for the table definitions and their checks.
 
 ## Commands
 
@@ -153,8 +172,6 @@ a bbox reader filters that same file to the cells it must open. See
 make serve        # Dev server on :8000 + signaling on :4444
 make signal       # Signaling server only
 make test         # Run determinism + P2P retry tests
-make vnf          # Build VNF parquet from EOG profile CSVs
-make vnf-upload   # Upload VNF Parquet below data-desk/vnf/
 make deploy       # Deploy signaling worker to Cloudflare
 git push          # Deploy static site via GitHub Pages (auto on push to main)
 ```
@@ -189,9 +206,11 @@ web/
                       sliders, detail, permalinks) from ~/Tools/cartograph
   vendor/dd/          Vendored data desk design system dist (map.css, style.dark.json,
                       markings, palette, worldmap) from ~/Tools/design
-  clustering.js       Terminal grid + archive/VNF feature builders
-  vnf.js              VNF data module: DuckDB reads + per-flare aggregation
-  s2archive.js        S2 archive reader: DuckDB over the cluster Parquet
+  clustering.js       Terminal grid, the shared quarters reducer (sumQuarters)
+                      + archive/VNF feature builders
+  vnf.js              VNF data module: DuckDB over eog/flares + eog/detections
+  s2archive.js        S2 archive reader: DuckDB over data-desk/flares +
+                      data-desk/detections, plus the coverage geojson
   detect-worker.js    Module Web Worker: wasm block detector + COG I/O
   s2/                 The s2e methodology core, adopted in-tree (no submodule):
                       stac/cog/geo I/O + cluster/score JS + the rust core compiled to
@@ -300,66 +319,64 @@ and shown in the detail card, NOT yet a gate. The formula was tuned in
 
 ## VNF Data Pipeline
 
-The pipeline lives in the sibling etl repo (`~/Tools/etl`, see `vnf/REBUILD.md`).
+The pipeline lives in the sibling etl repo (`~/Tools/etl`, provider `eog/`).
 It generates the calendar itself — every flare, every night from 2012-03-01 to
 wherever the cloud series ends, about five days back — and lets EOG supply
 detections only, so a night with no detection is a row saying "nothing seen",
 not an absence. Whether we could have seen anything
 is our own call: ERA5 total cloud cover sampled at each site's real VIIRS
-overpass hours, clear at `tcc < 0.6`.
+overpass hours, clear below 0.6.
 
 ```
-flare × night calendar → EOG profile CSVs   → detections (Planck fits)
-                       → ERA5 tcc at overpass hours → clear / unobserved
-                       → terminals.geojson (6 km) → flare index (type, category, country)
+flare × night calendar → EOG profile CSVs   → eog/detections  (12.3M rows)
+                       → ERA5 cloud at overpass hours → eog/observations (106.3M)
+                       → terminals.geojson (6 km) → eog/flares (20,227 sites)
 ```
 
-Daily parquet (`data-desk/vnf/data/cell=<n>/data.parquet`, 64 cells): `flare_id,
-date, clear, detected, tcc, rh_mw, temp_k, flow_mcm, looks, profiled`. `clear` is
-BOOLEAN and NULL means unobserved — never conflate it with cloudy. `profiled`
-survives from the old build and still gates the same way, but it now says a
-satellite flew and we read the sky rather than that EOG chose to write a row;
-98.8% of flare-nights across the archive are observed. `type, category, country`
-moved out to `data-desk/vnf/flares.parquet` and `n_passes` is gone. **`lat` and `lon`
-moved there too** (2026-07-30) — a per-flare constant belongs in the index, and
-they only ever rode along so a remote reader could prune spatially on a file
-sorted by position. Join `flares.parquet` for coordinates; they are stable
-per-flare averages (from profile passes), not per-pass positions. `flow_mcm` carries
-EOG's own per-pass `Flow_Rate` (daily-averaged like `rh_mw`; 0 on
-nightly-backfilled rows — the ez CSVs have no flow) but is NOT displayed:
+The split is the point. `eog/detections/cell=<h3>/data.parquet` holds **only**
+the nights a site was seen lit: `site_id, date, lat, lon, cell, rh_mw, temp_k,
+rate_kg_h, satellite, scene, sector` plus the EOG extension `flow_mcm`. There is
+no `detected` column, because a look that found nothing is a row in
+`eog/observations` and nowhere else — `provider, kind, site_id, date, lat, lon,
+cell, observed, clear, cloud, looks, scene, source, final`. `observed` already
+applies the platform-outage test, `cloud` is a fraction 0..1, and `clear` is the
+one threshold (`cloud < 0.6`) so the word means the same thing whichever
+instrument looked. `flow_mcm` carries EOG's own `Flow_Rate` but is NOT displayed:
 the UI's MCM/d column is `rh_mw × 0.0315`, the JZ-RH VNF v3 calibration
 (Zhizhin et al. 2025, Energies 18:4765 — BCM/yr = 0.0115×RH, metered-flare
 validated). EOG's `Flow_Rate` implements the legacy Cedigaz power law, which
 that paper shows overestimates dim flares and underestimates bright ones.
 
-The archive also carries the raw per-pass form at `data-desk/vnf/passes/data.parquet`
-(`make -C ../etl vnf-raw`): the EOG profile CSVs concatenated verbatim —
-EOG's own columns (`Date_Mscan, Temp_BB, RH, RHI, Flow_Rate, Cloud_Mask,
-QF_Detect, …`), 999999 sentinels kept, row groups clustered by `flare_id` —
-so queries can go straight to EOG's numbers without trusting the aggregation.
-Rebuild + re-upload after `make -C ../etl vnf-profiles` refreshes the CSVs. (The nightly backfill appends to the AGGREGATE only; the raw parquet is
-profiles-only and regenerates from the CSV corpus.)
+The viewport tier is `eog/flares/data.parquet` — one row per site, `id, provider,
+kind, lat, lon, cell, country, detail, first_seen, last_seen, detections,
+active_days, observations, persistence, score, flags, quarters` — where
+`quarters` is the site's own history rolled up over the last four calendar years,
+a `STRUCT[]` of `quarter, days, observations, clear, detections,
+detections_clear, rh_sum, rh_max`. `days` is the exact night count in the
+quarter, `detections_clear` counts detections on nights we could see, and
+`detections` counts every detection including cloudy ones. **Never divide
+`detections` by `clear`** — that pairing is what broke `lng-flaring`.
 
-The viewport tier is `data-desk/vnf/quarters.parquet` (flare × quarter, last four
-calendar years): `days, profiled_days, clear_days, detected_days,
-detected_any_days, rh_sum, rh_max`. `days` is the exact night count in the
-quarter, `detected_days` counts detections on nights we could see, and
-`detected_any_days` counts every detection including cloudy ones. **Never divide
-`detected_any_days` by `clear_days`** — that pairing is what broke `lng-flaring`.
+`type` and `category` are gone: they are joined into one `detail` string, which
+is what the map falls back to for a name when no terminal is within 7.5 km. Ids
+are VARCHAR now (`flares.id`, and `detections.site_id`/`observations.site_id`
+join to it), so do not coerce them with `Number()` — EOG's happen to look
+numeric, and another provider's will not.
 
-The web query sums those to `total_dates`, `profiled_dates`, `clear_dates`,
-`detection_dates`, `detection_any` per flare, and returns a detection list with
-`date, rh_mw`. Two ratios come out of it:
+`siteFeatures` (vnf.js) windows `quarters` to the ticked span and sums it through
+`sumQuarters`, giving `passes` (Σ observations), `observations` (Σ clear),
+`detection_dates` (Σ detections_clear), `detection_any` (Σ detections), `rh_sum`
+and `max_rh`. Two ratios come out of it:
 
-- `persistence` = `detection_dates / clear_dates` — numerator and denominator on
-  the same nights, so it is a rate. Null, not 0, where `clear_dates` is 0 (a
+- `persistence` = `detection_dates / observations` — numerator and denominator on
+  the same nights, so it is a rate. Null, not 0, where the clear count is 0 (a
   window holding no clear night measures nothing) or where `coverage` falls
   below `COVERAGE_MIN`. The card shows '—' and the layer filter drops the flare
   rather than ranking it.
 - `avg_rh` = `rh_sum / detection_any` — `rh_sum` spans every detection, so its
   mean divides by every detection.
 
-`coverage` is `profiled_dates / total_dates`: the share of the selected window's
+`coverage` is `Σ observations / Σ days`: the share of the selected window's
 nights we read the sky for, over the exact night count rather than a 91-night
 approximation. The calendar ends where the cloud series ends, so it no longer
 counts nights ERA5 has not reached; what is left to catch is platform outages,
@@ -369,7 +386,8 @@ and a single platform does not reach every site every night. `COVERAGE_MIN`
 average 0.86–1.00 read, and the flares falling below the threshold are the ones
 an outage covered — 708 and 644 of ~11,800 mapped flares in the two 2024 outage
 quarters, 289 of 6,982 in the quarter in progress. See
-`data-desk/docs/archive/vnf.md`.
+`~/Tools/etl/sql/tables/` — `flares.sql`, `detections.sql`, `observations.sql`
+and their `*.checks.sql`, which state exactly what a reader may rely on.
 
 ## P2P Sync
 

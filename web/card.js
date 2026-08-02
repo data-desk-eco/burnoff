@@ -12,6 +12,7 @@ import { dimSatellite } from './vendor/cartograph/shell.js';
 import { dateInQuarters } from './vendor/cartograph/util.js';
 import { DEG_TO_RAD } from './clustering.js';
 import { fetchVNFDetections } from './vnf.js';
+import { fetchS2Detections } from './s2archive.js';
 
 // injected by initCard: the map, the active mode config, an isVnf() probe,
 // whether this build serves the precomputed archive (no COGs in cluster rows)
@@ -19,6 +20,7 @@ import { fetchVNFDetections } from './vnf.js';
 let map, modeConf, isVnf, hasArchive, quarterKeys;
 
 let current = null;            // selected feature's properties
+let currentDets = [];          // the series the card is listing (csv reads it)
 let selectedDetection = null;
 let _skipAuto = false;         // suppress auto COG load on card re-render
 
@@ -47,13 +49,19 @@ export function initCard(deps) {
 const coords = p => [Number(p.lon), Number(p.lat)];
 const featureOf = p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: coords(p) }, properties: p });
 
-// detections arrive as objects from our builders or json strings via
-// queryRenderedFeatures
-function parseDets(p) {
-    let d = p.detections || [];
+// a locally detected cluster carries its own dates; an archive row does not,
+// and the presence of the property is what tells them apart. detections arrive
+// as objects from crossDateCluster or json strings via queryRenderedFeatures
+function localDets(p) {
+    if (!p.detections) return null;
+    let d = p.detections;
     if (typeof d === 'string') { try { d = JSON.parse(d); } catch { d = []; } }
     return d;
 }
+
+// neither archive table nests its dates on the site row, so both modes fetch
+// the series when the card opens — addressed by the site's own id and cell
+const fetchDetections = p => (isVnf() ? fetchVNFDetections : fetchS2Detections)(p);
 
 function greyCircles(grey) {
     if (map.getLayer('detections'))
@@ -70,45 +78,39 @@ function copernicusUrl(date) {
     return `https://browser.dataspace.copernicus.eu/?zoom=${zoom}&lat=${lat}&lng=${lng}&datasetId=S2_L2A_CDAS&fromTime=${encodeURIComponent(from)}&toTime=${encodeURIComponent(to)}&layerId=6-SWIR&upsampling=NEAREST&downsampling=NEAREST&dateMode=SINGLE`;
 }
 
-// the feature already carries the selected quarters' numbers — archiveFeature
-// sums the looks the archive published for those quarters and divides the
-// detections in them by exactly those looks, so nothing here recomputes a rate.
-// the count is re-derived from the list only because a locally detected cluster
-// (crossDateCluster) carries every date it found.
-function quarterMetrics(props, dets, qKeys) {
-    return {
-        detection_count: dets.filter(d => dateInQuarters(d.date, qKeys)).length,
-        observations: props.observations,
-        persistence: props.persistence,
-    };
-}
-
 // ── detail hooks ──
 
 export function cardTitle(p) {
     const t = p.terminal
         ? `Near ${String(p.name).replace(/\s*Terminal\b/gi, '').trim()}`
         : p.name;
-    return { text: t || (isVnf() ? `Flare #${p.flare_id}` : 'Unknown facility') };
+    return { text: t || (isVnf() ? `Flare #${p.id}` : 'Unknown facility') };
 }
 
 export function cardHtml(p) {
     const cfg = modeConf();
-    const vnf = isVnf();
-    // vnf features carry range-scoped aggregates from the quarterly rollup
-    // (detections load lazily); s2 derives metrics from the embedded list
-    const m = vnf
-        ? { detection_count: p.detection_count, observations: p.observations, persistence: p.persistence }
-        : quarterMetrics(p, parseDets(p), quarterKeys());
+    // both archive tables publish the window's numbers on the feature — the
+    // looks they published for the ticked quarters, and the detections in
+    // exactly those looks — so nothing here recomputes a rate. only a locally
+    // detected cluster needs its count derived, from the dates it carries,
+    // because nothing rolled it up.
+    const local = localDets(p);
+    const m = {
+        detection_count: local
+            ? local.filter(d => dateInQuarters(d.date, quarterKeys())).length
+            : p.detection_count,
+        observations: p.observations,
+        persistence: p.persistence,
+    };
     const cfLabel = p.passes && m.observations != null
         ? `Cloud-free (${Math.round(m.observations / p.passes * 100)}%)` : 'Cloud-free obs.';
-    // vnf: the count is the nights we could see the site and it was lit — fewer
-    // than the dates listed below, which include cloudy ones — over nights a
-    // satellite flew and we read the sky. the four read as one chain.
+    // the count is the passes we could see the site and it was lit — fewer than
+    // the dates listed below, which include cloudy ones — over the passes an
+    // instrument flew and we read the sky. the four read as one chain.
     const stats = [
-        [vnf ? 'Detections (clear)' : 'Detections', m.detection_count],
+        [local ? 'Detections' : 'Detections (clear)', m.detection_count],
         ['Persistence', m.persistence != null ? `${Math.round(m.persistence * 100)}%` : '—'],
-        [vnf ? 'Nights read' : 'Passes', p.passes ?? '—'],
+        [isVnf() ? 'Nights read' : 'Passes', p.passes ?? '—'],
         [cfLabel, m.observations ?? '—'],
     ].map(([k, v]) => `<div><span class="dd-secondary">${k}</span><span>${v}</span></div>`).join('');
     return `
@@ -134,17 +136,19 @@ export function onCardShow(p, el) {
     selectedDetection = null;
     greyCircles(true);
 
-    // card shows only detections in the selected quarter window. vnf features
-    // carry no embedded list — daily history is fetched per flare, here, so
-    // the big daily parquet (and its footer) loads lazily behind the card
+    // card shows only detections in the selected quarter window. archive
+    // features carry no embedded list — the series is fetched per site, here,
+    // so the big detections parquet (and its footer) loads lazily behind the
+    // card. a failed fetch says so; it used to sit on 'Loading…' for good.
     const qKeys = quarterKeys();
-    if (isVnf()) {
+    const local = localDets(p);
+    if (local) renderEvents(el, local.filter(d => dateInQuarters(d.date, qKeys)));
+    else {
         el.querySelector('#events-list').innerHTML = '<div class="events-empty">Loading…</div>';
-        fetchVNFDetections(p.flare_id).then(dets => {
-            if (current === p) renderEvents(el, dets.filter(d => dateInQuarters(d.date, qKeys)));
-        });
-    } else {
-        renderEvents(el, parseDets(p).filter(d => dateInQuarters(d.date, qKeys)));
+        fetchDetections(p)
+            .then(dets => dets.filter(d => dateInQuarters(d.date, qKeys)))
+            .catch(err => { console.error('detection series error:', err); return []; })
+            .then(dets => { if (current === p) renderEvents(el, dets); });
     }
 
     el.querySelector('#download-btn')?.addEventListener('click', downloadFlareCSV);
@@ -158,6 +162,7 @@ export function onCardShow(p, el) {
 function renderEvents(el, detections) {
     const cfg = modeConf();
     const vnf = isVnf();
+    currentDets = detections;
     const list = el.querySelector('#events-list');
     list.innerHTML = '';
     const sorted = [...detections].sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -209,6 +214,7 @@ function renderEvents(el, detections) {
 
 export function onCardClose() {
     current = null;
+    currentDets = [];
     clearCogLayers();
     dimSatellite(map, false);
     greyCircles(false);
@@ -446,7 +452,9 @@ function downloadFlareCSV() {
     if (!current || isVnf()) return;
     const props = current;
     const [lon, lat] = coords(current);
-    const detections = parseDets(props);
+    // the rows the card is listing: an archive cluster's dates were fetched,
+    // not embedded, so re-reading the feature would export nothing
+    const detections = currentDets;
 
     const rows = [['facility', 'terminal', 'lat', 'lon', 'date', 'max_b12', 'pixels', 'persistence', 'passes', 'observations']];
     const persistStr = props.persistence != null ? Number(props.persistence).toFixed(4) : '';

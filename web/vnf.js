@@ -2,43 +2,46 @@
 // DuckDB data layer. Remote URLs use range requests, column selection, and
 // row-group statistics. Zero npm dependencies.
 //
-// Two tiers. The viewport reads a small flare x quarter rollup
-// (quarters.parquet, hilbert-ordered over (lon, lat) so a bbox prunes row
-// groups spatially, windowed to the UI's quarter grid). The daily series is
-// read only per flare, on card open, via fetchVNFDetections.
+// Two tiers. The viewport reads eog/flares/data.parquet: one row per site,
+// written in `cell` order so a bbox predicate prunes row groups spatially once
+// the table is big enough to have more than one, with the site's own quarterly
+// history nested in a `quarters` list. The UI's quarter window is applied over
+// that list here rather than in the read — cartograph's where-builder only
+// spans scalar columns.
 //
-// That daily series is 64 spatial cells, not one file, and inside a cell the
-// rows are sorted by (flare_id, date) — so a card reads one row group of
-// one ~9 MB object behind a 114 KB footer. It used to be one 539 MB file
-// hilbert-ordered end to end, where a flare's nights were scattered over a
-// dozen row groups and a card decoded 559,574 rows to show 958 detections.
-// flares.parquet carries the cell each flare lives in, so an id resolves to its
-// object without listing the bucket.
+// The daily series is read only per flare, on card open, via
+// fetchVNFDetections. eog/detections is partitioned on `cell`, the H3
+// resolution-1 index of the site's position, and sorted by site_id inside a
+// cell — so a card touches one object and prunes to a row group of it. Nothing
+// here computes an H3 index: the flares row carries the cell it was written
+// under, which is why this module needs no bucket listing and no H3 library.
+// eog/observations is partitioned the same way, and burnoff never reads it —
+// the quarters list already carries the looks a rate divides by.
 
 import { read, meta } from './vendor/cartograph/data.js';
 import { quarterOf } from './vendor/cartograph/util.js';
+import { sumQuarters } from './clustering.js';
 
 let _base = null, _initPromise = null, _ready = false;
 
 export function isReady() { return _ready; }
 
 const url = f => _base + f;
-const COLS = ['flare_id', 'lat', 'lon', 'quarter', 'days', 'profiled_days', 'clear_days',
-              'detected_days', 'detected_any_days', 'rh_sum', 'rh_max', 'type', 'category', 'country'];
+const FLARES = 'flares/data.parquet';
+const COLS = ['id', 'lat', 'lon', 'cell', 'country', 'detail', 'quarters'];
+// a quarter key is the first day of its quarter, so the span the picker gives
+// selects exactly the quarters it ticked
+const inWindow = (start, end) => q => q >= start && q <= end;
 
 /**
- * Initialize VNF: open the quarterly rollup (remote: footer bytes only) so
+ * Initialize VNF: open the flares table (remote: footer bytes only) so
  * viewport queries can range-read row groups.
- * @param {string} base - URL or local path prefix of the vnf view, ending in a
- *   slash: the rollup, the flare index and data/cell=N/ hang off it
+ * @param {string} base - URL or local path prefix of the eog provider
+ *   directory, ending in a slash: flares/ and detections/ hang off it
  */
 export function initVNF(base) {
     _base = base;
-    // The first detail card needs the flare-to-cell index before it can read
-    // that flare's daily row group. Warm the small index while the quarterly
-    // footer loads so the card does not serialize both requests.
-    flareIndex().catch(err => console.warn('VNF flare index warm-up failed:', err));
-    return _initPromise ??= meta(url('quarters.parquet')).then(() => { _ready = true; });
+    return _initPromise ??= meta(url(FLARES)).then(() => { _ready = true; });
 }
 
 /** Reset state so initVNF can be called again with a different base. */
@@ -46,57 +49,44 @@ export function resetVNF() {
     _initPromise = null;
     _ready = false;
     _base = null;
-    _flares = null;
 }
 
-let _flares = null;
-const flareIndex = () => _flares ??= read(url('flares.parquet'))
-    .then(rows => new Map(rows.map(r => [Number(r.flare_id), r])))
-    .catch(err => { _flares = null; throw err; });
-
-// Rollup rows grouped to one feature per flare with summed quarter aggregates
-// (detections load per flare on card open, so features carry none).
-function siteFeatures(rows, { detectedOnly = false } = {}) {
-    const by = new Map();
+// One feature per flare, its quarters summed over the window (detections load
+// per flare on card open, so features carry none).
+function siteFeatures(rows, startDate, endDate, { detectedOnly = false } = {}) {
+    const keep = inWindow(startDate, endDate);
+    const sites = [];
     for (const r of rows) {
-        let s = by.get(r.flare_id);
-        if (!s) by.set(r.flare_id, s = {
-            flare_id: Number(r.flare_id), lat: Number(r.lat), lon: Number(r.lon),
-            type: '', category: '', country: '',
-            total_dates: 0, profiled_dates: 0, clear_dates: 0, detection_dates: 0,
-            detection_any: 0, rh_sum: 0, max_rh: 0, quarters: new Set(),
+        const t = sumQuarters(r.quarters, keep);
+        // the old rollup was one row per flare-quarter, so a flare with nothing
+        // in the window never came back at all — keep that
+        if (!t.n) continue;
+        // any night the site was seen lit, cloudy ones included — a flare only
+        // ever caught under cloud still burned, and dropping it would be a
+        // false negative
+        if (detectedOnly && !t.detections) continue;
+        sites.push({
+            id: r.id, lat: Number(r.lat), lon: Number(r.lon), cell: r.cell,
+            country: r.country || '', detail: r.detail || '',
+            detection_dates: t.detections_clear, detection_any: t.detections,
+            passes: t.observations, observations: t.clear, max_rh: t.rh_max,
+            // share of the window's nights we read the sky for, over the exact
+            // night count (`days`), not a 91-night approximation. low means a
+            // platform was grounded over this site — see
+            // data-desk/docs/archive/observations.md
+            coverage: t.days ? t.observations / t.days : 0,
+            // rh_sum spans every detection, cloudy nights included, so its mean
+            // divides by detection_any — not the clear-night count
+            avg_rh: t.detections ? t.rh_sum / t.detections : 0,
         });
-        s.quarters.add(String(r.quarter));
-        s.total_dates += Number(r.days);
-        s.profiled_dates += Number(r.profiled_days);
-        s.clear_dates += Number(r.clear_days);
-        s.detection_dates += Number(r.detected_days);
-        s.detection_any += Number(r.detected_any_days);
-        s.rh_sum += Number(r.rh_sum);
-        s.max_rh = Math.max(s.max_rh, Number(r.rh_max));
-        for (const k of ['type', 'category', 'country']) s[k] ||= r[k] || '';
     }
-    // any night the site was seen lit, cloudy ones included — a flare only ever
-    // caught under cloud still burned, and dropping it would be a false negative
-    const sites = [...by.values()].filter(s => !detectedOnly || s.detection_any > 0)
-        .sort((a, b) => b.max_rh - a.max_rh);
+    sites.sort((a, b) => b.max_rh - a.max_rh);
     return {
         type: 'FeatureCollection',
-        features: sites.map(({ lat, lon, rh_sum, quarters, ...p }) => ({
+        features: sites.map(({ lat, lon, ...p }) => ({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [lon, lat] },
-            properties: {
-                ...p, lat, lon,
-                // share of the window's nights we read the sky for, over the
-                // exact night count (`days`), not a 91-night approximation.
-                // low means a platform was grounded over this site — see
-                // data-desk/docs/archive/vnf.md
-                coverage: p.total_dates ? p.profiled_dates / p.total_dates : 0,
-                // rh_sum spans every detection, cloudy nights included, so its
-                // mean divides by detection_any — not the clear-night count
-                avg_rh: p.detection_any ? rh_sum / p.detection_any : 0,
-                detections: [],
-            },
+            properties: { ...p, lat, lon },
         })),
     };
 }
@@ -108,9 +98,9 @@ function siteFeatures(rows, { detectedOnly = false } = {}) {
 export async function queryVNF(bbox, startDate, endDate) {
     if (!_ready) throw new Error('VNF not initialized');
     const [west, south, east, north] = bbox;
-    const rows = await read(url('quarters.parquet'), { columns: COLS,
-        where: { lat: [south, north], lon: [west, east], quarter: [startDate, endDate] } });
-    return siteFeatures(rows, { detectedOnly: true });
+    const rows = await read(url(FLARES),
+        { columns: COLS, where: { lat: [south, north], lon: [west, east] } });
+    return siteFeatures(rows, startDate, endDate, { detectedOnly: true });
 }
 
 /**
@@ -119,33 +109,27 @@ export async function queryVNF(bbox, startDate, endDate) {
  */
 export async function queryVNFFlare(flareId, startDate, endDate) {
     if (!_ready) throw new Error('VNF not initialized');
-    const f = (await flareIndex()).get(Number(flareId));
-    if (!f) return { type: 'FeatureCollection', features: [] };
-    const rows = await read(url('quarters.parquet'), { columns: COLS,
-        where: { flare_id: [Number(flareId), Number(flareId)], quarter: [startDate, endDate],
-                 lat: [f.lat - 0.01, f.lat + 0.01], lon: [f.lon - 0.01, f.lon + 0.01] } });
-    return siteFeatures(rows);
+    const id = String(flareId);
+    const rows = await read(url(FLARES), { columns: COLS, where: { id: [id, id] } });
+    return siteFeatures(rows, startDate, endDate);
 }
 
 /**
  * Daily detection history for one flare (card open) — the only reader of the
- * daily series. It carries a row for every flare on every night from 2012-03 to
- * wherever the cloud series ends, lit or not, so the detected filter is what
- * keeps this small. Full history; the card filters to the quarter window.
+ * daily series. Every row in detections is one night the site was seen lit,
+ * cloudy nights included, so there is nothing to filter: the nights nobody
+ * caught it are observations rows and live in another table. Full history; the
+ * card windows it to the selected quarters.
  *
- * The flare's cell is the whole of the addressing: one object, and inside it
- * the flare_id predicate prunes to a row group off the footer statistics. There
- * is no lat/lon predicate any more — it was only ever standing in for an index
- * on a file sorted by position, and the daily rows no longer carry a position.
- * `detected` has to stay in `columns` as well as `where`: cartograph filters
- * rows on the values it read, and a column it never read reads as null.
+ * The site's cell is the whole of the addressing — one object, and inside it
+ * the site_id predicate prunes to a row group off the footer statistics. The
+ * cell rides on the feature, so a card resolves to its object without an index
+ * and without a listing.
  */
-export async function fetchVNFDetections(flareId) {
-    const f = (await flareIndex()).get(Number(flareId));
-    if (!f) return [];
-    const rows = await read(url(`data/cell=${Number(f.cell)}/data.parquet`),
-        { columns: ['flare_id', 'date', 'detected', 'rh_mw'],
-          where: { flare_id: [Number(flareId), Number(flareId)], detected: [true, true] } });
+export async function fetchVNFDetections({ id, cell }) {
+    if (!id || !cell) return [];
+    const rows = await read(url(`detections/cell=${cell}/data.parquet`),
+        { columns: ['date', 'rh_mw'], where: { site_id: [String(id), String(id)] } });
     return rows.map(r => ({ date: String(r.date).slice(0, 10), rh_mw: Number(r.rh_mw) || 0 }))
         .sort((a, b) => a.date < b.date ? -1 : 1);
 }
@@ -154,9 +138,11 @@ export async function fetchVNFDetections(flareId) {
 export async function availableQuartersVNF(bbox, startDate, endDate) {
     if (!_ready) return new Set();
     const [west, south, east, north] = bbox;
-    const rows = await read(url('quarters.parquet'),
-        { columns: ['lat', 'lon', 'quarter', 'detected_any_days'],
-          where: { lat: [south, north], lon: [west, east],
-                   quarter: [startDate, endDate], detected_any_days: [1, null] } });
-    return new Set(rows.map(r => quarterOf(r.quarter)));
+    const rows = await read(url(FLARES), { columns: ['lat', 'lon', 'quarters'],
+        where: { lat: [south, north], lon: [west, east] } });
+    const keep = inWindow(startDate, endDate);
+    const qs = new Set();
+    for (const r of rows) for (const q of r.quarters ?? [])
+        if (q.detections > 0 && keep(q.quarter)) qs.add(quarterOf(q.quarter));
+    return qs;
 }

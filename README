@@ -7,12 +7,13 @@ In-browser Sentinel-2 gas-flare detection, on a map.
 
 Three views of one map:
 
-  - S2 (default): precomputed flare clusters from the s2-flares CloudFerro
-    archive, read through Cartograph's DuckDB-Wasm layer.
+  - S2 (default): the data-desk flares and detections tables in the Data Desk
+    CloudFerro archive, read through Cartograph's DuckDB-Wasm layer.
   - Detect (outside archive coverage): downloads Sentinel-2 L2A COGs from the
     Element84 STAC catalogue and runs the detector in a Web Worker; connected
     peers split the work over WebRTC and merge results in a CRDT.
-  - VNF: VIIRS Nightfire observations, for cloud-free persistence comparison.
+  - VNF: VIIRS Nightfire, from the eog flares and detections tables in the same
+    archive, for cloud-free persistence comparison.
 
 The detector, clusterer and quality score are the s2-flares methodology core
 (github.com/data-desk-eco/s2-flares), Rust compiled to wasm and vendored in
