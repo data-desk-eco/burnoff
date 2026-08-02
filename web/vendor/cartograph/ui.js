@@ -23,10 +23,6 @@ const sliderGroup = s => `
 
 const logo = `<a class="dd-logo" href="https://research.datadesk.eco/" target="_blank" rel="noopener"><svg viewBox="0 0 734.66 733.34"><path fill="currentColor" d="${LOGO_PATH}"/></svg></a>`;
 
-// black field, pulsing dd mark — the datadesk.eco splash. it covers the map
-// style, the duckdb engine download and the first query, and mount() lifts it.
-const splash = `<div class="cg-loading" id="cg-loading"><svg viewBox="0 0 734.66 733.34"><path fill="currentColor" d="${LOGO_PATH}"/></svg></div>`;
-
 // story mode: no panels — one full-viewport scroller of dd cards over the map
 const storyStep = (s, i) => `
     <section class="cg-step" data-i="${i}">${s.title || s.html ? `
@@ -39,7 +35,7 @@ export function buildShell(config) {
     if (config.story) return document.body.insertAdjacentHTML('afterbegin', `
     <div id="map"></div>
     <div class="cg-story custom-scroll" id="story">${config.story.map(storyStep).join('')}</div>
-    ${logo}${splash}`);
+    ${logo}`);
     const title = config.link
         ? `<a href="${config.link}" target="_blank" rel="noopener">${escapeHtml(config.title)}</a>`
         : `<span id="main-title">${escapeHtml(config.title)}</span>`;
@@ -74,9 +70,7 @@ export function buildShell(config) {
             <div class="dd-intro-body">${config.about}</div>
             <button class="dd-btn cg-enter" id="enter-btn">Enter</button>
         </div>
-    </div>` : ''}
-
-    ${splash}`);
+    </div>` : ''}`);
 
     // intro modal: enter (or the overlay) dismisses and is remembered; the
     // ⓘ button reopens (pdf:82)

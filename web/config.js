@@ -104,6 +104,8 @@ async function refreshVNF() {
 }
 
 const scheduleVNFRefresh = () => { clearTimeout(_vnfTimer); _vnfTimer = setTimeout(refreshVNF, 200); };
+let _quarterTimer;
+const scheduleQuarterIndicators = () => { clearTimeout(_quarterTimer); _quarterTimer = setTimeout(updateQuarterIndicators, 300); };
 const updateVNFSource = () => { if (_vnfRaw) setDetections(enrichVNFFeatures(_vnfRaw, GATE.vnf)); };
 
 // ---------------------------------------------------------------------------
@@ -394,6 +396,9 @@ mount({
         onChange: () => {
             if (isVnf()) scheduleVNFRefresh();
             else { updateDetectButton(); scheduleS2Refresh(); }
+            // the availability hint is about the ticked window, so it goes stale
+            // the moment a dot is ticked — the map does not have to move first
+            scheduleQuarterIndicators();
             // re-filter the open card to the new window (the async re-query reconciles the map)
             refreshCard();
         },
@@ -463,10 +468,8 @@ mount({
             document.getElementById('methods-list').classList.toggle('hidden');
         });
 
-        let _quarterTimer;
         ctx.map.on('moveend', () => {
-            clearTimeout(_quarterTimer);
-            _quarterTimer = setTimeout(updateQuarterIndicators, 300);
+            scheduleQuarterIndicators();
             if (isVnf()) scheduleVNFRefresh();
             else { updateDetectButton(); scheduleS2Refresh(); }
         });

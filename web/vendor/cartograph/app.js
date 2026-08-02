@@ -68,11 +68,6 @@ export async function mount(config) {
     if (typeof config === 'string') config = await (await fetch(config)).json();
     config = compileConfig(config);
     buildShell(config);
-    // the splash covers the engine download and the first query; a boot that
-    // throws must still lift it rather than leave a black screen
-    const reveal = () => document.getElementById('cg-loading')?.classList.add('done');
-    addEventListener('unhandledrejection', reveal);
-    addEventListener('error', reveal);
     // story mode scrolls the camera, so the #map= hash would only fight it
     const map = createMap({ hash: config.story ? undefined : 'map', ...config.map });
     if (!config.story) {
@@ -119,11 +114,6 @@ export async function mount(config) {
     await config.ready?.(ctx);
     // only after ready: onShow hooks may depend on handles wired there
     restorePermalink();
-    // the markings arrive with the layers, so hold the splash for the first
-    // painted frame rather than flashing a bare basemap; capped, because a
-    // stalled tile (or a long permalink flight) must not keep the page dark
-    await Promise.race([new Promise(r => map.once('idle', r)), new Promise(r => setTimeout(r, 2000))]);
-    reveal();
     window.cartograph = ctx;   // console + test handle
     return ctx;
 }
