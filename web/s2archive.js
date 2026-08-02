@@ -21,6 +21,13 @@ export function isReady() { return !!_base; }
 const url = f => `${_base}/${f}`;
 const ringBbox = r => [Math.min(...r.map(c => c[0])), Math.min(...r.map(c => c[1])),
                        Math.max(...r.map(c => c[0])), Math.max(...r.map(c => c[1]))];
+// a terminal AOI is published as the 0.04° box the detector scans, a flare AOI
+// as its centre. Give the centre the same box: one unhandled Point used to void
+// the whole coverage test, which then read as "everywhere is covered".
+const AOI = 0.02;
+const geomBbox = g => g.type === 'Point'
+    ? [g.coordinates[0] - AOI, g.coordinates[1] - AOI, g.coordinates[0] + AOI, g.coordinates[1] + AOI]
+    : ringBbox(g.coordinates[0]);
 
 /** True if the viewport bbox overlaps a scanned AOI box. Unknown coverage ⇒ true (assume archived). */
 export function isCovered(bbox) {
@@ -49,8 +56,11 @@ export function initS2Archive(base) {
     return _initPromise ??= (async () => {
         try {
             _coverage = await (await fetch(url('data-desk/coverage.geojson'))).json();
-            _tiles = _coverage.features.map(f => ringBbox(f.geometry.coordinates[0]));
-        } catch { _coverage = null; _tiles = null; }
+            _tiles = _coverage.features.map(f => geomBbox(f.geometry));
+        } catch (err) {
+            console.warn('S2 coverage failed, assuming covered:', err);
+            _coverage = null; _tiles = null;
+        }
     })();
 }
 
