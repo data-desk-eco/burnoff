@@ -80,16 +80,24 @@ export function findNearestTerminal(lat, lon) {
 // mind the grain: days/observations/clear count days, detections and
 // detections_clear count ROWS. only eog writes one row per site-day, so a
 // data-desk rate off these can exceed 1 and its caller has to clamp.
+//
+// `clear` and `detections_clear` come back null unless EVERY quarter in the
+// window carried them, because a producer with no cloud mask writes them null
+// and summing a null as zero reads as "never cloud-free" — which then reads as
+// no rate at all. that is what a whole map of null persistences looks like.
 export function sumQuarters(quarters, keep) {
     const t = { n: 0, days: 0, observations: 0, clear: 0, detections: 0,
                 detections_clear: 0, rh_sum: 0, rh_max: 0 };
+    let masked = 0;
     for (const q of quarters ?? []) {
         if (!keep(q.quarter)) continue;
         t.n++;
+        if (q.clear != null) masked++;
         for (const k of ['days', 'observations', 'clear', 'detections', 'detections_clear', 'rh_sum'])
             t[k] += Number(q[k] ?? 0);
         t.rh_max = Math.max(t.rh_max, Number(q.rh_max ?? 0));
     }
+    if (masked < t.n) { t.clear = null; t.detections_clear = null; }
     return t;
 }
 
@@ -109,12 +117,19 @@ export function archiveFeature(c, qKeys = new Set()) {
     // the quarter key is a date in its own quarter, so the same predicate windows
     // both sides. no quarters published (the rescore measured nothing) → no rate.
     const t = sumQuarters(c.quarters, q => dateInQuarters(q, qKeys));
-    const detection_count = t.detections_clear;
-    const observations = t.n ? t.clear : null;
+    // sentinel-2 has a cloud mask over 508 patches and clusters over 5,309, so
+    // for almost every site the clear-sky pair does not exist. fall back to every
+    // pass, which is the denominator the row was published with — a wider window
+    // and a rate that reads a shade low, not no rate at all. `observations` stays
+    // null there so the card says cloud-free is unknown rather than claiming it.
+    const clear = t.clear != null;
+    const detection_count = clear ? t.detections_clear : t.detections;
+    const looks = t.n ? (clear ? t.clear : t.observations) : null;
+    const observations = clear ? t.clear : null;
     // clamped because the numerator counts detection rows and s2 can write
     // several blobs for one site on one day, while the denominator counts days
-    const persistence = observations >= MIN_LOOKS
-        ? Math.min(1, detection_count / observations) : null;
+    const persistence = looks >= MIN_LOOKS
+        ? Math.min(1, detection_count / looks) : null;
     return {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [c.lon, c.lat] },

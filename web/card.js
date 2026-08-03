@@ -108,7 +108,10 @@ export function cardHtml(p) {
     // the dates listed below, which include cloudy ones — over the passes an
     // instrument flew and we read the sky. the four read as one chain.
     const stats = [
-        [local ? 'Detections' : 'Detections (clear)', m.detection_count],
+        // "(clear)" only where a cloud mask says which passes were clear:
+        // without one the count and the rate below it run over every pass
+        [local || m.observations == null ? 'Detections' : 'Detections (clear)',
+         m.detection_count],
         ['Persistence', m.persistence != null ? `${Math.round(m.persistence * 100)}%` : '—'],
         [isVnf() ? 'Nights read' : 'Passes', p.passes ?? '—'],
         [cfLabel, m.observations ?? '—'],

@@ -60,19 +60,18 @@ let CTX;                                    // cartograph ctx (set in sources)
 let readyResolve;
 const whenReady = new Promise(r => readyResolve = r);
 
-// a minimum gate can only exclude what was measured, and the two modes mean
-// different things by a null persistence. vnf's null is a finding — no clear
-// night in the window, so the flare is dropped rather than ranked. s2's is a
-// gap in the archive, so treat it as unrated rather than as a zero.
+// an unrated site scores 0, in both modes: a gate reads as a claim about the
+// site, and treating "we never measured it" as "it burns every pass" lets the
+// whole glint field through a 25% gate looking like a finding. the slider bottoms
+// out at 0, so the unrated are one drag away rather than hidden.
 //
-// this branch is idle today: the cluster view has carried a real persistence for
-// every cluster since the 2026-07-31 coverage rebuild. it is here because for a
-// while it did not — the detections were bulk-imported without the cloud masks
-// that make the denominator, so 9,595 of 9,603 clusters had none — and scoring
-// an unmeasured site 0 put every one of them under the 25% default at once. the
-// map went blank everywhere it was covered and nothing said why.
+// this used to hold s2 at 1 because for a while the archive rated almost nothing
+// — the detections were bulk-imported without the cloud masks that make the
+// denominator — and a blank map says nothing about why. that is the producer's
+// job now: sql/tables/flares.checks.sql refuses to publish a table that rates
+// fewer than half its sites, so a null here is a site and not a run.
 const persistenceFilter = v =>
-    ['>=', ['coalesce', ['get', 'persistence'], isVnf() ? 0 : 1], v];
+    ['>=', ['coalesce', ['get', 'persistence'], 0], v];
 const applyPersistenceFilter = () =>
     CTX.map.setFilter('detections', persistenceFilter(PERSISTENCE_MIN));
 const setDetections = features =>
