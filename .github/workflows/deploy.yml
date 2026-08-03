@@ -36,9 +36,15 @@ jobs:
           # name a second url for the same file and the browser would hold two
           # module instances of it — app.js initialising one while card.js calls
           # the other, whose cfg is still undefined.
+          # the entry module is a <script src>, not an import, and it slipped
+          # through: on 3 august the browser held a four-hour-old config.js
+          # against a freshly stamped clustering.js, so the persistence gate ran
+          # the old rule over the new table. the path pattern forbids a slash, so
+          # it stamps config.js and leaves vendor/maplibre-gl.js alone.
           V=${GITHUB_SHA::8}
           find dist -path dist/vendor -prune -o -path dist/s2/vendor -prune -o \
             \( -name '*.js' -o -name '*.html' \) -print0 | xargs -0 sed -i -E \
+            -e "s|(<script[^>]* src=\")((\./)?[^\"?/]+\.m?js)(\")|\1\2?v=$V\4|g" \
             -e "s|(from ')(\.[^']+\.m?js)(')|\1\2?v=$V\3|g" \
             -e "s|(import\(')(\.[^']+\.m?js)('\))|\1\2?v=$V\3|g" \
             -e "s|(new Worker\(')([^'?]+\.js)(')|\1\2?v=$V\3|g" \
