@@ -17,38 +17,42 @@
 // under, which is why this module needs no bucket listing and no H3 library.
 // eog/observations is partitioned the same way, and burnoff never reads it —
 // the quarters list already carries the looks a rate divides by.
+//
+// It does not name an object either. The archive index states that eog/flares
+// is one object and eog/detections is addressed by `cell`, so the path shape is
+// the producer's to change.
 
 import { read, meta } from './vendor/cartograph/data.js';
+import { objects } from './vendor/cartograph/archive.js';
 import { quarterOf } from './vendor/cartograph/util.js';
 import { sumQuarters } from './clustering.js';
 
-let _base = null, _initPromise = null, _ready = false;
+let _flares = null, _initPromise = null, _ready = false;
 
 export function isReady() { return _ready; }
 
-const url = f => _base + f;
-const FLARES = 'flares/data.parquet';
 const COLS = ['id', 'lat', 'lon', 'cell', 'country', 'detail', 'quarters'];
 // a quarter key is the first day of its quarter, so the span the picker gives
 // selects exactly the quarters it ticked
 const inWindow = (start, end) => q => q >= start && q <= end;
 
 /**
- * Initialize VNF: open the flares table (remote: footer bytes only) so
- * viewport queries can range-read row groups.
- * @param {string} base - URL or local path prefix of the eog provider
- *   directory, ending in a slash: flares/ and detections/ hang off it
+ * Initialize VNF: resolve eog/flares against the archive index and open it
+ * (remote: footer bytes only) so viewport queries can range-read row groups.
  */
-export function initVNF(base) {
-    _base = base;
-    return _initPromise ??= meta(url(FLARES)).then(() => { _ready = true; });
+export function initVNF() {
+    return _initPromise ??= (async () => {
+        [_flares] = await objects('flares', { provider: 'eog' });
+        await meta(_flares);
+        _ready = true;
+    })();
 }
 
-/** Reset state so initVNF can be called again with a different base. */
+/** Reset state so initVNF can be called again. */
 export function resetVNF() {
     _initPromise = null;
     _ready = false;
-    _base = null;
+    _flares = null;
 }
 
 // One feature per flare, its quarters summed over the window (detections load
@@ -98,7 +102,7 @@ function siteFeatures(rows, startDate, endDate, { detectedOnly = false } = {}) {
 export async function queryVNF(bbox, startDate, endDate) {
     if (!_ready) throw new Error('VNF not initialized');
     const [west, south, east, north] = bbox;
-    const rows = await read(url(FLARES),
+    const rows = await read(_flares,
         { columns: COLS, where: { lat: [south, north], lon: [west, east] } });
     return siteFeatures(rows, startDate, endDate, { detectedOnly: true });
 }
@@ -110,7 +114,7 @@ export async function queryVNF(bbox, startDate, endDate) {
 export async function queryVNFFlare(flareId, startDate, endDate) {
     if (!_ready) throw new Error('VNF not initialized');
     const id = String(flareId);
-    const rows = await read(url(FLARES), { columns: COLS, where: { id: [id, id] } });
+    const rows = await read(_flares, { columns: COLS, where: { id: [id, id] } });
     return siteFeatures(rows, startDate, endDate);
 }
 
@@ -123,12 +127,12 @@ export async function queryVNFFlare(flareId, startDate, endDate) {
  *
  * The site's cell is the whole of the addressing — one object, and inside it
  * the site_id predicate prunes to a row group off the footer statistics. The
- * cell rides on the feature, so a card resolves to its object without an index
- * and without a listing.
+ * cell rides on the feature, so a card names its object without computing an H3
+ * index and without a listing.
  */
 export async function fetchVNFDetections({ id, cell }) {
     if (!id || !cell) return [];
-    const rows = await read(url(`detections/cell=${cell}/data.parquet`),
+    const rows = await read((await objects('detections', { provider: 'eog', key: cell }))[0],
         { columns: ['date', 'rh_mw'], where: { site_id: [String(id), String(id)] } });
     return rows.map(r => ({ date: String(r.date).slice(0, 10), rh_mw: Number(r.rh_mw) || 0 }))
         .sort((a, b) => a.date < b.date ? -1 : 1);
@@ -138,7 +142,7 @@ export async function fetchVNFDetections({ id, cell }) {
 export async function availableQuartersVNF(bbox, startDate, endDate) {
     if (!_ready) return new Set();
     const [west, south, east, north] = bbox;
-    const rows = await read(url(FLARES), { columns: ['lat', 'lon', 'quarters'],
+    const rows = await read(_flares, { columns: ['lat', 'lon', 'quarters'],
         where: { lat: [south, north], lon: [west, east] } });
     const keep = inWindow(startDate, endDate);
     const qs = new Set();

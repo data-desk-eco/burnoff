@@ -1,15 +1,18 @@
 // S2 archive reader — reads the Data Desk Sentinel-2 flare tables straight from
-// the CloudFerro public Parquet archive. `data-desk/flares/data.parquet` is one
-// row per cluster: one object, so there is nothing to enumerate — the archive
-// only partitions a table past 250 MB, and it partitions on `cell`, an H3
-// index a reader calculates from a position rather than discovers by listing.
+// the CloudFerro public Parquet archive. `data-desk/flares` is one row per
+// cluster and `data-desk/detections` the per-date series behind it, read per
+// cluster on card open. Neither is named here: the archive index says which
+// object each is, and whether it is partitioned. Both are one object today, and
+// the archive partitions a table past 250 MB on `cell` — an H3 index a reader
+// calculates from a position rather than discovers by listing — so passing the
+// cluster's cell is what keeps this reader correct on the day either splits.
 // The bucket listing this module used to page is gone with the mgrs= keys.
-// The per-date series left the cluster row with it: it now lives in
-// `data-desk/detections/data.parquet` and is read per cluster, on card open.
 // `data-desk/coverage.geojson` gives the real scanned AOI boxes for the
-// coverage test and the intro-modal worldmap. Zero npm dependencies.
+// coverage test and the intro-modal worldmap; it is a named asset, not a table,
+// so it stays named. Zero npm dependencies.
 
 import { read } from './vendor/cartograph/data.js';
+import { objects } from './vendor/cartograph/archive.js';
 import { quarterOf } from './vendor/cartograph/util.js';
 
 let _base = '', _tiles = null, _coverage = null, _initPromise = null, _flares = null;
@@ -67,7 +70,8 @@ export function initS2Archive(base) {
 // One object for the whole archive, so read it once and hold the rows: every
 // viewport, quarter indicator and re-score is then served from memory, where
 // the old per-tile cache served only the tiles a viewport had already touched.
-const flares = () => _flares ??= read(url('data-desk/flares/data.parquet'))
+const flares = () => _flares ??= objects('flares', { provider: 'data-desk' })
+    .then(([u]) => read(u))
     .catch(err => { _flares = null; throw err; });
 
 /**
@@ -98,13 +102,15 @@ export async function availableQuartersS2(bbox) {
  * detection count, not a list, so the dates come from data-desk/detections —
  * one object today, filtered to this site. Rows there are written in
  * (cell, site_id, date) order, so passing the cluster's own `cell` alongside
- * its id prunes row groups off the footer instead of scanning the table; it is
- * also the address if the object ever partitions. `kind` is in the predicate
- * because this provider writes its methane plumes to the same table.
+ * its id prunes row groups off the footer instead of scanning the table; the
+ * same cell addresses the object if the table ever partitions, and the index
+ * says which of the two it is. `kind` is in the predicate because this provider
+ * writes its methane plumes to the same table.
  */
 export async function fetchS2Detections({ id, cell }) {
     if (!id) return [];
-    const rows = await read(url('data-desk/detections/data.parquet'),
+    const [detections] = await objects('detections', { provider: 'data-desk', key: cell });
+    const rows = await read(detections,
         { columns: ['date', 'lat', 'lon', 'max_b12', 'pixels'],
           where: { site_id: [String(id), String(id)], kind: ['flare', 'flare'],
                    ...(cell ? { cell: [cell, cell] } : {}) } });

@@ -142,14 +142,15 @@ the job from awareness state, partition blocks by hash, and process their share,
 merging results via LWW-Map CRDT. The CRDT/mesh stack is **loaded lazily**
 (`ensureDetect()` dynamically imports crdt/sync/rtc/store) only when the viewport
 sits outside the archive's coverage — a pure-archive session never fetches it. The
-archive base is set via `<meta name="s2-archive">` in index.html.
+archive base is set via `<meta name="data-bucket">` in index.html.
 
 **VNF mode:** Cartograph's DuckDB layer reads the EOG tables in the shared Data
-Desk CloudFerro archive under the `eog/` provider prefix (`<meta name="vnf-url">`
-— the prefix, not a file); dev falls back to a build laid out the same way under
-`web/`. The viewport reads `eog/flares/data.parquet`: one row per site, 20,227 of
-them, each carrying its own quarterly history in a `quarters` list, so a bbox
-predicate and a JS window over that list are the whole viewport query.
+Desk CloudFerro archive under the `eog/` provider prefix. Neither this module nor
+index.html names an object: `<meta name="data-bucket">` gives the bucket, and the
+archive index says which object each table is. The viewport reads
+`eog/flares/data.parquet`: one row per site, 20,227 of them, each carrying its
+own quarterly history in a `quarters` list, so a bbox predicate and a JS window
+over that list are the whole viewport query.
 
 The daily series is `eog/detections/cell=<h3>/data.parquet`, sorted by `site_id`
 inside a cell, read only on card open. **Every row there is a positive

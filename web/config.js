@@ -9,6 +9,7 @@ import { closeDetail } from './vendor/cartograph/detail.js';
 import { viewportBbox, boxesWorldmap, ensureMark } from './vendor/cartograph/shell.js';
 import { padBbox, featureBbox, getHashParam } from './vendor/cartograph/util.js';
 import { MODE, RAMP, DD, markIconExpr, ICON_SIZE } from './render.js';
+import { initArchive } from './vendor/cartograph/archive.js';
 import { initVNF, resetVNF, queryVNF, queryVNFFlare, availableQuartersVNF, isReady as vnfReady } from './vnf.js';
 import { initS2Archive, queryS2Archive, availableQuartersS2, isReady as s2ArchiveReady, isCovered, coverageTiles, whenCovered } from './s2archive.js';
 import { initDetect, ensureDetect, isDetecting, updateDetectionSource, getDetectedQuarters, updateDetectButton, MIN_DETECT_ZOOM } from './detect.js';
@@ -23,21 +24,14 @@ if (/^#vnf\/\d+$/.test(location.hash))
 // build config (index.html meta tags) + mode state ('s2' or 'vnf')
 // ---------------------------------------------------------------------------
 
-// vnf lives in the central datadesk archive (CloudFerro) under the eog provider
-// prefix — public-read, with remote range requests. the prefix, not a file:
-// flares/ (the sites, with their quarterly history nested) and detections/ (the
-// daily series, partitioned on an h3 cell the flares row carries) sit in it.
-// set via <meta name="vnf-url">; an unset URL falls back to a build laid out
-// the same way under web/.
-const VNF_URL = document.querySelector('meta[name="vnf-url"]')?.content || '';
-const vnfUrl = () => VNF_URL;
-
-// s2 mode reads the data-desk flares and detections tables straight from the
-// CloudFerro parquet archive; the in-browser COG worker ("Detect") stays as the
-// fallback for areas not yet archived. warm the archive cache at page parse,
-// overlapping maplibre init.
-const S2_ARCHIVE = document.querySelector('meta[name="s2-archive"]')?.content || '';
-if (S2_ARCHIVE) initS2Archive(S2_ARCHIVE);
+// both modes read the datadesk archive (CloudFerro, public-read, remote range
+// requests): vnf the eog tables, s2 the data-desk ones. the in-browser COG
+// worker ("Detect") stays as the fallback for areas not yet archived. neither
+// module names an object — index.json says which object each table is and
+// whether it is partitioned, so a table that starts partitioning does not break
+// a reader. fetched here at page parse, overlapping maplibre init.
+const ARCHIVE = document.querySelector('meta[name="data-bucket"]')?.content || '';
+if (ARCHIVE) { initArchive(ARCHIVE); initS2Archive(ARCHIVE); }
 
 const MIN_ARCHIVE_ZOOM = 4;   // displaying precomputed archive clusters (cheap, in-memory)
 const MIN_VNF_ZOOM = 6;
@@ -129,7 +123,7 @@ let _s2Timer = null;
 // which always expose the controls.
 let _s2Blank = false;
 function updateS2Controls() {
-    if (!S2_ARCHIVE) return;
+    if (!ARCHIVE) return;
     const show = mode === 's2' && (isDetecting() || (s2ArchiveReady() &&
         CTX.map.getZoom() >= MIN_DETECT_ZOOM && (_s2Blank || !isCovered(viewportBbox(CTX.map)))));
     if (show) ensureDetect();   // outside coverage the detect/p2p path is live
@@ -139,7 +133,7 @@ function updateS2Controls() {
 
 async function refreshS2Archive() {
     updateS2Controls();
-    if (mode !== 's2' || !S2_ARCHIVE || isDetecting()) return;
+    if (mode !== 's2' || !ARCHIVE || isDetecting()) return;
     if (!s2ArchiveReady() || CTX.map.getZoom() < MIN_ARCHIVE_ZOOM) { updateDetectionSource(); return; }
     const range = CTX.quarters.range();
     if (!range) { updateDetectionSource(); return; }
@@ -167,7 +161,7 @@ async function refreshS2Archive() {
 }
 
 function scheduleS2Refresh() {
-    if (!S2_ARCHIVE) return;
+    if (!ARCHIVE) return;
     clearTimeout(_s2Timer);
     _s2Timer = setTimeout(refreshS2Archive, 200);
 }
@@ -176,7 +170,7 @@ function scheduleS2Refresh() {
 // detections source, so a plain updateDetectionSource() (CRDT only) would wipe
 // it — route through the archive path, which falls back to the CRDT where the
 // archive is empty. used by the sync-debounce and slider callers.
-const refreshS2View = () => S2_ARCHIVE ? refreshS2Archive() : updateDetectionSource();
+const refreshS2View = () => ARCHIVE ? refreshS2Archive() : updateDetectionSource();
 
 // detect.js render callback: re-draw the s2 view after CRDT/worker updates
 const renderDetections = () => { if (mode === 's2') refreshS2View(); };
@@ -184,8 +178,8 @@ const renderDetections = () => { if (mode === 's2') refreshS2View(); };
 // kick the archive when entering s2 mode; initS2Archive memoizes, so this only
 // awaits the warm-up fired at page parse before refreshing the viewport
 function ensureS2Archive() {
-    if (!S2_ARCHIVE) return;
-    initS2Archive(S2_ARCHIVE)
+    if (!ARCHIVE) return;
+    initS2Archive(ARCHIVE)
         .then(() => { if (mode === 's2') { refreshS2Archive(); updateQuarterIndicators(); } })
         .catch(err => console.error('S2 archive init error:', err));
 }
@@ -204,7 +198,7 @@ function ensureS2Archive() {
 async function updateQuarterIndicators() {
     const q = CTX.quarters, btns = [...q.buttons()];
 
-    if (isVnf() || (S2_ARCHIVE && isCovered(viewportBbox(CTX.map)))) {
+    if (isVnf() || (ARCHIVE && isCovered(viewportBbox(CTX.map)))) {
         btns.forEach(b => b.classList.remove('detected'));
         const ready = isVnf() ? vnfReady() : s2ArchiveReady();
         const zoomOk = CTX.map.getZoom() >= (isVnf() ? MIN_VNF_ZOOM : MIN_DETECT_ZOOM);
@@ -268,7 +262,7 @@ function switchMode(m) {
         setDetections([]);   // clear s2 features so they don't linger during load
         if (!_vnfInitStarted) {
             _vnfInitStarted = true;
-            initVNF(vnfUrl()).then(() => {
+            initVNF().then(() => {
                 if (isVnf()) { refreshVNF(); updateQuarterIndicators(); }
             }).catch(err => {
                 console.error('VNF init error:', err);
@@ -455,7 +449,7 @@ mount({
             updateQuarters: updateQuarterIndicators,
             minAvgB12: () => GATE.s2,
         });
-        initCard({ map: ctx.map, modeConf, isVnf, hasArchive: !!S2_ARCHIVE,
+        initCard({ map: ctx.map, modeConf, isVnf, hasArchive: !!ARCHIVE,
                    quarterKeys: () => ctx.quarters.keys() });
 
         // marking images referenced only in expressions preload up front
@@ -463,7 +457,7 @@ mount({
 
         // intro modal extras: archive coverage worldmap (pdf:86) + methods reveal
         boxesWorldmap(document.getElementById('modal-worldmap'), async () => {
-            if (!S2_ARCHIVE) return null;
+            if (!ARCHIVE) return null;
             await whenCovered();
             return coverageTiles()?.features.map(featureBbox);
         }, 0.06);
@@ -480,7 +474,7 @@ mount({
 
         // archive builds start with the detect/p2p controls hidden until the
         // viewport leaves coverage; pure-detect builds load the CRDT up front
-        if (S2_ARCHIVE) updateS2Controls(); else ensureDetect();
+        if (ARCHIVE) updateS2Controls(); else ensureDetect();
         // start in s2 mode unless a #vnf= deep link is resolving
         if (!getHashParam(location.hash, 'vnf')) setMode('s2');
         readyResolve();

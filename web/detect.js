@@ -62,7 +62,7 @@ function computeGeoSummary() {
 // Lazily spin up the CRDT/P2P detection subsystem: import the modules, build the
 // LWW-Maps + mesh + store, restore IndexedDB, wire awareness. Fired the first time
 // the viewport sits outside the archive's coverage or the user hits Detect — and
-// eagerly in pure-detect builds (no <meta s2-archive>). Idempotent.
+// eagerly in pure-detect builds (no <meta data-bucket>). Idempotent.
 export function ensureDetect() {
     if (_detectReady) return _detectReady;
     _detectReady = (async () => {
