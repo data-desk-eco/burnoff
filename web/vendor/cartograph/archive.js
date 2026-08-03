@@ -35,8 +35,11 @@ export function initArchive(url) {
  *  URLs, not rows: the caller keeps its own Promise.allSettled, so a provider
  *  that has not published costs its own rows and nothing else. */
 export async function objects(table, { key, provider } = {}) {
-    if (!doc) throw new Error('archive: call initArchive(base) first');
-    return Object.entries((await doc)[table] ?? {})
+    // through initArchive, not the memo: a fetch that failed cleared it, and
+    // reading the cleared memo reported "call initArchive first" for what was
+    // really an HTTP 503. going back through it says what went wrong and retries.
+    if (!base) throw new Error('archive: call initArchive(base) first');
+    return Object.entries((await initArchive(base))[table] ?? {})
         .filter(([p, part]) => (!provider || p === provider) && (!part || key != null))
         .map(([p, part]) => `${base}/${p}/${table}/${part ? `${part}=${key}/` : ''}data.parquet`);
 }
