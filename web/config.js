@@ -69,9 +69,14 @@ const whenReady = new Promise(r => readyResolve = r);
 // — the detections were bulk-imported without the cloud masks that make the
 // denominator — and a blank map says nothing about why. that is the producer's
 // job now: sql/tables/flares.checks.sql refuses to publish a table that rates
-// fewer than half its sites, so a null here is a site and not a run.
+// fewer than half its sites, so a 0 here is a site and not a run.
+//
+// `rank` rather than `persistence`, because the two answer different questions:
+// the card shows the rate over the quarters you picked, and the gate ranks the
+// site. clustering.js falls the one back on the other. vnf carries no rank, so
+// coalesce covers it and the old behaviour is unchanged there.
 const persistenceFilter = v =>
-    ['>=', ['coalesce', ['get', 'persistence'], 0], v];
+    ['>=', ['coalesce', ['get', 'rank'], ['get', 'persistence'], 0], v];
 const applyPersistenceFilter = () =>
     CTX.map.setFilter('detections', persistenceFilter(PERSISTENCE_MIN));
 const setDetections = features =>

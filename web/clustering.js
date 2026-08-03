@@ -81,23 +81,22 @@ export function findNearestTerminal(lat, lon) {
 // detections_clear count ROWS. only eog writes one row per site-day, so a
 // data-desk rate off these can exceed 1 and its caller has to clamp.
 //
-// `clear` and `detections_clear` come back null unless EVERY quarter in the
-// window carried them, because a producer with no cloud mask writes them null
-// and summing a null as zero reads as "never cloud-free" — which then reads as
-// no rate at all. that is what a whole map of null persistences looks like.
+// a field comes back null unless EVERY quarter in the window carried it. a
+// producer states what it did not measure by writing null, and summing that as
+// zero turns "we never counted the passes" into "no pass was ever made" — which
+// a caller then reads as a measurement. that is what a whole map of null
+// persistences looks like. an empty window keeps the zeroes; `n` says so.
+const SUMS = ['days', 'observations', 'clear', 'detections', 'detections_clear', 'rh_sum'];
 export function sumQuarters(quarters, keep) {
-    const t = { n: 0, days: 0, observations: 0, clear: 0, detections: 0,
-                detections_clear: 0, rh_sum: 0, rh_max: 0 };
-    let masked = 0;
+    const t = { n: 0, rh_max: 0 }, seen = {};
+    for (const k of SUMS) { t[k] = 0; seen[k] = 0; }
     for (const q of quarters ?? []) {
         if (!keep(q.quarter)) continue;
         t.n++;
-        if (q.clear != null) masked++;
-        for (const k of ['days', 'observations', 'clear', 'detections', 'detections_clear', 'rh_sum'])
-            t[k] += Number(q[k] ?? 0);
+        for (const k of SUMS) if (q[k] != null) { t[k] += Number(q[k]); seen[k]++; }
         t.rh_max = Math.max(t.rh_max, Number(q.rh_max ?? 0));
     }
-    if (masked < t.n) { t.clear = null; t.detections_clear = null; }
+    for (const k of SUMS) if (seen[k] < t.n) t[k] = null;
     return t;
 }
 
@@ -117,11 +116,11 @@ export function archiveFeature(c, qKeys = new Set()) {
     // the quarter key is a date in its own quarter, so the same predicate windows
     // both sides. no quarters published (the rescore measured nothing) → no rate.
     const t = sumQuarters(c.quarters, q => dateInQuarters(q, qKeys));
-    // sentinel-2 has a cloud mask over 508 patches and clusters over 5,309, so
-    // for almost every site the clear-sky pair does not exist. fall back to every
-    // pass, which is the denominator the row was published with — a wider window
+    // a producer with no clear-sky pair gets every pass as its denominator: wider,
     // and a rate that reads a shade low, not no rate at all. `observations` stays
     // null there so the card says cloud-free is unknown rather than claiming it.
+    // sentinel-2 takes the first branch — what it cannot say is how many passes
+    // there were, not which of them were clear.
     const clear = t.clear != null;
     const detection_count = clear ? t.detections_clear : t.detections;
     const looks = t.n ? (clear ? t.clear : t.observations) : null;
@@ -143,6 +142,13 @@ export function archiveFeature(c, qKeys = new Set()) {
             // producer stops writing it. see render.js and config.js
             max_b12: c.max_b12,
             detection_count, persistence, passes: t.n ? t.observations : null, observations,
+            // what the persistence gate ranks on. the median quarter carries
+            // four looks, so narrowing to one puts 90% of sites under MIN_LOOKS
+            // and a slider that empties the map when you pick a quarter is not a
+            // filter. the site's published whole-history rate stands in, and the
+            // card still shows '—' for a window it could not rate. a site the
+            // archive never rated at all has neither, and scores 0.
+            rank: persistence ?? c.persistence ?? 0,
         },
     };
 }
