@@ -123,15 +123,17 @@ export async function restorePermalink() {
     if (!cfg) return;
     const id = getHashParam(location.hash, cfg.hashKey || 'id');
     if (!id) return;
-    const match = allFeatures().find(f => String(f.properties[cfg.idProp || 'id']) === id)
-        ?? await cfg.resolve?.(id);
+    const idOf = f => String(f.properties[cfg.idProp || 'id']);
+    const match = allFeatures().find(f => idOf(f) === id) ?? await cfg.resolve?.(id);
     if (!match) return;
     showDetail(match, true);
     const [lon, lat] = coordsOf(match);
     map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), cfg.flyZoom ?? 15) });
     map.once('moveend', () => {
         const features = featuresAt(map.project([lon, lat]), { lng: lon, lat });
-        const idx = features.findIndex(f => String(f.properties[cfg.idProp || 'id']) === id);
+        // the feature resolve() found, not the link's spelling of it: a link
+        // older than a rename resolves to an id it does not itself carry
+        const idx = features.findIndex(f => idOf(f) === idOf(match));
         if (features.length < 2 || idx < 0) return;
         overlapping = [features[idx], ...features.filter((_, i) => i !== idx)];
         overlapIndex = 0;

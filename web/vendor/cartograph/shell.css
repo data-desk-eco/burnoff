@@ -86,7 +86,9 @@ a { color: inherit; text-decoration: underline; }
 .cg-drawer-head { display: flex; align-items: center; gap: 11px; padding: 10px 15px; border-bottom: 1px solid var(--dd-ui-border); flex-shrink: 0; overflow: hidden; }
 .cg-drawer-q { width: 130px; margin: 0 0 0 auto; flex-shrink: 0; }
 .cg-drawer-wrap { flex: 1; overflow: auto; }
-.cg-table { border-collapse: collapse; white-space: nowrap; }
+/* min-width, not width: columns keep their natural size and the sticky header
+   its background when the drawer is dragged wider than the rows need */
+.cg-table { border-collapse: collapse; white-space: nowrap; min-width: 100%; }
 .cg-table th { position: sticky; top: 0; background: var(--dd-ui-background); color: var(--dd-ui-text-secondary); font-weight: 400; text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--dd-ui-border); cursor: pointer; user-select: none; }
 .cg-table td { padding: 3px 8px; }
 .cg-table tbody tr { cursor: pointer; }
