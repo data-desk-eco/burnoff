@@ -3,16 +3,18 @@
 //
 // config.detail: {
 //   layers: [pickable layer ids],
-//   hashKey: 'plume',          permalink param (default 'id')
+//   hashKey: 'plume',          permalink param (default 'id'), or p => key
+//   hashKeys: {key: resolve},  several permalink keys, each with its resolver
 //   idProp: 'id',
 //   flyZoom: 15,               zoom floor on select
+//   highlightZoom: 12,         zoom the highlight box appears at (default: any)
 //   title: p => ({text, href?}),
 //   html: p => body html,      sync skeleton below the generic header
 //   onShow: (p, el) => {},     async enrich hook
 //   onClose: () => {},
 // }
 
-import { escapeHtml, fmtCoords, getHashParam, setHashParam } from './util.js';
+import { escapeHtml, fmtCoords, hashKeysOf, readHashKeys, writeHashKeys } from './util.js';
 import { ensureMark } from './shell.js';
 
 let map, cfg, allFeatures;
@@ -25,8 +27,13 @@ const panel = () => document.getElementById('detail');
 const coordsOf = f => f.properties.lon != null
     ? [Number(f.properties.lon), Number(f.properties.lat)] : f.geometry.coordinates;
 
-function setHash(id) {
-    const target = setHashParam(location.hash, cfg.hashKey || 'id', id);
+// the app's permalink keys, in config order; a selection writes the first of
+// them unless hashKey picks one from the feature's properties
+const keys = () => Object.keys(hashKeysOf(cfg));
+const writeKey = p => typeof cfg.hashKey === 'function' ? cfg.hashKey(p) : keys()[0];
+
+function setHash(id, key) {
+    const target = writeHashKeys(location.hash, keys(), key, id);
     if (location.hash !== target)
         history.replaceState(null, '', target || location.pathname + location.search);
 }
@@ -78,7 +85,7 @@ export function refreshDetail() {
 function render(feature, fromPermalink) {
     const p = feature.properties;
     const id = p[cfg.idProp || 'id'];
-    if (!fromPermalink && id != null) setHash(id);
+    if (!fromPermalink && id != null) setHash(id, writeKey(p));
     const [lon, lat] = coordsOf(feature);
     setHighlight([{ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} }]);
 
@@ -121,10 +128,11 @@ export function closeDetail() {
 // handles (overlays, extra layers) in ready, and onShow may depend on them
 export async function restorePermalink() {
     if (!cfg) return;
-    const id = getHashParam(location.hash, cfg.hashKey || 'id');
+    const resolvers = hashKeysOf(cfg);
+    const [key, id] = readHashKeys(location.hash, Object.keys(resolvers));
     if (!id) return;
     const idOf = f => String(f.properties[cfg.idProp || 'id']);
-    const match = allFeatures().find(f => idOf(f) === id) ?? await cfg.resolve?.(id);
+    const match = allFeatures().find(f => idOf(f) === id) ?? await resolvers[key]?.(id);
     if (!match) return;
     showDetail(match, true);
     const [lon, lat] = coordsOf(match);
@@ -152,6 +160,9 @@ export function initDetail(m, config, getFeatures) {
     map.addSource('cg-highlight', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addLayer({
         id: 'cg-highlight', type: 'symbol', source: 'cg-highlight',
+        // below the threshold a selection is carried by its own shape marking;
+        // the box belongs around a point of interest the imagery resolves
+        minzoom: cfg.highlightZoom ?? 0,
         layout: {
             'icon-image': 'highlight-#FFFFFF', 'icon-size': 1.2,
             'icon-allow-overlap': true, 'icon-ignore-placement': true
@@ -192,7 +203,6 @@ export function initDetail(m, config, getFeatures) {
     // via replaceState (no event), so hashchange only fires for external
     // navigation — re-resolve the id or close if it was removed
     addEventListener('hashchange', () => {
-        const id = getHashParam(location.hash, cfg.hashKey || 'id');
-        id ? restorePermalink() : closeDetail();
+        readHashKeys(location.hash, keys())[1] ? restorePermalink() : closeDetail();
     });
 }

@@ -46,10 +46,17 @@ const url = name => {
 const list = source => Array.isArray(source) ? `[${source.map(quote).join(', ')}]` : quote(source);
 export const parquetInput = name => list(url(name));
 
+// only the rows a query keeps are normalised — read()'s predicates are SQL, so
+// the engine has discarded the rest before this point — and the schema is read
+// once rather than rebuilt per row: a viewport read returns tens of thousands.
 export async function sql(statement) {
     const result = await (await connect()).query(statement);
-    return result.toArray().map(row => Object.fromEntries(result.schema.fields
-        .map(field => [field.name, value(row[field.name], field.type)])));
+    const fields = result.schema.fields;
+    return result.toArray().map(row => {
+        const out = {};
+        for (const field of fields) out[field.name] = value(row[field.name], field.type);
+        return out;
+    });
 }
 
 const value = (item, type) => {

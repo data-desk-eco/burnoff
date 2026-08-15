@@ -84,21 +84,25 @@ export function buildShell(config) {
     }
 }
 
-// sliders: ctx.sliders[key] = {value, set({min,max,step,value,format})};
+// sliders: ctx.sliders[key] = {value, set({min,max,step,value,format}), show(on)};
 // each input event calls onInput(value, ctx)
 export function wireSliders(config, ctx) {
     ctx.sliders = {};
     for (const s of config.sliders || []) {
         const input = document.querySelector(`.cg-slider[data-key="${s.key}"] input`);
+        const row = input.closest('.cg-slider');
         const out = input.nextElementSibling;
         let fmt = s.format || String;
-        const show = () => out.textContent = fmt(+input.value);
-        input.addEventListener('input', () => { show(); s.onInput?.(+input.value, ctx); });
+        const render = () => out.textContent = fmt(+input.value);
+        input.addEventListener('input', () => { render(); s.onInput?.(+input.value, ctx); });
         ctx.sliders[s.key] = {
             get value() { return +input.value; },
-            set({ format, ...attrs } = {}) { Object.assign(input, attrs); if (format) fmt = format; show(); },
+            set({ format, ...attrs } = {}) { Object.assign(input, attrs); if (format) fmt = format; render(); },
+            // a slider whose layer is off comes out of the panel rather than
+            // sitting there dead; its value is untouched and returns with it
+            show: (on = true) => row.classList.toggle('hidden', !on),
         };
-        show();
+        render();
     }
 }
 

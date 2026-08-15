@@ -39,6 +39,9 @@ a { color: inherit; text-decoration: underline; }
 .cg-filter .dd-toggle { flex-wrap: wrap; row-gap: 6px; }
 .cg-opt { background: none; border: none; color: var(--dd-ui-inactive); font: inherit; cursor: pointer; padding: 0; }
 .cg-opt.active { color: var(--dd-ui-text); }
+/* dd unavailable state (as the dot grid's): greyed and unclickable, so the
+   active option greys too rather than reading as a live choice */
+.cg-opt.dd-unavailable { color: var(--dd-ui-inactive); pointer-events: none; }
 
 .cg-slider-val { min-width: 30px; text-align: right; }
 .cg-hint { margin-top: 11px; }

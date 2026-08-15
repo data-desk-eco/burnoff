@@ -49,7 +49,12 @@ function wireFilters(map, config, sources, extra, ctx) {
                 ? { ...fc, features: fc.features.filter(f => preds.every(p => p(f.properties))) } : fc);
         dispatchEvent(new Event('cg-filters'));   // the table re-renders in step
     };
+    ctx.filters = {};
     for (const group of document.querySelectorAll('.cg-filter')) {
+        // an option the current data cannot offer reads as unavailable (the dd
+        // inactive grey, no clicks) rather than filtering the map to nothing
+        ctx.filters[group.dataset.key] = { unavailable: (test = () => false) =>
+            group.querySelectorAll('.cg-opt').forEach(b => b.classList.toggle('dd-unavailable', !!test(b.dataset.value))) };
         group.addEventListener('click', e => {
             const btn = e.target.closest('.cg-opt');
             if (!btn) return;

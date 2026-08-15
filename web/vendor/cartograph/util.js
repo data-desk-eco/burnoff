@@ -126,3 +126,19 @@ export function setHashParam(hash, key, id) {
     if (id != null) rest.push(`${key}=${encodeURIComponent(id)}`);
     return rest.length ? '#' + rest.join('&') : '';
 }
+
+// one app, several permalink keys: detail.hashKeys maps each key to the
+// resolver for ids the loaded features do not carry (#site= and a legacy
+// #vnf= may share one). detail.hashKey is sugar for a single such key,
+// resolved by detail.resolve.
+export const hashKeysOf = ({ hashKey, hashKeys, resolve } = {}) =>
+    hashKeys ?? { [typeof hashKey === 'string' ? hashKey : 'id']: resolve };
+
+// the first of `keys` the hash carries, as [key, id]
+export const readHashKeys = (hash, keys) =>
+    keys.map(k => [k, getHashParam(hash, k)]).find(([, id]) => id != null) ?? [];
+
+// write the id under one key and drop the app's others, so a link written in
+// an alias does not outlive the selection it named (no key clears them all)
+export const writeHashKeys = (hash, keys, key, id) =>
+    keys.reduce((h, k) => setHashParam(h, k, k === key ? id : null), hash);
