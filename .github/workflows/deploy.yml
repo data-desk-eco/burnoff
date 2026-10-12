@@ -1,6 +1,6 @@
 name: Deploy
 
-# the map moved to flux.datadesk.eco. this deploy publishes the forwarder in
+# the map moved to aerial.datadesk.eco. this deploy publishes the forwarder in
 # redirect/ and nothing else — web/ stays in the repository for its history,
 # but it is no longer served from here.
 on:
