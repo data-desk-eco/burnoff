@@ -1,0 +1,29 @@
+# test on every push; a v* tag also publishes the builds as a release, whose
+# linux one the data desk fleet pins
+name: ci
+on: [push, pull_request]
+permissions: {contents: write}
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, platform: linux_amd64}
+          - {os: macos-latest, platform: osx_arm64}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with: {fetch-depth: 0}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libopenjp2-7-dev
+      - if: runner.os == 'macOS'
+        run: brew install openjpeg
+      - run: curl -fsSL https://install.duckdb.org | sh && echo ~/.duckdb/cli/latest >> $GITHUB_PATH
+      - run: make test
+      - if: startsWith(github.ref, 'refs/tags/v')
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          cp ext/burnoff.duckdb_extension ext/burnoff-${{ matrix.platform }}.duckdb_extension
+          gh release create $GITHUB_REF_NAME --generate-notes 2>/dev/null || :
+          gh release upload $GITHUB_REF_NAME ext/burnoff-*.duckdb_extension --clobber

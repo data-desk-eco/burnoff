@@ -1,7 +1,8 @@
 # burnoff
 
-The Data Desk Sentinel-2 flare detector: one C file (libcurl and libopenjp2)
-built as a DuckDB extension, and `burnoff.sql`, the macros run on load.
+The Data Desk Sentinel-2 flare detector: one C file, `src/burnoff.c`, over
+libcurl and libopenjp2, built as a DuckDB extension, and `src/burnoff.sql`,
+the macros run on load. `make test` checks that it loads, offline.
 
 - `s2_detect()` detects in one scene over a UTM box and gives the box's
   clear share, its flares and `cells`, the obscured share of each 640 m
@@ -22,5 +23,5 @@ of `README.md`.
 
 Keep it a detector. Archive shapes, sites and publishing are the data-desk
 ETL's (`etl/providers/data-desk/burnoff/`), in SQL over `s2_detect`'s rows.
-A tag `v*` releases `burnoff-linux_amd64.duckdb_extension`, which that ETL
-pins.
+A tag `v*` releases a build for each platform; that ETL pins
+`burnoff-linux_amd64.duckdb_extension`.

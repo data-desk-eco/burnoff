@@ -1,12 +1,31 @@
 # burnoff
 
-A Sentinel-2 L1C flare detector in C, as a DuckDB extension. It reads the
-JPEG2000 archive directly, so one query searches the CDSE catalogue and
-detects the flares in a region.
+Burnoff is a DuckDB extension for detecting gas flares in Sentinel-2 L1C
+imagery. It reads the JPEG2000 archive directly, so one query searches the
+CDSE catalogue and detects the flares in a region. Each flare comes with its
+position, brightness and radiance, and each scene with how clearly it saw
+the region.
+
+## Quick start
+
+Download `burnoff-osx_arm64.duckdb_extension` (macOS) or
+`burnoff-linux_amd64.duckdb_extension` (Linux) from the
+[latest release](https://github.com/data-desk-eco/burnoff/releases/latest)
+and install it under the name `burnoff`:
+
+```sh
+# macOS:
+curl -fL https://github.com/data-desk-eco/burnoff/releases/latest/download/burnoff-osx_arm64.duckdb_extension -o burnoff.duckdb_extension
+# Linux: use burnoff-linux_amd64 in place of burnoff-osx_arm64 above.
+duckdb -unsigned -c "force install './burnoff.duckdb_extension'"
+```
+
+The extension loads in DuckDB 1.2 or later. It is not signed, so start
+DuckDB with `-unsigned`, and load spatial first:
 
 ```sql
 load spatial;
-load burnoff;  -- in duckdb -unsigned
+load burnoff;
 from s2_flares(ST_MakeEnvelope(-104.2, 31.6, -103.2, 32.6), '2025-05-01',
                t1 := '2025-05-31', max_cloud := 50);
 -- around a point, from a date to today
@@ -17,20 +36,17 @@ from aois, lateral s2_flares(aois.geom, '2025-01-01');
 
 ## Build
 
-You need a C compiler, `pkg-config`, libcurl and OpenJPEG 2.5 or later
-(`libcurl4-openssl-dev` and `libopenjp2-7-dev` on Ubuntu).
+Requires a C compiler, `pkg-config`, libcurl and OpenJPEG 2.5 or later
+(`libcurl4-openssl-dev` and `libopenjp2-7-dev` on Ubuntu, `openjpeg` in
+Homebrew).
 
-```bash
-make          # burnoff.duckdb_extension
-make install  # so that `load burnoff` works in any directory
+```sh
+make              # ext/burnoff.duckdb_extension
+make test         # loads it and runs a detection offline
+make install      # so that `load burnoff` works in any directory
 ```
 
-The extension loads in DuckDB 1.2 or later. It is not signed, so start
-DuckDB with `-unsigned`.
-
-## Use
-
-Load spatial first.
+## Functions
 
 - `s2_flares(g, t0, t1 := today, max_cloud := 100, source := 'auto',
   thresholds := '')` gives one row for each flare in a lon/lat geometry
@@ -48,7 +64,7 @@ Load spatial first.
 `AWS_SECRET_ACCESS_KEY` and `AWS_S3_ENDPOINT`, as on CloudFerro machines)
 or `'gcp'` (Google's public mirror, with no credentials). `'auto'` uses
 eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
-`thresholds` is `'name=value,...'` over the defaults in `burnoff.c`.
+`thresholds` is `'name=value,...'` over the defaults in `src/burnoff.c`.
 
 ## Limits
 
