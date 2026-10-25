@@ -935,6 +935,45 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
   free(rs);
 }
 
+// s2_get(url): the body of an http get, four urls at a time, as the
+// catalogue answers more with 429s. a failure fails the query, so a search
+// never loses scenes
+typedef struct { char **u; buf *b; const char **e; idx_t n, next; } fetch;
+
+static void *getter(void *a) {
+  fetch *g = a;
+  CURL *c = curl_easy_init();
+  curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, wr);
+  curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, hd);
+  for (idx_t i; (i = __atomic_fetch_add(&g->next, 1, __ATOMIC_RELAXED)) <
+                g->n;)
+    g->e[i] = g->u[i] ? get(c, g->u[i], 0, -1, &g->b[i]) : NULL;
+  curl_easy_cleanup(c);
+  return NULL;
+}
+
+static void s2_get(duckdb_function_info info, duckdb_data_chunk in,
+                   duckdb_vector out) {
+  duckdb_vector v = duckdb_data_chunk_get_vector(in, 0);
+  idx_t n = duckdb_data_chunk_get_size(in);
+  fetch g = {calloc(n, sizeof(char *)), calloc(n, sizeof(buf)),
+            calloc(n, sizeof(char *)), n, 0};
+  pthread_t th[4];
+  for (idx_t i = 0; i < n; i++) g.u[i] = valid(v, i) ? str(v, i) : NULL;
+  for (int k = 0; k < 4; k++) pthread_create(&th[k], NULL, getter, &g);
+  for (int k = 0; k < 4; k++) pthread_join(th[k], NULL);
+  duckdb_vector_ensure_validity_writable(out);
+  for (idx_t i = 0; i < n; i++) {
+    if (g.e[i]) duckdb_scalar_function_set_error(info, g.e[i]);
+    if (!g.u[i]) duckdb_validity_set_row_invalid(
+      duckdb_vector_get_validity(out), i);
+    else duckdb_vector_assign_string_element_len(out, i,
+      (const char *)g.b[i].p, g.b[i].n);
+    free(g.u[i]), drop(&g.b[i]);
+  }
+  free(g.u), free(g.b), free(g.e);
+}
+
 // the default source: eodata when its key is set, else google's mirror
 static void s2_source(duckdb_function_info info, duckdb_data_chunk in,
                       duckdb_vector out) {
@@ -990,7 +1029,15 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   duckdb_scalar_function_set_return_type(f, vc);
   duckdb_scalar_function_set_function(f, s2_source);
   if (ok == DuckDBSuccess) ok = duckdb_register_scalar_function(con, f);
+  duckdb_destroy_scalar_function(&f);
+  f = duckdb_create_scalar_function();
+  duckdb_scalar_function_set_name(f, "s2_get");
+  duckdb_scalar_function_add_parameter(f, vc);
+  duckdb_scalar_function_set_return_type(f, vc);
+  duckdb_scalar_function_set_function(f, s2_get);
+  if (ok == DuckDBSuccess) ok = duckdb_register_scalar_function(con, f);
   duckdb_destroy_scalar_function(&f), duckdb_destroy_logical_type(&vc);
+  curl_global_init(CURL_GLOBAL_ALL);
   if (ok == DuckDBSuccess) ok = duckdb_query(con, macros, NULL);
   if (ok == DuckDBError) access->set_error(info, "could not register");
   return ok == DuckDBSuccess;
