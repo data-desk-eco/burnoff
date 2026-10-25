@@ -30,7 +30,7 @@ ext/burnoff.sql.h: src/burnoff.sql
 
 # loads, defines its macros and gives a failed row its error, offline
 test: $(E)
-	duckdb -unsigned -c "load spatial; load '$(CURDIR)/$(E)'; select \
+	duckdb -unsigned -c "install spatial; load spatial; load '$(CURDIR)/$(E)'; select \
 	  coalesce(s2_detect('file:///none', 0, 0, 1, 1).error, error('no error'))"
 
 # into ~/.duckdb/extensions, so `load burnoff` works from any directory
