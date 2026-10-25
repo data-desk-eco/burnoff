@@ -15,7 +15,13 @@ VERSION = 0.3.0
 # a loadable extension is the shared library plus duckdb's metadata footer:
 # a wasm-style custom section header, eight 32-byte fields (last first) and
 # 256 bytes left for a signature
-burnoff.duckdb_extension: burnoff.c
+.DEFAULT_GOAL = burnoff.duckdb_extension
+
+# burnoff.sql, the macros, runs on load: each line a c string
+burnoff.sql.h: burnoff.sql
+	sed 's/\\/\\\\/g; s/"/\\"/g; s/.*/"&\\n"/' $< > $@
+
+burnoff.duckdb_extension: burnoff.c burnoff.sql.h
 	$(CC) $(CFLAGS) -Iinclude -shared -fPIC -o burnoff.so burnoff.c $(LDLIBS)
 	{ cat burnoff.so; printf '\000\223\004\020duckdb_signature\200\004'; \
 	  for f in "" "" "" C_STRUCT $(VERSION) v1.2.0 $(PLATFORM) 4; do \
@@ -28,5 +34,5 @@ install: burnoff.duckdb_extension
 	duckdb -unsigned -c "force install '$(CURDIR)/burnoff.duckdb_extension'"
 
 clean:
-	rm -f burnoff.duckdb_extension
+	rm -f burnoff.duckdb_extension burnoff.sql.h
 .PHONY: install clean

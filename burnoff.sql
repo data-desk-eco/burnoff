@@ -1,10 +1,9 @@
 -- burnoff at query time: search CDSE's catalogue and detect, in one query.
---   duckdb -unsigned -init burnoff/burnoff.sql
+-- the extension runs this file on load, so after `load burnoff`:
 --   from s2_flares_in(-104.2, 31.6, -103.2, 32.6, '2025-05-01', '2025-05-31');
 -- eodata hrefs need eodata credentials (AWS_ACCESS_KEY_ID etc.); away from
 -- cloudferro, href := 'gcp' reads google's public mirror of the same files.
 load spatial;
-load burnoff;
 -- the catalogue answers a search with a GET only, no HEAD and no ranges,
 -- and a burst of searches with 429s that say to wait two seconds
 set force_download = true;

@@ -6,7 +6,7 @@ detects flares in a region. No stored detections are necessary. The name
 comes from the burnoff project, whose flare thresholds it uses.
 
 ```sql
--- duckdb -unsigned -init burnoff/burnoff.sql
+load burnoff;  -- in duckdb -unsigned
 from s2_flares_in(-104.2, 31.6, -103.2, 32.6, '2025-05-01', '2025-05-31',
                   max_cloud := 50);
 ```
@@ -26,8 +26,8 @@ The extension uses the stable DuckDB C API (v1.2.0). It loads in DuckDB
 
 ## Use
 
-`burnoff.sql` loads the extension and the spatial extension, sets the
-session for the catalogue, and defines two macros:
+On load, the extension runs `burnoff.sql`, which is built into it. This
+loads the spatial extension, sets the session for the catalogue, and defines two macros:
 
 - `s2_scenes(w, s, e, n, t0, t1, href := 'eodata')` gives each L1C scene
   that touches a longitude/latitude box between two dates. Each scene has
@@ -42,7 +42,7 @@ session for the catalogue, and defines two macros:
 them in `/etc/profile.d/eodata.sh`. Away from CloudFerro, `href := 'gcp'`
 reads the same files from the public Google Cloud mirror.
 
-`burnoff.sql` sets `threads = 1`. The detection runs on the extension's own
+The extension sets `threads = 1`. The detection runs on the extension's own
 workers. With more DuckDB threads, the client thread can poll for the
 result on a core of its own, which costs approximately 20% of the CPU on
 four cores.

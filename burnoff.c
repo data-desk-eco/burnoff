@@ -939,6 +939,11 @@ static duckdb_logical_type type(duckdb_type t) {
   return duckdb_create_logical_type(t);
 }
 
+// burnoff.sql, as a string literal made by make
+static const char *macros =
+#include "burnoff.sql.h"
+;
+
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
                             struct duckdb_extension_access *access) {
   const char *fn[] = {"x", "y", "max_b12", "avg_b12", "peak_b11", "ratio",
@@ -973,6 +978,7 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   duckdb_destroy_logical_type(&fs), duckdb_destroy_logical_type(&st[2]);
   duckdb_destroy_logical_type(&ret), duckdb_destroy_logical_type(&dbl);
   duckdb_destroy_logical_type(&vc);
+  if (ok == DuckDBSuccess) ok = duckdb_query(con, macros, NULL);
   if (ok == DuckDBError) access->set_error(info, "could not register");
   return ok == DuckDBSuccess;
 }
