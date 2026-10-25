@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get install -y libcurl4-openssl-dev libopenjp2-7-dev
+      - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libopenjp2-7-dev
       - run: make && mv burnoff.duckdb_extension burnoff-linux_amd64.duckdb_extension
       - run: gh release create "$GITHUB_REF_NAME" burnoff-linux_amd64.duckdb_extension
         env:
