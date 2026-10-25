@@ -4,7 +4,7 @@
 //             [, thresholds VARCHAR])
 //   → STRUCT(clear DOUBLE, error VARCHAR, flares STRUCT(x, y, max_b12,
 //            avg_b12, peak_b11, ratio, peakedness, pixels, radiance,
-//            saturated)[])
+//            saturated)[], cells STRUCT(x, y, cloud)[])
 // the box is in metres of the tile's own UTM zone; b11, b8a and the
 // MSK_CLASSI cloud mask are found beside b12 by the SAFE naming convention.
 // urls are s3:// (signed with AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY against
@@ -64,6 +64,7 @@ enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
 // a jp2 decode costs ~4 ms however small its window (the tile's packet
 // headers are parsed whole), about as much as 2^14 more pixels
 #define FIXED (1 << 14)
+#define SUB 32     // a cloud square: 640 m, a tenth of a background cell
 
 // "name=value,name=value" over t
 static const char *params(const char *s, double *t) {
@@ -464,7 +465,8 @@ typedef struct {
   double x, y, max, avg, b11, ratio, pk, rad;
   int px, sat;
 } det;
-typedef struct { double clear; det *d; int nd, cap; } res;
+typedef struct { double x, y, cloud; } sq;   // an obscured square's centre
+typedef struct { double clear; det *d; sq *q; int nd, cap, nq, qcap; } res;
 typedef struct { int k, x0, y0, x1, y1; } win;   // [x0,x1)×[y0,y1) of tile k
 
 static int find(int *p, int i) {
@@ -546,7 +548,7 @@ static const char *run(ctx *x, const char *url, const double *box,
                        const double *t, res *r) {
   band *f = x->bd;
   const char *nb = strstr(url, "_N"), *e = NULL;
-  r->nd = 0, r->clear = NAN;
+  r->nd = r->nq = 0, r->clear = NAN;
   if (!nb || atoi(nb + 2) < 400) return "needs baseline N0400 or later";
   char *u[3] = {swap(url, "B12.jp2", "B11.jp2"),
                 swap(url, "B12.jp2", "B8A.jp2"),
@@ -652,6 +654,30 @@ static const char *run(ctx *x, const char *url, const double *box,
   }
   free(hist);
   if (seen > 0) r->clear = (double)clear / seen;
+
+  // the obscured share of each 640 m square, by cloud, no data or a cell
+  // too cloudy to read: what a look at a site in it is judged by
+  {
+    int qx0 = X0 / SUB, qy0 = Y0 / SUB, nqx = (X1 - 1) / SUB - qx0 + 1;
+    int nq = nqx * ((Y1 - 1) / SUB - qy0 + 1);
+    int *qn = calloc(nq, sizeof *qn), *qo = calloc(nq, sizeof *qo);
+    for (int r0 = 0; r0 < H; r0++)
+      for (int c0 = 0; c0 < W; c0++) {
+        int gx = X0 + c0, gy = Y0 + r0;
+        int c = (gy / CELL - gy0) * ncx + gx / CELL - gx0;
+        int q = (gy / SUB - qy0) * nqx + gx / SUB - qx0;
+        qn[q]++, qo[q] += cld[c] > t[MAXCLOUD] * cnt[c] || CLOUDY(r0, c0) ||
+                          !b12[(size_t)r0 * W + c0];
+      }
+    for (int q = 0; q < nq; q++) {
+      if (r->nq == r->qcap)
+        r->q = realloc(r->q, (r->qcap = 2 * r->qcap + 64) * sizeof *r->q);
+      r->q[r->nq++] = (sq){f->ox + ((qx0 + q % nqx) * SUB + SUB / 2.) * f->res,
+                           f->oy - ((qy0 + q / nqx) * SUB + SUB / 2.) * f->res,
+                           (double)qo[q] / qn[q]};
+    }
+    free(qn), free(qo);
+  }
 
   // candidates: b12 alone passes (above b12_min and the cell's contrast),
   // in raster order. the spectral mask is a subset, and a detection needs
@@ -898,15 +924,27 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
   // clear, error and the flares list; a null input row is a null result
   duckdb_vector vc = duckdb_struct_vector_get_child(out, 0),
                 ve = duckdb_struct_vector_get_child(out, 1),
-                vl = duckdb_struct_vector_get_child(out, 2);
+                vl = duckdb_struct_vector_get_child(out, 2),
+                vq = duckdb_struct_vector_get_child(out, 3);
   duckdb_vector_ensure_validity_writable(out);
   duckdb_vector_ensure_validity_writable(vc);
   duckdb_vector_ensure_validity_writable(ve);
   duckdb_vector_ensure_validity_writable(vl);
+  duckdb_vector_ensure_validity_writable(vq);
   uint64_t *mo = duckdb_vector_get_validity(out),
            *mc = duckdb_vector_get_validity(vc),
            *me = duckdb_vector_get_validity(ve),
-           *ml = duckdb_vector_get_validity(vl);
+           *ml = duckdb_vector_get_validity(vl),
+           *mq = duckdb_vector_get_validity(vq);
+  idx_t tq = 0, oq = 0;
+  for (idx_t i = 0; i < n; i++) tq += rs[i].e ? 0 : rs[i].r.nq;
+  duckdb_list_vector_reserve(vq, tq);
+  duckdb_list_vector_set_size(vq, tq);
+  duckdb_list_entry *lq = duckdb_vector_get_data(vq);
+  double *dq[3];
+  for (int k = 0; k < 3; k++)
+    dq[k] = duckdb_vector_get_data(duckdb_struct_vector_get_child(
+      duckdb_list_vector_get_child(vq), k));
   for (idx_t i = 0; i < n; i++) total += rs[i].e ? 0 : rs[i].r.nd;
   duckdb_list_vector_reserve(vl, total);
   duckdb_list_vector_set_size(vl, total);
@@ -921,7 +959,7 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
   idx_t o = 0;
   for (idx_t i = 0; i < n; i++) {
     row *w = &rs[i];
-    le[i] = (duckdb_list_entry){o, 0};
+    le[i] = (duckdb_list_entry){o, 0}, lq[i] = (duckdb_list_entry){oq, 0};
     if (!w->url) {
       duckdb_validity_set_row_invalid(mo, i);
       continue;
@@ -930,7 +968,13 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
     else clear[i] = w->r.clear;
     if (w->e) duckdb_vector_assign_string_element(ve, i, w->e);
     else duckdb_validity_set_row_invalid(me, i);
-    if (w->e) duckdb_validity_set_row_invalid(ml, i);
+    if (w->e) duckdb_validity_set_row_invalid(ml, i),
+              duckdb_validity_set_row_invalid(mq, i);
+    for (int j = 0; !w->e && j < w->r.nq; j++, oq++) {
+      sq *q = &w->r.q[j];
+      dq[0][oq] = q->x, dq[1][oq] = q->y, dq[2][oq] = q->cloud;
+    }
+    lq[i].length = oq - lq[i].offset;
     for (int j = 0; !w->e && j < w->r.nd; j++, o++) {
       det *x = &w->r.d[j];
       double vals[8] = {x->x, x->y, x->max, x->avg, x->b11, x->ratio, x->pk,
@@ -939,7 +983,7 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
       px[o] = x->px, sat[o] = x->sat;
     }
     le[i].length = o - le[i].offset;
-    free(w->url), free(w->r.d);
+    free(w->url), free(w->r.d), free(w->r.q);
   }
   free(rs);
 }
@@ -1004,15 +1048,19 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
                             struct duckdb_extension_access *access) {
   const char *fn[] = {"x", "y", "max_b12", "avg_b12", "peak_b11", "ratio",
                       "peakedness", "pixels", "radiance", "saturated"};
-  const char *sn[] = {"clear", "error", "flares"};
-  duckdb_logical_type ft[10], st[3], dbl = type(DUCKDB_TYPE_DOUBLE),
+  const char *sn[] = {"clear", "error", "flares", "cells"},
+             *qn[] = {"x", "y", "cloud"};
+  duckdb_logical_type ft[10], st[4], qt[3], dbl = type(DUCKDB_TYPE_DOUBLE),
                       vc = type(DUCKDB_TYPE_VARCHAR);
   for (int k = 0; k < 10; k++)
     ft[k] = type(k == 7 ? DUCKDB_TYPE_INTEGER
                  : k == 9 ? DUCKDB_TYPE_BOOLEAN : DUCKDB_TYPE_DOUBLE);
   duckdb_logical_type fs = duckdb_create_struct_type(ft, fn, 10);
+  for (int k = 0; k < 3; k++) qt[k] = dbl;
+  duckdb_logical_type qs = duckdb_create_struct_type(qt, qn, 3);
   st[0] = dbl, st[1] = vc, st[2] = duckdb_create_list_type(fs);
-  duckdb_logical_type ret = duckdb_create_struct_type(st, sn, 3);
+  st[3] = duckdb_create_list_type(qs);
+  duckdb_logical_type ret = duckdb_create_struct_type(st, sn, 4);
   duckdb_scalar_function_set set = duckdb_create_scalar_function_set(
     "s2_detect");
   for (int extra = 0; extra < 2; extra++) {
@@ -1032,6 +1080,7 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   duckdb_destroy_scalar_function_set(&set);
   for (int k = 0; k < 10; k++) duckdb_destroy_logical_type(&ft[k]);
   duckdb_destroy_logical_type(&fs), duckdb_destroy_logical_type(&st[2]);
+  duckdb_destroy_logical_type(&qs), duckdb_destroy_logical_type(&st[3]);
   duckdb_destroy_logical_type(&ret), duckdb_destroy_logical_type(&dbl);
   duckdb_scalar_function f = duckdb_create_scalar_function();
   duckdb_scalar_function_set_name(f, "s2_source");

@@ -10,7 +10,7 @@ PLATFORM ?= $(shell uname -sm | awk '{ \
 	os = $$1 == "Darwin" ? "osx" : tolower($$1); \
 	arch = $$2 ~ /^(x86_64|amd64)$$/ ? "amd64" : "arm64"; \
 	print os "_" arch }')
-VERSION = 0.3.0
+VERSION = 0.4.0
 
 # a loadable extension is the shared library plus duckdb's metadata footer:
 # a wasm-style custom section header, eight 32-byte fields (last first) and

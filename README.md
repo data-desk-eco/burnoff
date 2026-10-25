@@ -38,8 +38,11 @@ Load spatial first.
 - `s2_scenes(g, t0, t1 := today, source := 'auto')` gives the scenes that
   the search finds, with the box to read in each.
 - `s2_detect(b12, xmin, ymin, xmax, ymax [, thresholds])` detects in one
-  scene, over a box in the metres of its UTM zone. A failed row has an
-  `error` value, and the query continues.
+  scene, over a box in the metres of its UTM zone. It gives the box's
+  `clear` share, an `error` (a failed row does not stop the query), the
+  `flares`, and `cells`: the centre and obscured share (`cloud`: cloud, no
+  data, or a background cell too cloudy to read) of each 640 m square of
+  the box. A look at a site is clear when its square's `cloud` is low.
 
 `source` is `'eodata'` (CDSE's S3, which needs `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` and `AWS_S3_ENDPOINT`, as on CloudFerro machines)
