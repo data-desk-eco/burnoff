@@ -50,8 +50,11 @@ when it falls back to a full download. To stop the warning, set
 
 The detection runs on the extension's own workers. With more DuckDB
 threads, the client thread can poll for the result on a core of its own,
-which costs approximately 20% of the CPU on four cores. To prevent this,
-set `threads = 1`.
+which costs approximately 20% of the CPU on four cores. The catalogue
+search is faster with more threads: a year over 80 tiles takes 36 s with
+the default 8 threads and 63 s with one. The catalogue answers too many
+parallel searches with HTTP 429, so more than 8 threads is slower. Keep
+your usual setting.
 
 The function below the macros is:
 
