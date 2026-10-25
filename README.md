@@ -26,7 +26,7 @@ DuckDB with `-unsigned`.
 
 ## Use
 
-Load spatial first. The extension does not change a setting.
+Load spatial first.
 
 - `s2_flares_in(w, s, e, n, t0, t1, max_cloud := 100, href := 'eodata',
   thresholds := '')` gives one row for each flare in a lon/lat box
