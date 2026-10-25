@@ -28,18 +28,19 @@ DuckDB with `-unsigned`.
 
 Load spatial first.
 
-- `s2_flares(w, s, e, n, t0, t1, max_cloud := 100, href := 'eodata',
+- `s2_flares(w, s, e, n, t0, t1, max_cloud := 100, source := 'auto',
   thresholds := '')` gives one row for each flare in a lon/lat box
   between two dates.
-- `s2_scenes(w, s, e, n, t0, t1, href := 'eodata')` gives the scenes that
+- `s2_scenes(w, s, e, n, t0, t1, source := 'auto')` gives the scenes that
   the search finds, with the box to read in each.
 - `s2_detect(b12, xmin, ymin, xmax, ymax [, thresholds])` detects in one
   scene, over a box in the metres of its UTM zone. A failed row has an
   `error` value, and the query continues.
 
-`eodata` needs the eodata credentials in `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY` and `AWS_S3_ENDPOINT`, as on CloudFerro machines.
-Elsewhere, `href := 'gcp'` reads the public Google Cloud mirror.
+`source` is `'eodata'` (CDSE's S3, which needs `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_S3_ENDPOINT`, as on CloudFerro machines)
+or `'gcp'` (Google's public mirror, with no credentials). `'auto'` uses
+eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
 `thresholds` is `'name=value,...'` over the defaults in `burnoff.c`.
 
 To stop DuckDB's warning about range requests, set `force_download = true`.

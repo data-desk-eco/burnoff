@@ -935,6 +935,14 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
   free(rs);
 }
 
+// the default source: eodata when its key is set, else google's mirror
+static void s2_source(duckdb_function_info info, duckdb_data_chunk in,
+                      duckdb_vector out) {
+  const char *s = getenv("AWS_ACCESS_KEY_ID") ? "eodata" : "gcp";
+  for (idx_t i = 0, n = duckdb_data_chunk_get_size(in); i < n; i++)
+    duckdb_vector_assign_string_element(out, i, s);
+}
+
 static duckdb_logical_type type(duckdb_type t) {
   return duckdb_create_logical_type(t);
 }
@@ -977,7 +985,12 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   for (int k = 0; k < 10; k++) duckdb_destroy_logical_type(&ft[k]);
   duckdb_destroy_logical_type(&fs), duckdb_destroy_logical_type(&st[2]);
   duckdb_destroy_logical_type(&ret), duckdb_destroy_logical_type(&dbl);
-  duckdb_destroy_logical_type(&vc);
+  duckdb_scalar_function f = duckdb_create_scalar_function();
+  duckdb_scalar_function_set_name(f, "s2_source");
+  duckdb_scalar_function_set_return_type(f, vc);
+  duckdb_scalar_function_set_function(f, s2_source);
+  if (ok == DuckDBSuccess) ok = duckdb_register_scalar_function(con, f);
+  duckdb_destroy_scalar_function(&f), duckdb_destroy_logical_type(&vc);
   if (ok == DuckDBSuccess) ok = duckdb_query(con, macros, NULL);
   if (ok == DuckDBError) access->set_error(info, "could not register");
   return ok == DuckDBSuccess;
