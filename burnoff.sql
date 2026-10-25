@@ -1,21 +1,11 @@
--- burnoff at query time: search CDSE's catalogue and detect, in one query.
--- the extension defines these macros on load. with spatial loaded first:
---   from s2_flares_in(-104.2, 31.6, -103.2, 32.6, '2025-05-01', '2025-05-31');
--- eodata hrefs need eodata credentials (AWS_ACCESS_KEY_ID etc.); away from
--- cloudferro, href := 'gcp' reads google's public mirror of the same files.
--- every L1C scene over a lon/lat box between two dates, with the box in the
--- scene's own UTM metres. tiles of one zone share a pixel grid and overlap
--- by 9.8 km, so each scene keeps only what falls in its MGRS 100 km square,
--- whose west and north edges are sx and sy, and no flare of a pass is found
--- twice. the box is clipped to the square widened by 2 km and rounded out to
--- the tile's 6.4 km background cells: a flare in the square then has the
--- cells and the components that a whole-tile run gives it.
---
--- the catalogue gives at most 1000 scenes a search, and fewer searches are
--- faster, as it answers a burst with 429s. a search covers 830 / t days for
--- a box over about t tiles, which is a page half full at three satellites,
--- two orbits a tile and every tile at once. a full page fails the query
--- rather than lose scenes
+-- burnoff's macros, defined on load; spatial must be loaded to use them.
+
+-- every L1C scene over a lon/lat box between two dates, with the box to
+-- read in the scene's UTM metres: its MGRS 100 km square (west and north
+-- edges sx, sy), widened by 2 km and rounded out to the tile's 6.4 km
+-- background cells, so no flare of a pass is found twice. each search
+-- spans the days that should half fill a 1000-scene page; a full page
+-- fails the query rather than lose scenes
 create or replace macro s2_days(w, s, e, n) as
 greatest(1, floor(830 / ((e - w) * 1.11 * cos(radians((s + n) / 2)) + 2)
                        / ((n - s) * 1.11 + 2)))::int;
