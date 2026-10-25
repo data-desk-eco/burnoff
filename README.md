@@ -6,6 +6,7 @@ detects flares in a region. No stored detections are necessary. The name
 comes from the burnoff project, whose flare thresholds it uses.
 
 ```sql
+load spatial;
 load burnoff;  -- in duckdb -unsigned
 from s2_flares_in(-104.2, 31.6, -103.2, 32.6, '2025-05-01', '2025-05-31',
                   max_cloud := 50);
@@ -26,8 +27,9 @@ The extension uses the stable DuckDB C API (v1.2.0). It loads in DuckDB
 
 ## Use
 
-On load, the extension runs `burnoff.sql`, which is built into it. This
-loads the spatial extension, sets the session for the catalogue, and defines two macros:
+Load the spatial extension before you use the macros. The extension does
+not change a setting. On load, it runs `burnoff.sql`, which is built into
+it and defines two macros:
 
 - `s2_scenes(w, s, e, n, t0, t1, href := 'eodata')` gives each L1C scene
   that touches a longitude/latitude box between two dates. Each scene has
@@ -42,10 +44,14 @@ loads the spatial extension, sets the session for the catalogue, and defines two
 them in `/etc/profile.d/eodata.sh`. Away from CloudFerro, `href := 'gcp'`
 reads the same files from the public Google Cloud mirror.
 
-The extension sets `threads = 1`. The detection runs on the extension's own
-workers. With more DuckDB threads, the client thread can poll for the
-result on a core of its own, which costs approximately 20% of the CPU on
-four cores.
+The catalogue does not accept range requests, so DuckDB shows a warning
+when it falls back to a full download. To stop the warning, set
+`force_download = true`.
+
+The detection runs on the extension's own workers. With more DuckDB
+threads, the client thread can poll for the result on a core of its own,
+which costs approximately 20% of the CPU on four cores. To prevent this,
+set `threads = 1`.
 
 The function below the macros is:
 
