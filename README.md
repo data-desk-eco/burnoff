@@ -7,7 +7,7 @@ detects the flares in a region.
 ```sql
 load spatial;
 load burnoff;  -- in duckdb -unsigned
-from s2_flares_in(-104.2, 31.6, -103.2, 32.6, '2025-05-01', '2025-05-31',
+from s2_flares(-104.2, 31.6, -103.2, 32.6, '2025-05-01', '2025-05-31',
                   max_cloud := 50);
 ```
 
@@ -28,12 +28,12 @@ DuckDB with `-unsigned`.
 
 Load spatial first.
 
-- `s2_flares_in(w, s, e, n, t0, t1, max_cloud := 100, href := 'eodata',
+- `s2_flares(w, s, e, n, t0, t1, max_cloud := 100, href := 'eodata',
   thresholds := '')` gives one row for each flare in a lon/lat box
   between two dates.
 - `s2_scenes(w, s, e, n, t0, t1, href := 'eodata')` gives the scenes that
   the search finds, with the box to read in each.
-- `s2_flares(b12, xmin, ymin, xmax, ymax [, thresholds])` detects in one
+- `s2_detect(b12, xmin, ymin, xmax, ymax [, thresholds])` detects in one
   scene, over a box in the metres of its UTM zone. A failed row has an
   `error` value, and the query continues.
 

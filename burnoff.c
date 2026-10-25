@@ -1,6 +1,6 @@
 // burnoff: sentinel-2 l1c swir flare detection, straight off the jp2 archive,
 // as a duckdb extension:
-//   s2_flares(b12 VARCHAR, xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE
+//   s2_detect(b12 VARCHAR, xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE
 //             [, thresholds VARCHAR])
 //   → STRUCT(clear DOUBLE, error VARCHAR, flares STRUCT(x, y, max_b12,
 //            avg_b12, peak_b11, ratio, peakedness, pixels, radiance,
@@ -843,7 +843,7 @@ static char *str(duckdb_vector v, idx_t i) {
   return strndup(duckdb_string_t_data(s), duckdb_string_t_length(*s));
 }
 
-static void s2_flares(duckdb_function_info info, duckdb_data_chunk in,
+static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
                       duckdb_vector out) {
   static pthread_once_t once = PTHREAD_ONCE_INIT;
   idx_t n = duckdb_data_chunk_get_size(in), cols =
@@ -958,17 +958,17 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   st[0] = dbl, st[1] = vc, st[2] = duckdb_create_list_type(fs);
   duckdb_logical_type ret = duckdb_create_struct_type(st, sn, 3);
   duckdb_scalar_function_set set = duckdb_create_scalar_function_set(
-    "s2_flares");
+    "s2_detect");
   for (int extra = 0; extra < 2; extra++) {
     duckdb_scalar_function f = duckdb_create_scalar_function();
-    duckdb_scalar_function_set_name(f, "s2_flares");
+    duckdb_scalar_function_set_name(f, "s2_detect");
     duckdb_scalar_function_add_parameter(f, vc);
     for (int k = 0; k < 4; k++) duckdb_scalar_function_add_parameter(f, dbl);
     if (extra) duckdb_scalar_function_add_parameter(f, vc);
     duckdb_scalar_function_set_return_type(f, ret);
     duckdb_scalar_function_set_special_handling(f);   // nulls are ours
     duckdb_scalar_function_set_volatile(f);   // one evaluation per row
-    duckdb_scalar_function_set_function(f, s2_flares);
+    duckdb_scalar_function_set_function(f, s2_detect);
     duckdb_add_scalar_function_to_set(set, f);
     duckdb_destroy_scalar_function(&f);
   }

@@ -55,7 +55,7 @@ where least(xmax, sx + 1e5) > greatest(xmin, sx)
   and least(ymax, sy) > greatest(ymin, sy - 1e5);
 
 -- the flares in a lon/lat box between two dates, one row each
-create or replace macro s2_flares_in(w, s, e, n, t0, t1, max_cloud := 100,
+create or replace macro s2_flares(w, s, e, n, t0, t1, max_cloud := 100,
                                      href := 'eodata', thresholds := '')
 as table
 select id scene, datetime, ST_X(p) lon, ST_Y(p) lat, clear, max_b12,
@@ -65,7 +65,7 @@ from (
                          always_xy := true) p
   from (select id, datetime, crs, sx, sy, r.clear,
                unnest(r.flares, recursive := true)
-        from (select *, s2_flares(b12, xmin, ymin, xmax, ymax, thresholds) r
+        from (select *, s2_detect(b12, xmin, ymin, xmax, ymax, thresholds) r
               from s2_scenes(w, s, e, n, t0, t1, href := href)
               where cloud <= max_cloud)))
 where x >= sx and x < sx + 1e5 and y > sy - 1e5 and y <= sy
