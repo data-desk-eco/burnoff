@@ -21,8 +21,8 @@ You need a C compiler, `pkg-config`, libcurl and OpenJPEG 2.5 or later
 (`libcurl4-openssl-dev` and `libopenjp2-7-dev` on Ubuntu).
 
 ```bash
-make -C burnoff          # burnoff.duckdb_extension
-make -C burnoff install  # so that `load burnoff` works in any directory
+make          # burnoff.duckdb_extension
+make install  # so that `load burnoff` works in any directory
 ```
 
 The extension loads in DuckDB 1.2 or later. It is not signed, so start

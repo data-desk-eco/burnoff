@@ -1,0 +1,17 @@
+# a tag builds the linux extension the data desk fleet pins, and attaches it
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y libcurl4-openssl-dev libopenjp2-7-dev
+      - run: make && mv burnoff.duckdb_extension burnoff-linux_amd64.duckdb_extension
+      - run: gh release create "$GITHUB_REF_NAME" burnoff-linux_amd64.duckdb_extension
+        env:
+          GH_TOKEN: ${{ github.token }}
