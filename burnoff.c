@@ -59,7 +59,8 @@ static const double TD[] = {.30, .20, .50, 3, .15, 1.15, 1, .50, 80, 30, .70,
   .5, 100, .65, .75};
 enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
   LARGEPX, LARGEMIN, WARMF, WARMMAX, SINGLE, MAXCLOUD, NT };
-#define CELL 320   // background cell, a quarter of a 640 px jp2 tile
+#define CELL 320   // background cell: a quarter of a 640 px jp2 tile, or
+                   // across 512 px tiles from baseline 05.13
 // a jp2 decode costs ~4 ms however small its window (the tile's packet
 // headers are parsed whole), about as much as 2^14 more pixels
 #define FIXED (1 << 14)
@@ -249,9 +250,12 @@ static const char *header(ctx *x, const char *url, band *f) {
   f->tw = be(s + 24, 4), f->th = be(s + 28, 4);
   f->nx = (f->w + f->tw - 1) / f->tw;
   f->nt = f->nx * ((f->h_ + f->th - 1) / f->th);
-  if (f->nt > 256 || f->tw % CELL || f->th % CELL)
-    return "unexpected tiling";
-  f->h.n = 0, wr((char *)s, 1, sot - s, &f->h);
+  if (f->nt > 256) return "more than 256 jp2 tiles";
+  // the main header, less any TLM: its index covers the whole file, and
+  // the decoder would seek by it past the one tile-part it is given
+  f->h.n = 0, wr((char *)s, 1, 2, &f->h);
+  for (unsigned char *q = s + 2; q + 4 <= sot; q += 2 + be(q + 2, 2))
+    if (q[1] != 0x55) wr((char *)q, 1, 2 + be(q + 2, 2), &f->h);
   f->first = sot - b->p, f->size = size, f->d.n = 0;
   memset(f->at, 0, sizeof f->at), memset(f->have, 0, sizeof f->have);
   return NULL;
@@ -600,15 +604,20 @@ static const char *run(ctx *x, const char *url, const double *box,
     }
   }
   for (int c = 0; c < nc; c++) {
-    int gx = gx0 + c % ncx, gy = gy0 + c / ncx, *b;
-    int k = gy * CELL / f->th * f->nx + gx * CELL / f->tw;
+    int gx = gx0 + c % ncx, gy = gy0 + c / ncx;
     int x0 = MAX(gx * CELL, X0), y0 = MAX(gy * CELL, Y0);
     int x1 = MIN(gx * CELL + CELL, X1), y1 = MIN(gy * CELL + CELL, Y1);
     if (cld[c] > t[MAXCLOUD] * cnt[c]) continue;
-    b = tb[k];
-    if (!need[k]) b[0] = x0, b[1] = y0, b[2] = x1, b[3] = y1, need[k] = 1;
-    b[0] = MIN(b[0], x0), b[1] = MIN(b[1], y0);
-    b[2] = MAX(b[2], x1), b[3] = MAX(b[3], y1);
+    // a cell can straddle jp2 tiles (512 px from N0513): each gets its part
+    for (int ty = y0 / f->th; ty <= (y1 - 1) / f->th; ty++)
+      for (int tx = x0 / f->tw; tx <= (x1 - 1) / f->tw; tx++) {
+        int k = ty * f->nx + tx, *b = tb[k];
+        int a0 = MAX(x0, tx * f->tw), a1 = MAX(y0, ty * f->th);
+        int a2 = MIN(x1, tx * f->tw + f->tw), a3 = MIN(y1, ty * f->th + f->th);
+        if (!need[k]) b[0] = a0, b[1] = a1, b[2] = a2, b[3] = a3, need[k] = 1;
+        b[0] = MIN(b[0], a0), b[1] = MIN(b[1], a1);
+        b[2] = MAX(b[2], a2), b[3] = MAX(b[3], a3);
+      }
   }
   b12 = calloc((size_t)W * H, 2);
   if ((e = parts(x, url, f, need))) goto out;

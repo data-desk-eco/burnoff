@@ -50,8 +50,5 @@ eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
 ## Limits
 
 - burnoff needs baseline N0400 or later, which has a raster cloud mask.
-- Baseline N0513 (from 2026) uses 512 px JP2 tiles, which do not align
-  with the 320 px background cells. Its scenes fail with `unexpected
-  tiling`.
 - A search that fills the catalogue's 1000-scene page stops the query.
 - Flares in an overlap of two UTM zones are found in both.
