@@ -2,7 +2,7 @@
 
 A Sentinel-2 L1C flare detector in C, as a DuckDB extension. It reads the
 JPEG2000 archive directly, so one query searches the CDSE catalogue and
-detects the flares in a region. It uses the s2e compact-source thresholds.
+detects the flares in a region.
 
 ```sql
 load spatial;

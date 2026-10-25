@@ -27,7 +27,7 @@
 //   never fetched. headers and masks are cached across rows, so many sites
 //   on one scene read them once.
 //
-// the method is s2e's compact-source detector, run over the box in one pass:
+// a compact-source flare detector, run over the box in one pass:
 // a background median per 320 px cell, the spectral mask, its 4-connected
 // components, the morphological gates and the hot core grown from each peak.
 #define _GNU_SOURCE
@@ -50,7 +50,7 @@ DUCKDB_EXTENSION_EXTERN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
-// the burnoff compact-source gates of s2e's Thresholds::default()
+// the default compact-source gates
 static const char *TK[] = {"b12_min", "b11_min", "peak_b12_min",
   "contrast_ratio", "background_floor", "peakedness_min", "saturation",
   "hot_floor", "max_pixels", "large_pixels", "large_b12_min",
