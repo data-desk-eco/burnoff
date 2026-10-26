@@ -526,10 +526,12 @@ static char *swap(const char *url, const char *from, const char *to) {
   return r;
 }
 
-// one detection; x y is the peak pixel's centre in the box's UTM metres
+// one detection; x y is the peak pixel's centre in the box's UTM metres,
+// and pp its hot core's px pixels, each its row << 16 | column in the tile,
+// then its b12
 typedef struct {
   double x, y, max, avg, b11, ratio, pk, rad;
-  int px, sat;
+  int px, sat, *pp;
 } det;
 typedef struct { double x, y, cloud; } sq;   // an obscured square's centre
 typedef struct { double clear; det *d; sq *q; int nd, cap, nq, qcap; } res;
@@ -855,12 +857,16 @@ static const char *run(ctx *x, const char *url, const double *box,
     for (int z = 0; z < tl; z++) vis[pq[z]] = 0;
     if (size > t[WARMMAX]) continue;
     double a = cal(v11[pk[l]]);
+    int *pp = malloc(tl * 2 * sizeof *pp);
+    for (int z = 0, i; z < tl; z++)
+      i = idx[pq[z]], pp[2 * z + 1] = v12[pq[z]],
+      pp[2 * z] = (Y0 + i / W) << 16 | (X0 + i % W);
     if (r->nd == r->cap) r->d = realloc(r->d, (r->cap = 2 * r->cap + 8) *
                                                   sizeof *r->d);
     r->d[r->nd++] = (det){f->ox + (X0 + pi % W + .5) * f->res,
                           f->oy - (Y0 + pi / W + .5) * f->res, p, avg, a,
                           a > 1e-6 ? p / a : INFINITY, p / avg, rad, size,
-                          p >= t[SAT]};
+                          p >= t[SAT], pp};
   }
   free(n_), free(pk), free(sum), free(vis);
 out:
@@ -1053,6 +1059,7 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
       px[o] = x->px, sat[o] = x->sat;
     }
     le[i].length = o - le[i].offset;
+    for (int j = 0; j < w->r.nd; j++) free(w->r.d[j].pp);
     free(w->url), free(w->r.d), free(w->r.q);
   }
   free(rs);

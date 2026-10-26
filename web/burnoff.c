@@ -132,14 +132,27 @@ EMSCRIPTEN_KEEPALIVE char *detect(const char *url, double w, double s,
     geo(d->x, d->y, zn, so, &p, &q);
     fprintf(out, "%s{\"lon\":%.7f,\"lat\":%.7f,\"max_b12\":%.4f,\"avg_b12\":"
       "%.4f,\"peak_b11\":%.4f,\"ratio\":%.4g,\"peakedness\":%.4f,\"pixels\":"
-      "%d,\"radiance\":%.4f,\"saturated\":%s,\"cloud\":%.3g}", k++ ? "," : "",
+      "%d,\"radiance\":%.4f,\"saturated\":%s,\"cloud\":%.3g", k++ ? "," : "",
       p, q, d->max, d->avg, d->b11, isinf(d->ratio) ? 1e308 : d->ratio, d->pk,
       d->px, d->rad, d->sat ? "true" : "false", cloud(&r, d->x, d->y));
+    // and its pixels, each its b12 and its square's corners
+    fputs(",\"px\":[", out);
+    for (int j = 0; j < d->px; j++) {
+      double x0 = f->ox + (d->pp[2 * j] & 65535) * f->res;
+      double y0 = f->oy - (d->pp[2 * j] >> 16) * f->res;
+      fprintf(out, "%s[%.4f", j ? "," : "", cal(d->pp[2 * j + 1]));
+      for (int c = 0; c < 4; c++)
+        geo(x0 + (c == 1 || c == 2) * f->res, y0 - (c > 1) * f->res, zn, so,
+            &p, &q), fprintf(out, ",%.7f,%.7f", p, q);
+      fputc(']', out);
+    }
+    fputs("]}", out);
   }
   fputs("],\"cloud\":[", out);
   for (int i = 0; i < np; i++)
     utm(pt[2 * i], pt[2 * i + 1], zn, so, &p, &q),
     fprintf(out, "%s%.3g", i ? "," : "", er ? -1 : cloud(&r, p, q));
+  for (int i = 0; i < r.nd; i++) free(r.d[i].pp);
   fputs("]}", out), fclose(out), free(r.d), free(r.q);
   return o;
 }
