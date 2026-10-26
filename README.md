@@ -72,7 +72,7 @@ eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
 `make wasm` builds the same detector for a web worker. `web/worker.js`
 answers two calls:
 
-- `tiles(w, s, e, n)` names the MGRS tiles over a lon/lat box.
+- `tiles(points)` names the MGRS tile of each lon/lat point.
 - `detect(url, w, s, e, n, part, parts, points)` gives one scene's flares
   over a lon/lat box, in lon/lat, and the obscured share of the 640 m
   square under each point. `part` of `parts` reads that share of the box's

@@ -55,29 +55,28 @@ static void mgrs(double lon, double lat, char *id) {
           "ABCDEFGHJKLMNPQRSTUV"[(r + (z % 2 ? 0 : 5)) % 20]);
 }
 
-// the tiles over a lon/lat box, sampled every ~10 km: ["13SFR", ...]
-EMSCRIPTEN_KEEPALIVE char *tiles(double w, double s, double e, double n) {
+// the tile of each of n points (lon, lat pairs): ["13SFR", ...]
+EMSCRIPTEN_KEEPALIVE char *tiles(const double *pt, int n) {
   char *o, id[8];
   size_t len;
   FILE *f = open_memstream(&o, &len);
-  int nx = (e - w) / .1 + 2, ny = (n - s) / .1 + 2, k = 0;
   fputc('[', f);
-  for (int i = 0; i < nx * ny; i++) {
-    mgrs(w + (e - w) * (i % nx) / (nx - 1), s + (n - s) * (i / nx) / (ny - 1),
-         id);
-    fflush(f);
-    if (!strstr(o, id)) fprintf(f, "%s\"%s\"", k++ ? "," : "", id);
-  }
+  for (int i = 0; i < n; i++)
+    mgrs(pt[2 * i], pt[2 * i + 1], id),
+    fprintf(f, "%s\"%s\"", i ? "," : "", id);
   fputc(']', f), fclose(f);
   return o;
 }
 
-// the obscured share of the 640 m square at x y, or -1 outside the read
+// the obscured share of the 640 m square at x y, or -1 outside the read:
+// the squares are a grid, row by row from the north west
 static double cloud(const res *r, double x, double y) {
-  for (int j = 0; j < r->nq; j++)
-    if (fabs(r->q[j].x - x) <= 320 && fabs(r->q[j].y - y) <= 320)
-      return r->q[j].cloud;
-  return -1;
+  int nx = 0;
+  while (nx < r->nq && r->q[nx].y == r->q[0].y) nx++;
+  long i = r->nq ? lround((x - r->q[0].x) / 640) : -1;
+  long j = r->nq ? lround((r->q[0].y - y) / 640) : -1;
+  return i >= 0 && i < nx && j >= 0 && j * nx + i < r->nq
+       ? r->q[j * nx + i].cloud : -1;
 }
 
 // one scene's flares over a lon/lat box, in lon/lat, and how obscured the
