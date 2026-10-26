@@ -53,7 +53,7 @@ $(OJP)/b/bin/libopenjp2.a:
 	mkdir -p ext/ojp && curl -sL https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.4.tar.gz | tar xz -C ext/ojp
 	cd $(OJP) && emcmake cmake -B b -DBUILD_SHARED_LIBS=OFF \
 	  -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release \
-	  -DCMAKE_C_FLAGS="-O3 -msimd128" && cmake --build b -j8
+	  -DCMAKE_C_FLAGS="-O3 -msimd128 -msse -msse2" && cmake --build b -j8
 
 clean:
 	rm -rf ext

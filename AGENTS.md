@@ -47,5 +47,7 @@ without its lowest bitplanes, under a certified error bound, then exact
 decodes only where a peak is possible): it was exact, and 6-9x faster on
 cloudy files, but on clear land (Permian, Catalonia) bright ground and
 real flares send most cells to the exact decode, so the total did not
-fall. Emscripten flag variants (-O2, LTO, mimalloc, emmalloc, SSE4.1
-emulation, fast-math) moved a full-tile decode by under 5%.
+fall. Single-threaded, the wasm decode is within 3-6% of native. Of the
+emscripten flags tried (-O2, LTO, mimalloc, emmalloc, SSE2 and SSE4.1
+emulation, fast-math), only SSE2 for OpenJPEG helped (0-5%, through its
+vertical 5/3 DWT), and it is kept.
