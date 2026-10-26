@@ -38,12 +38,13 @@ from aois, lateral s2_flares(aois.geom, '2025-01-01');
 
 Requires a C compiler, `pkg-config`, libcurl and OpenJPEG 2.5 or later
 (`libcurl4-openssl-dev` and `libopenjp2-7-dev` on Ubuntu, `openjpeg` in
-Homebrew).
+Homebrew). `make wasm` also needs emscripten and CMake.
 
 ```sh
 make              # ext/burnoff.duckdb_extension
 make test         # loads it and runs a detection offline
 make install      # so that `load burnoff` works in any directory
+make wasm         # web/burnoff.{js,wasm}, with emscripten
 ```
 
 ## Functions
@@ -65,6 +66,26 @@ An optional `source` is `'eodata'` (CDSE's S3, which needs `AWS_ACCESS_KEY_ID`,
 or `'gcp'` (Google's public mirror, with no credentials). The default, `'auto'`, uses
 eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
 `thresholds` is `'name=value,...'` over the defaults in `src/burnoff.c`.
+
+## In the browser
+
+`make wasm` builds the same detector for a web worker. `web/worker.js`
+answers two calls:
+
+- `tiles(w, s, e, n)` names the MGRS tiles over a lon/lat box.
+- `detect(url, w, s, e, n, part, parts, points)` gives one scene's flares
+  over a lon/lat box, in lon/lat, and the obscured share of the 640 m
+  square under each point. `part` of `parts` reads that share of the box's
+  6.4 km cell columns, so several workers can share one scene.
+
+A `gs://gcp-public-data-sentinel-2/...` url is read through Google's JSON
+API, which answers cross-origin range requests. The page needs no proxy and
+no catalogue: a tile's scenes come from one listing of the bucket for each
+satellite and year. The worker posts each read that it is about to make as
+`['ahead', url, range]`. The page fetches it at once, so the worker's
+blocking read is answered from the browser's HTTP cache.
+
+The Aerial map (`data-desk-eco/aerial`) uses it for a live layer.
 
 ## Limits
 

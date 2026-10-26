@@ -44,13 +44,12 @@ static void curl_easy_setopt(CURL *c, int o, ...) {
 
 EM_JS_DEPS(curl, "$stringToNewUTF8");
 // the status, or -1 on a network error, with the body and the headers in
-// malloc'd buffers. self.BURNOFF_PROXY prefixes every url, for cors
+// malloc'd buffers
 EM_JS(int, xhr, (const char *u, const char *r, int head, char **body,
                  int *n, char **hdr), {
   const x = new XMLHttpRequest();
   try {
-    x.open(head ? 'HEAD' : 'GET',
-           (self.BURNOFF_PROXY || "") + UTF8ToString(u), false);
+    x.open(head ? 'HEAD' : 'GET', UTF8ToString(u), false);
     x.responseType = 'arraybuffer';
     if (r) x.setRequestHeader('Range', 'bytes=' + UTF8ToString(r));
     x.send();
@@ -61,6 +60,13 @@ EM_JS(int, xhr, (const char *u, const char *r, int head, char **body,
   HEAPU32[hdr >> 2] = stringToNewUTF8(x.getAllResponseHeaders());
   return x.status || -1;
 });
+
+// a read about to be made, posted to the page, which fetches it at once
+// into the http cache that the blocking read is then answered from
+EM_JS(void, hint, (const char *u, double lo, double hi), {
+  postMessage(['ahead', UTF8ToString(u), `bytes=${lo}-${hi - 1}`]);
+});
+#define ahead(u, lo, hi) hint(u, lo, hi)
 
 static CURLcode curl_easy_perform(CURL *c) {
   char *b, *h;

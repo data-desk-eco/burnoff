@@ -1,12 +1,20 @@
-// one detector: postMessage([url, xmin, ymin, xmax, ymax, thresholds]) and
-// get back s2_detect's row as an object
+// one detector: postMessage([id, 'tiles', w, s, e, n]) or [id, 'detect',
+// url, w, s, e, n, part, parts, points, thresholds] answers [id, its json].
+// urls are gs://gcp-public-data-sentinel-2/tiles/..., read over google's
+// json api, which answers cross-origin ranged reads. a read the detector is
+// about to make is posted first, as ['ahead', url, range], for the page to
+// start
 import init from './burnoff.js'
-self.BURNOFF_PROXY = new URL('p/', location).href
 const m = await init()
-onmessage = ({data: [u, ...a]}) => {
-  const p = m.ccall('detect', 'number',
-    ['string', 'number', 'number', 'number', 'number', 'string'],
-    [u, ...a.slice(0, 4), a[4] || ''])
-  postMessage(JSON.parse(m.UTF8ToString(p))), m._free(p)
+const bytes = a => new Uint8Array(new Float64Array(a).buffer)
+const call = {
+  tiles: a => m.ccall('tiles', 'number', Array(4).fill('number'), a),
+  detect: ([u, w, s, e, n, i, k, p = [], th = '']) => m.ccall('detect',
+    'number', ['string', ...Array(6).fill('number'), 'array', 'number',
+               'string'], [u, w, s, e, n, i, k, bytes(p), p.length / 2, th]),
+}
+onmessage = ({data: [id, fn, ...a]}) => {
+  const p = call[fn](a)
+  postMessage([id, JSON.parse(m.UTF8ToString(p))]), m._free(p)
 }
 postMessage('ready')

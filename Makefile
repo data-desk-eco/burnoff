@@ -38,7 +38,7 @@ install: $(E)
 	duckdb -unsigned -c "force install '$(CURDIR)/$(E)'"
 
 # the detector for the browser, with emscripten: web/burnoff.{js,wasm} over
-# openjpeg built for wasm in ext/ojp. `uv run web/serve.py` serves the page
+# openjpeg built for wasm in ext/ojp
 OJP = ext/ojp/openjpeg-2.5.4
 wasm: web/burnoff.js
 web/burnoff.js: web/burnoff.c web/shim/curl/curl.h src/burnoff.c \
@@ -47,7 +47,7 @@ web/burnoff.js: web/burnoff.c web/shim/curl/curl.h src/burnoff.c \
 	  -I$(OJP)/src/lib/openjp2 -I$(OJP)/b/src/lib/openjp2 $< \
 	  $(OJP)/b/bin/libopenjp2.a -o $@ -sMODULARIZE -sEXPORT_ES6 \
 	  -sENVIRONMENT=worker -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB \
-	  -sEXPORTED_FUNCTIONS=_detect,_free,_malloc \
+	  -sEXPORTED_FUNCTIONS=_detect,_tiles,_free,_malloc \
 	  -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString
 $(OJP)/b/bin/libopenjp2.a:
 	mkdir -p ext/ojp && curl -sL https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.4.tar.gz | tar xz -C ext/ojp

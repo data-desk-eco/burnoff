@@ -122,15 +122,33 @@ static size_t hd(char *d, size_t s, size_t n, void *u) {
 // backoff, as cdse sheds load with 503s
 static const char PAST[] = "range past the end of the file";
 
+// the http url of an s3://, gs:// or other url
+static void href(const char *url, char *u) {
+  const char *s3 = getenv("AWS_S3_ENDPOINT");
+  if (!strncmp(url, "s3://", 5))
+    snprintf(u, 4096, "https://%s/%s",
+             s3 ? s3 : "eodata.dataspace.copernicus.eu", url + 5);
+  else if (strncmp(url, "gs://", 5)) snprintf(u, 4096, "%s", url);
+  else {   // google's json api, which also answers cross-origin reads
+    const char *b = url + 5, *o = strchr(b, '/');
+    int k = snprintf(u, 4096, "https://storage.googleapis.com/download/"
+                     "storage/v1/b/%.*s/o/", o ? (int)(o - b) : 0, b);
+    for (o = o ? o + 1 : ""; *o && k < 4000; o++)
+      k += *o == '/' ? sprintf(u + k, "%%2F") : (u[k] = *o, 1);
+    snprintf(u + k, 4096 - k, "?alt=media");
+  }
+}
+
+// a read the detector is about to make: a browser starts it at once, so
+// that its own blocking read finds it cached (web/shim/curl)
+#ifndef ahead
+#define ahead(u, lo, hi) (void)(u)
+#endif
+
 static const char *get(CURL *c, const char *url, long long lo, long long hi,
                        buf *b) {
   char range[48], u[4096];
-  const char *s3 = getenv("AWS_S3_ENDPOINT");
-  if (!strncmp(url, "s3://", 5))
-    snprintf(u, sizeof u, "https://%s/%s",
-             s3 ? s3 : "eodata.dataspace.copernicus.eu", url + 5);
-  else
-    snprintf(u, sizeof u, "%s", url);
+  href(url, u);
   if (hi < 0) snprintf(range, sizeof range, "%lld-", lo);
   else snprintf(range, sizeof range, "%lld-%lld", lo, hi - 1);
   curl_easy_setopt(c, CURLOPT_URL, u);
@@ -211,15 +229,20 @@ typedef struct { CURL *c; buf b, s; band bd[3]; unsigned short *px; } ctx;
 
 // a band's header. it is the same on every date of one MGRS tile, band and
 // processing baseline (only kakadu's comments differ), so one read serves
-// them all, and the file's size, until a read gives it, is that file's
+// them all, and the file's size, until a read gives it, is that file's. a
+// newer file's header also carries a TLM, the offset of each of its own
+// tile-parts: that header is read for each file, and the tile-parts are
+// then read exactly where it puts them
 static const char *header(ctx *x, const char *url, band *f) {
   char key[64];
   const char *fn = strrchr(url, '/') ? strrchr(url, '/') + 1 : url;
   const char *bd = strrchr(fn, '_'), *nb = strstr(url, "_N");
   buf *b = &x->b;
   long long size = -1;
+  int own = 0, got = 0, n = 0;   // b is this file's own, read just now
   snprintf(key, sizeof key, "%.6s%.12s%.6s", fn, bd ? bd : "", nb ? nb : "");
-  if (!recall(key, b, &size)) {
+again:
+  if (!recall(own ? url : key, b, &size)) {
     const char *e = get(x->c, url, 0, 16384, b);
     if (e) return e;
     if ((size = b->size) < 0) {   // no Content-Range (file://)
@@ -231,7 +254,7 @@ static const char *header(ctx *x, const char *url, band *f) {
       curl_easy_setopt(x->c, CURLOPT_HTTPGET, 1L);
       if ((size = n) < 0) return "unknown file size";
     }
-    keep(key, b, size);
+    keep(key, b, size), own = got = 1;
   }
   unsigned char *s = memmem(b->p, b->n, "\xff\x4f\xff\x51", 4);
   unsigned char *sot = s ? memmem(s, b->p + b->n - s, "\xff\x90", 2) : 0;
@@ -252,13 +275,24 @@ static const char *header(ctx *x, const char *url, band *f) {
   f->nx = (f->w + f->tw - 1) / f->tw;
   f->nt = f->nx * ((f->h_ + f->th - 1) / f->th);
   if (f->nt > 256) return "more than 256 jp2 tiles";
-  // the main header, less any TLM: its index covers the whole file, and
-  // the decoder would seek by it past the one tile-part it is given
-  f->h.n = 0, wr((char *)s, 1, 2, &f->h);
-  for (unsigned char *q = s + 2; q + 4 <= sot; q += 2 + be(q + 2, 2))
-    if (q[1] != 0x55) wr((char *)q, 1, 2 + be(q + 2, 2), &f->h);
-  f->first = sot - b->p, f->size = size, f->d.n = 0;
+  // the main header, less the TLM: its index covers the whole file, and the
+  // decoder would seek by it past the one tile-part it is given. its
+  // entries are a tile (of st bytes, or in turn) and a length (of sp)
+  long long at = sot - b->p;
   memset(f->at, 0, sizeof f->at), memset(f->have, 0, sizeof f->have);
+  f->h.n = 0, wr((char *)s, 1, 2, &f->h);
+  for (unsigned char *q = s + 2; q + 4 <= sot; q += 2 + be(q + 2, 2)) {
+    int L = be(q + 2, 2), st = q[5] >> 4 & 3, sp = q[5] & 64 ? 4 : 2;
+    if (q[1] != 0x55) wr((char *)q, 1, 2 + L, &f->h);
+    else if (!own) { own = 1; goto again; }
+    else for (int i = 6; i + st + sp <= L + 2; i += st + sp, n++) {
+      int t = st ? (int)be(q + i, st) : n;
+      if (t < f->nt) f->at[t] = at, f->len[t] = be(q + i + st, sp);
+      at += be(q + i + st, sp);
+    }
+  }
+  if (got && n) keep(url, b, size);
+  f->first = sot - b->p, f->size = size, f->d.n = 0;
   return NULL;
 }
 
@@ -334,12 +368,19 @@ static layout *learned(const char *url, const char *band) {
 }
 
 // every tile-part in need[]: the whole codestream in one request when much
-// of the band is wanted, else one at a time
-static const char *parts(ctx *x, const char *url, band *f, const char *need) {
+// of the band is wanted, else one at a time. dry, the indexed reads are
+// only announced, bar the first if it is about to be made
+static const char *parts(ctx *x, const char *url, band *f, const char *need,
+                         int dry) {
   int miss = 0;
+  char u[4096];
+  long long done = 0;   // announced up to
+  int skip = dry == 2;
   for (int k = 0; k < f->nt; k++) miss += need[k] && !f->have[k];
   if (!miss) return NULL;
-  if (miss > f->nt / 4) {
+  if (!dry) parts(x, url, f, need, 2);
+  else href(url, u);
+  if (miss > f->nt / 4 && !dry) {
     const char *e = get(x->c, url, f->first, -1, &f->d);
     long long len;
     int k;
@@ -358,9 +399,33 @@ static const char *parts(ctx *x, const char *url, band *f, const char *need) {
     if (!l.at[k]) l.at[k] = g->at[k], l.len[k] = g->len[k];
   pthread_mutex_unlock(&lk);
   // one read takes k and the wanted tile-parts that the layout puts within
-  // 1 MB after it, as a request costs more than a MB in region
+  // 1 MB after it, as a request costs more than a MB in region; where they
+  // are known (a TLM, or a read that found them), exactly
   for (int k = 0; k < f->nt; k++) {
     if (!need[k] || f->have[k]) continue;
+    if (f->at[k] && f->at[k] >= done) {
+      long long lo = f->at[k], hi = lo + f->len[k];
+      buf *b = &x->b;
+      for (int j = k + 1; j < f->nt; j++)
+        if (need[j] && !f->have[j] && f->at[j] >= hi &&
+            f->at[j] < hi + (1 << 20))
+          hi = f->at[j] + f->len[j];
+      if (dry) {
+        if (!skip) ahead(u, lo, hi);
+        skip = 0, done = hi;
+        continue;
+      }
+      const char *e = get(x->c, url, lo, hi, b);
+      if (e) return e;
+      for (int j = k; j < f->nt; j++)
+        if (need[j] && !f->have[j] && f->at[j] >= lo &&
+            f->at[j] + f->len[j] <= b->off + (long long)b->n)
+          f->tp[j] = f->d.n, f->have[j] = 1,
+          wr((char *)b->p + f->at[j] - b->off, 1, f->len[j], &f->d);
+      if (!f->have[k]) return "short tile-part";
+      continue;
+    }
+    if (dry) continue;
     long long p = l.at[k]
       ? (long long)(l.at[k] * f->size)
       : f->first + (long long)((double)k * (f->size - f->first) / f->nt);
@@ -372,6 +437,7 @@ static const char *parts(ctx *x, const char *url, band *f, const char *need) {
     const char *e = tile(x, url, f, need, k, p, l.at[k] ? end - p : 0);
     if (e) return e;
   }
+  if (dry) return NULL;
   pthread_mutex_lock(&lk);
   if ((g = learned(url, NULL)))
     for (int k = 0; k < f->nt; k++)
@@ -491,9 +557,11 @@ static long area(const win *w) {
 // band g's values at the selected candidates (box pixel indices idx) into
 // dst, decoded into the box-sized raster over windows: each component's box
 // of them in each jp2 tile, merged while the union costs less than a second
-// decode
-static const char *side(ctx *x, const char *url, band *g, const band *f,
-                        const int *idx, int mc, int *par, const char *sel,
+// decode. the same tile-parts of band next, which a subset of these
+// candidates will want, are announced
+static const char *side(ctx *x, const char *url, const char *next, band *g,
+                        const band *f, const int *idx, int mc, int *par,
+                        const char *sel,
                         int X0, int Y0, int W, unsigned short *raster,
                         unsigned short *dst) {
   int *bb = malloc((size_t)mc * 16), nw = 0;
@@ -533,7 +601,9 @@ static const char *side(ctx *x, const char *url, band *g, const band *f,
       (g->w != f->w || g->h_ != f->h_ || g->tw != f->tw || g->ox != f->ox ||
        g->oy != f->oy))
     e = "bands on different grids";
-  if (nw && !e) e = parts(x, url, g, need);
+  if (nw && !e && next && !header(x, next, x->bd + 2))
+    parts(x, next, x->bd + 2, need, 1);
+  if (nw && !e) e = parts(x, url, g, need, 0);
   for (int i = 0; i < nw && !e; i++)
     e = dec(x, g, wn[i].k, wn[i].x0, wn[i].y0, wn[i].x1, wn[i].y1, raster, W,
             X0, Y0);
@@ -622,7 +692,7 @@ static const char *run(ctx *x, const char *url, const double *box,
       }
   }
   b12 = calloc((size_t)W * H, 2);
-  if ((e = parts(x, url, f, need))) goto out;
+  if ((e = parts(x, url, f, need, 0))) goto out;
   for (int k = 0; k < f->nt; k++)
     if (need[k] && (e = dec(x, f, k, tb[k][0], tb[k][1], tb[k][2], tb[k][3],
                             b12, W, X0, Y0)))
@@ -712,8 +782,8 @@ static const char *run(ctx *x, const char *url, const double *box,
   for (int j = 0; j < mc; j++)
     if (V(j) >= t[PEAKMIN]) ok[find(par, j)] = 1;
   for (int j = 0; j < mc; j++) sel[j] = ok[find(par, j)];
-  if ((e = side(x, u[0], x->bd + 1, f, idx, mc, par, sel, X0, Y0, W, b12,
-                v11)))
+  if ((e = side(x, u[0], u[1], x->bd + 1, f, idx, mc, par, sel, X0, Y0, W,
+                b12, v11)))
     goto out;
   memset(ok, 0, mc);
   for (int j = 0; j < mc; j++)
@@ -723,8 +793,8 @@ static const char *run(ctx *x, const char *url, const double *box,
     sel[j] = sel[j] && ok[find(par, j)] && cal(v11[j]) > t[B11MIN];
   for (int j = 0; j < mc; j++)
     ok[j] = sel[j] && cal(v11[j]) <= t[SAT] && V(j) <= t[SAT];
-  if ((e = side(x, u[1], x->bd + 2, f, idx, mc, par, ok, X0, Y0, W, b12,
-                v8a)))
+  if ((e = side(x, u[1], NULL, x->bd + 2, f, idx, mc, par, ok, X0, Y0, W,
+                b12, v8a)))
     goto out;
 
   // the spectral mask, its components, and per component the count, the sum
