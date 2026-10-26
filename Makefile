@@ -37,7 +37,25 @@ test: $(E)
 install: $(E)
 	duckdb -unsigned -c "force install '$(CURDIR)/$(E)'"
 
+# the detector for the browser, with emscripten: web/burnoff.{js,wasm} over
+# openjpeg built for wasm in ext/ojp. `uv run web/serve.py` serves the page
+OJP = ext/ojp/openjpeg-2.5.4
+wasm: web/burnoff.js
+web/burnoff.js: web/burnoff.c web/shim/curl/curl.h src/burnoff.c \
+                ext/burnoff.sql.h $(OJP)/b/bin/libopenjp2.a
+	emcc -O3 -msimd128 -Wno-constant-conversion -Iweb/shim -Iext \
+	  -I$(OJP)/src/lib/openjp2 -I$(OJP)/b/src/lib/openjp2 $< \
+	  $(OJP)/b/bin/libopenjp2.a -o $@ -sMODULARIZE -sEXPORT_ES6 \
+	  -sENVIRONMENT=worker -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB \
+	  -sEXPORTED_FUNCTIONS=_detect,_free,_malloc \
+	  -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString
+$(OJP)/b/bin/libopenjp2.a:
+	mkdir -p ext/ojp && curl -sL https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.4.tar.gz | tar xz -C ext/ojp
+	cd $(OJP) && emcmake cmake -B b -DBUILD_SHARED_LIBS=OFF \
+	  -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release \
+	  -DCMAKE_C_FLAGS="-O3 -msimd128" && cmake --build b -j8
+
 clean:
 	rm -rf ext
 
-.PHONY: test install clean
+.PHONY: test install clean wasm

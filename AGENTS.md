@@ -25,3 +25,9 @@ Keep it a detector. Archive shapes, sites and publishing are the data-desk
 ETL's (`etl/providers/data-desk/burnoff/`), in SQL over `s2_detect`'s rows.
 A tag `v*` releases a build for each platform; that ETL pins
 `burnoff-linux_amd64.duckdb_extension`.
+
+web/ builds the same detector for the browser (`make wasm`, emscripten):
+`web/burnoff.c` includes `src/burnoff.c` over a libcurl shim of synchronous
+XHRs, so it runs in a web worker. The archive buckets send no CORS headers,
+so `web/serve.py` proxies them. On one full tile (T13SFR, 2025-05-19) it
+matched native exactly, 87 flares, in about 10 s against 6 s.
