@@ -51,6 +51,7 @@ EM_JS(int, xhr, (const char *u, const char *r, int head, char **body,
   try {
     x.open(head ? 'HEAD' : 'GET', UTF8ToString(u), false);
     x.responseType = 'arraybuffer';
+    x.timeout = 60000;   // a stalled read fails, and burnoff.c retries it
     if (r) x.setRequestHeader('Range', 'bytes=' + UTF8ToString(r));
     x.send();
   } catch (e) { return -1; }
