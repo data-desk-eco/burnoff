@@ -61,7 +61,7 @@ where least(xmax, sx + 1e5) > greatest(xmin, sx)
   and least(ymax, sy) > greatest(ymin, sy - 1e5);
 
 -- the hotspots in a lon/lat geometry from t0 to t1 (today), one row each
-create or replace macro s2_flares(g, t0, t1 := current_date, max_cloud := 100,
+create or replace macro s2_hotspots(g, t0, t1 := current_date, max_cloud := 100,
                                   source := 'auto', thresholds := '')
 as table
 select id scene, datetime, ST_X(p) lon, ST_Y(p) lat, clear, max_b12,
@@ -70,7 +70,7 @@ from (
   select *, ST_Transform(ST_Point(x, y), crs, 'EPSG:4326',
                          always_xy := true) p
   from (select id, datetime, crs, sx, sy, r.clear,
-               unnest(r.flares, recursive := true)
+               unnest(r.hotspots, recursive := true)
         from (select *, s2_detect(b12, xmin, ymin, xmax, ymax, thresholds) r
               from s2_scenes(g, t0, t1 := t1, source := source)
               where cloud <= max_cloud)))

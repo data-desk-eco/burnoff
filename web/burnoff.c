@@ -1,6 +1,6 @@
 // burnoff's detector for the browser: src/burnoff.c, its duckdb functions
 // unused, over the xhr shim in shim/curl, with in c what s2_scenes and
-// s2_flares do in sql: the mgrs tiles over a lon/lat box, and a scene's
+// s2_hotspots do in sql: the mgrs tiles over a lon/lat box, and a scene's
 // hotspots over it in lon/lat. each call gives json in a buffer the caller
 // frees
 #include "../src/burnoff.c"
@@ -125,7 +125,7 @@ EMSCRIPTEN_KEEPALIVE char *detect(const char *url, double w, double s,
     if (z[2] > z[0] && z[3] > z[1]) er = run(&x, url, b, t, &r);
   }
   fprintf(out, "{\"clear\":%.6g,\"error\":", isnan(r.clear) ? -1 : r.clear);
-  fprintf(out, er ? "\"%s\",\"flares\":[" : "null,\"flares\":[", er);
+  fprintf(out, er ? "\"%s\",\"hotspots\":[" : "null,\"hotspots\":[", er);
   for (int i = 0, k = 0; !er && i < r.nd; i++) {
     det *d = &r.d[i];
     if (d->x < z[0] || d->x >= z[2] || d->y <= z[1] || d->y > z[3]) continue;

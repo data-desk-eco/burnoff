@@ -5,9 +5,9 @@ libcurl and libopenjp2, built as a DuckDB extension, and `src/burnoff.sql`,
 the macros run on load. `make test` checks that it loads, offline.
 
 - `s2_detect()` detects in one scene over a UTM box and gives the box's
-  clear share, its hotspots (`flares`) and `cells`, the obscured share of each 640 m
+  clear share, its `hotspots` and `cells`, the obscured share of each 640 m
   square: what a clear look at a site is judged by.
-- `s2_get()` is a GET for the catalogue; `s2_scenes`/`s2_flares` search
+- `s2_get()` is a GET for the catalogue; `s2_scenes`/`s2_hotspots` search
   CDSE's STAC for a geometry and detect at query time.
 
 It reads JP2 tile-parts directly, uses the L1C `MSK_CLASSI` mask, and runs
@@ -54,7 +54,7 @@ A tag `v*` releases a build for each platform; that ETL pins
 web/ builds the same detector for the browser (`make wasm`, emscripten):
 `web/burnoff.c` includes `src/burnoff.c` over a libcurl shim of
 synchronous XHRs, so it runs in a web worker, and adds in C what
-`s2_scenes` and `s2_flares` do in SQL (MGRS tiles, UTM, the zone a hotspot
+`s2_scenes` and `s2_hotspots` do in SQL (MGRS tiles, UTM, the zone a hotspot
 is reported in). `gs://` urls go through Google's JSON API, which sends
 CORS headers. A read is posted to the page before it is made (`ahead`),
 and the page fetches it, so blocking reads come from the HTTP cache. That

@@ -26,12 +26,12 @@ DuckDB with `-unsigned`, and load spatial first:
 ```sql
 load spatial;
 load burnoff;
-from s2_flares(ST_MakeEnvelope(-104.2, 31.6, -103.2, 32.6), '2025-05-01',
+from s2_hotspots(ST_MakeEnvelope(-104.2, 31.6, -103.2, 32.6), '2025-05-01',
                t1 := '2025-05-31', max_cloud := 50);
 -- around a point, from a date to today
-from s2_flares(ST_Buffer(ST_Point(-103.9, 32.1), 0.05), '2025-01-01');
+from s2_hotspots(ST_Buffer(ST_Point(-103.9, 32.1), 0.05), '2025-01-01');
 -- for each row of a table of areas
-from aois, lateral s2_flares(aois.geom, '2025-01-01');
+from aois, lateral s2_hotspots(aois.geom, '2025-01-01');
 ```
 
 ## Build
@@ -49,7 +49,7 @@ make wasm         # web/burnoff.{js,wasm}, with emscripten
 
 ## Functions
 
-- `s2_flares(g, t0, t1 := today, max_cloud := 100,
+- `s2_hotspots(g, t0, t1 := today, max_cloud := 100,
   thresholds := '')` gives one row for each hotspot in a lon/lat geometry
   from t0 to t1. A point has no area, so buffer it.
 - `s2_scenes(g, t0, t1 := today)` gives the scenes that
@@ -57,7 +57,7 @@ make wasm         # web/burnoff.{js,wasm}, with emscripten
 - `s2_detect(b12, xmin, ymin, xmax, ymax [, thresholds])` detects in one
   scene, over a box in the metres of its UTM zone. It gives the box's
   `clear` share, an `error` (a failed row does not stop the query), the
-  `flares`, and `cells`: the centre and obscured share (`cloud`: cloud, no
+  `hotspots`, and `cells`: the centre and obscured share (`cloud`: cloud, no
   data, or a background cell too cloudy to read) of each 640 m square of
   the box. A look at a site is clear when its square's `cloud` is low.
 

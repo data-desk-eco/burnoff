@@ -2,7 +2,7 @@
 // as a duckdb extension:
 //   s2_detect(b12 VARCHAR, xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE
 //             [, thresholds VARCHAR])
-//   → STRUCT(clear DOUBLE, error VARCHAR, flares STRUCT(x, y, max_b12,
+//   → STRUCT(clear DOUBLE, error VARCHAR, hotspots STRUCT(x, y, max_b12,
 //            avg_b12, peak_b11, ratio, peakedness, pixels, radiance,
 //            saturated)[], cells STRUCT(x, y, cloud)[])
 // the box is in metres of the tile's own UTM zone; b11, b8a and the
@@ -1030,7 +1030,7 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
   while (left) pthread_cond_wait(&c, &m);
   pthread_mutex_unlock(&m);
 
-  // clear, error and the `flares` list of hotspots; a null input row is a null result
+  // clear, error and the hotspots list; a null input row is a null result
   duckdb_vector vc = duckdb_struct_vector_get_child(out, 0),
                 ve = duckdb_struct_vector_get_child(out, 1),
                 vl = duckdb_struct_vector_get_child(out, 2),
@@ -1158,7 +1158,7 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
                             struct duckdb_extension_access *access) {
   const char *fn[] = {"x", "y", "max_b12", "avg_b12", "peak_b11", "ratio",
                       "peakedness", "pixels", "radiance", "saturated"};
-  const char *sn[] = {"clear", "error", "flares", "cells"},
+  const char *sn[] = {"clear", "error", "hotspots", "cells"},
              *qn[] = {"x", "y", "cloud"};
   duckdb_logical_type ft[10], st[4], qt[3], dbl = type(DUCKDB_TYPE_DOUBLE),
                       vc = type(DUCKDB_TYPE_VARCHAR);
