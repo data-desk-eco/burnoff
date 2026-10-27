@@ -1,7 +1,7 @@
 // burnoff's detector for the browser: src/burnoff.c, its duckdb functions
 // unused, over the xhr shim in shim/curl, with in c what s2_scenes and
 // s2_flares do in sql: the mgrs tiles over a lon/lat box, and a scene's
-// flares over it in lon/lat. each call gives json in a buffer the caller
+// hotspots over it in lon/lat. each call gives json in a buffer the caller
 // frees
 #include "../src/burnoff.c"
 
@@ -79,13 +79,13 @@ static double cloud(const res *r, double x, double y) {
        ? r->q[j * nx + i].cloud : -1;
 }
 
-// one scene's flares over a lon/lat box, in lon/lat, and how obscured the
+// one scene's hotspots over a lon/lat box, in lon/lat, and how obscured the
 // 640 m square of each of np points (lon, lat pairs) was, or -1 unread. the
-// zone a flare is reported in is the box within the tile's own 100 km
-// square, so no flare of a pass is found twice, and part of parts of its
+// zone a hotspot is reported in is the box within the tile's own 100 km
+// square, so no hotspot of a pass is found twice, and part of parts of its
 // 6.4 km background cell columns, so workers can share it. a detection is
 // one component of at most max_pixels, so the zone is read with that many
-// pixels more on every side, rounded out to whole cells: a flare is then
+// pixels more on every side, rounded out to whole cells: a hotspot is then
 // what a read of the whole tile finds, wherever the zone's edges fall
 EMSCRIPTEN_KEEPALIVE char *detect(const char *url, double w, double s,
                                   double e, double n, int part, int parts,

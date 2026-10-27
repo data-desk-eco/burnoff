@@ -1,8 +1,8 @@
 # burnoff
 
-Burnoff is a DuckDB extension for detecting gas flares in Sentinel-2 L1C
-imagery. It reads the JPEG2000 archive directly, so one query searches the
-CDSE catalogue and detects the flares in a region. Each flare comes with its
+Burnoff is a DuckDB extension for detecting hotspots, such as gas
+flares, in Sentinel-2 L1C imagery. It reads the JPEG2000 archive directly, so one query searches the
+CDSE catalogue and detects the hotspots in a region. Each hotspot comes with its
 position, brightness and radiance, and each scene with how clearly it saw
 the region.
 
@@ -50,7 +50,7 @@ make wasm         # web/burnoff.{js,wasm}, with emscripten
 ## Functions
 
 - `s2_flares(g, t0, t1 := today, max_cloud := 100,
-  thresholds := '')` gives one row for each flare in a lon/lat geometry
+  thresholds := '')` gives one row for each hotspot in a lon/lat geometry
   from t0 to t1. A point has no area, so buffer it.
 - `s2_scenes(g, t0, t1 := today)` gives the scenes that
   the search finds, with the box to read in each.
@@ -77,7 +77,7 @@ turns the test off.
 answers two calls:
 
 - `tiles(points)` names the MGRS tile of each lon/lat point.
-- `detect(url, w, s, e, n, part, parts, points)` gives one scene's flares
+- `detect(url, w, s, e, n, part, parts, points)` gives one scene's hotspots
   over a lon/lat box, in lon/lat, and the obscured share of the 640 m
   square under each point. `part` of `parts` reads that share of the box's
   6.4 km cell columns, so several workers can share one scene.
@@ -95,4 +95,4 @@ The Aerial map (`data-desk-eco/aerial`) uses it for a live layer.
 
 - burnoff needs baseline N0400 or later, which has a raster cloud mask.
 - A search that fills the catalogue's 1000-scene page stops the query.
-- Flares in an overlap of two UTM zones are found in both.
+- Hotspots in an overlap of two UTM zones are found in both.

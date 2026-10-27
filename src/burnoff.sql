@@ -3,7 +3,7 @@
 -- every L1C scene over a lon/lat geometry's bounds from t0 to t1 (today), with the box to
 -- read in the scene's UTM metres: its MGRS 100 km square (west and north
 -- edges sx, sy), widened by 2 km and rounded out to the tile's 6.4 km
--- background cells, so no flare of a pass is found twice. each search
+-- background cells, so no hotspot of a pass is found twice. each search
 -- spans the days that should half fill a 1000-scene page; a full page
 -- fails the query rather than lose scenes
 create or replace macro s2_days(g) as
@@ -60,7 +60,7 @@ from (
 where least(xmax, sx + 1e5) > greatest(xmin, sx)
   and least(ymax, sy) > greatest(ymin, sy - 1e5);
 
--- the flares in a lon/lat geometry from t0 to t1 (today), one row each
+-- the hotspots in a lon/lat geometry from t0 to t1 (today), one row each
 create or replace macro s2_flares(g, t0, t1 := current_date, max_cloud := 100,
                                   source := 'auto', thresholds := '')
 as table

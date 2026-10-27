@@ -1,4 +1,4 @@
-// burnoff: sentinel-2 l1c swir flare detection, straight off the jp2 archive,
+// burnoff: sentinel-2 l1c swir hotspot detection, straight off the jp2 archive,
 // as a duckdb extension:
 //   s2_detect(b12 VARCHAR, xmin DOUBLE, ymin DOUBLE, xmax DOUBLE, ymax DOUBLE
 //             [, thresholds VARCHAR])
@@ -22,12 +22,12 @@
 // - a tile-part behind the file's own main header is a complete codestream,
 //   and openjpeg decodes just a window of it. decoding is nearly all the
 //   cost, so b12 is decoded only over clear background cells, and b11 and
-//   b8a only over windows around candidate flares.
+//   b8a only over windows around candidate hotspots.
 // - the 60 m cloud mask (a few KB) is read first: jp2 tiles under cloud are
 //   never fetched. headers and masks are cached across rows, so many sites
 //   on one scene read them once.
 //
-// a compact-source flare detector, run over the box in one pass:
+// a compact-source hotspot detector, run over the box in one pass:
 // a background median per 320 px cell, the spectral mask, its 4-connected
 // components, the morphological gates, the hot core grown from each peak
 // and a test that the peak is heat rather than reflected sunlight.
@@ -639,7 +639,7 @@ static const char *side(ctx *x, const char *url, const char *next, band *g,
   return e;
 }
 
-// one job: the flares in a box of one scene, and its clear-sky share
+// one job: the hotspots in a box of one scene, and its clear-sky share
 static const char *run(ctx *x, const char *url, const double *box,
                        const double *t, res *r) {
   band *f = x->bd;
@@ -1030,7 +1030,7 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
   while (left) pthread_cond_wait(&c, &m);
   pthread_mutex_unlock(&m);
 
-  // clear, error and the flares list; a null input row is a null result
+  // clear, error and the `flares` list of hotspots; a null input row is a null result
   duckdb_vector vc = duckdb_struct_vector_get_child(out, 0),
                 ve = duckdb_struct_vector_get_child(out, 1),
                 vl = duckdb_struct_vector_get_child(out, 2),
