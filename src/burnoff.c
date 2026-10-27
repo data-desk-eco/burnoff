@@ -29,7 +29,8 @@
 //
 // a compact-source flare detector, run over the box in one pass:
 // a background median per 320 px cell, the spectral mask, its 4-connected
-// components, the morphological gates and the hot core grown from each peak.
+// components, the morphological gates, the hot core grown from each peak
+// and a test that the peak is heat rather than reflected sunlight.
 #define _GNU_SOURCE
 #define DUCKDB_EXTENSION_NAME burnoff
 #define DUCKDB_EXTENSION_API_VERSION_MAJOR 1
@@ -54,11 +55,12 @@ DUCKDB_EXTENSION_EXTERN
 static const char *TK[] = {"b12_min", "b11_min", "peak_b12_min",
   "contrast_ratio", "background_floor", "peakedness_min", "saturation",
   "hot_floor", "max_pixels", "large_pixels", "large_b12_min",
-  "warm_fraction", "warm_max_pixels", "single_pixel_min", "max_cloud_local"};
+  "warm_fraction", "warm_max_pixels", "single_pixel_min", "max_cloud_local",
+  "nir_excess"};
 static const double TD[] = {.30, .20, .50, 3, .15, 1.15, 1, .50, 80, 30, .70,
-  .5, 100, .65, .75};
+  .5, 100, .65, .75, .1};
 enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
-  LARGEPX, LARGEMIN, WARMF, WARMMAX, SINGLE, MAXCLOUD, NT };
+  LARGEPX, LARGEMIN, WARMF, WARMMAX, SINGLE, MAXCLOUD, NIR, NT };
 #define CELL 320   // background cell: a quarter of a 640 px jp2 tile, or
                    // across 512 px tiles from baseline 05.13
 // a jp2 decode costs ~4 ms however small its window (the tile's packet
@@ -160,6 +162,11 @@ static const char *get(CURL *c, const char *url, long long lo, long long hi,
     b->n = 0, b->size = -1, b->wait = 0;
     CURLcode e = curl_easy_perform(c);
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
+    // a body short of its range, as a browser's cache can hand over while
+    // another read of the file is in flight, retries as a 5xx does
+    if (!e && code == 206 && b->size > 0 &&
+        lo + (long long)b->n < (hi < 0 ? b->size : MIN(hi, b->size)))
+      code = 500;
     if (!e && (code == 416 || (code == 404 && lo))) return PAST;
     if (!e && code < 400) {
       b->off = code == 200 ? 0 : lo;   // a server that ignored the range
@@ -556,16 +563,30 @@ static long area(const win *w) {
   return (long)(w->x1 - w->x0) * (w->y1 - w->y0);
 }
 
+// the brightest data pixel of raster within RING of candidate j that is not
+// a candidate: its surroundings at their brightest, in dn, or 0
+#define RING 3
+static int ring(const unsigned short *raster, const int *idx, int mc, int j,
+                int W, int H) {
+  int x = idx[j] % W, y = idx[j] / W, m = 0;
+  for (int v = MAX(y - RING, 0); v <= MIN(y + RING, H - 1); v++)
+    for (int u = MAX(x - RING, 0); u <= MIN(x + RING, W - 1); u++)
+      if (raster[v * W + u] > m && at(idx, mc, v * W + u) < 0)
+        m = raster[v * W + u];
+  return m;
+}
+
 // band g's values at the selected candidates (box pixel indices idx) into
 // dst, decoded into the box-sized raster over windows: each component's box
 // of them in each jp2 tile, merged while the union costs less than a second
-// decode. the same tile-parts of band next, which a subset of these
-// candidates will want, are announced
+// decode. each box is RING wider, so that with bg each candidate's ring()
+// is decoded too. the same tile-parts of band next, which a subset of
+// these candidates will want, are announced
 static const char *side(ctx *x, const char *url, const char *next, band *g,
                         const band *f, const int *idx, int mc, int *par,
-                        const char *sel,
-                        int X0, int Y0, int W, unsigned short *raster,
-                        unsigned short *dst) {
+                        const char *sel, int X0, int Y0, int W, int H,
+                        unsigned short *raster, unsigned short *dst,
+                        unsigned short *bg) {
   int *bb = malloc((size_t)mc * 16), nw = 0;
   char need[256] = {0};
   const char *e = NULL;
@@ -575,8 +596,10 @@ static const char *side(ctx *x, const char *url, const char *next, band *g,
   for (int j = 0; j < mc; j++) {
     int *b = bb + 4 * find(par, j), gx = X0 + idx[j] % W, gy = Y0 + idx[j] / W;
     if (!sel[j]) continue;
-    b[0] = MIN(b[0], gx), b[1] = MIN(b[1], gy);
-    b[2] = MAX(b[2], gx + 1), b[3] = MAX(b[3], gy + 1);
+    b[0] = MIN(b[0], MAX(gx - RING, X0));
+    b[1] = MIN(b[1], MAX(gy - RING, Y0));
+    b[2] = MAX(b[2], MIN(gx + RING + 1, X0 + W));
+    b[3] = MAX(b[3], MIN(gy + RING + 1, Y0 + H));
   }
   for (int l = 0, cap = 0; l < mc; l++) {
     int *b = bb + 4 * l;
@@ -610,7 +633,8 @@ static const char *side(ctx *x, const char *url, const char *next, band *g,
     e = dec(x, g, wn[i].k, wn[i].x0, wn[i].y0, wn[i].x1, wn[i].y1, raster, W,
             X0, Y0);
   for (int j = 0; j < mc && !e; j++)
-    if (sel[j]) dst[j] = raster[idx[j]];
+    if (sel[j] && (dst[j] = raster[idx[j]], bg))
+      bg[j] = ring(raster, idx, mc, j, W, H);
   free(wn), drop(&g->d);
   return e;
 }
@@ -626,7 +650,7 @@ static const char *run(ctx *x, const char *url, const double *box,
                 swap(url, "B12.jp2", "B8A.jp2"),
                 swap(url, "/IMG_DATA/", "/QI_DATA/MSK_CLASSI_B00.jp2")};
   unsigned short *b12 = NULL, *m = NULL, *v12 = NULL, *v11 = NULL,
-                 *v8a = NULL;
+                 *v8a = NULL, *g12 = NULL, *g8a = NULL;
   int *cnt = NULL, *cld = NULL, *idx = NULL, *par = NULL, *pq = NULL;
   double *ct = NULL, *bgm = NULL;
   char need[256] = {0}, *ok = NULL, *sel = NULL;
@@ -771,9 +795,10 @@ static const char *run(ctx *x, const char *url, const double *box,
   // components of the candidates; only those holding a possible peak need
   // b11. a component can hold a detection only if one pixel is both a
   // possible peak and bright in b11, and b8a then decides those of its
-  // pixels that saturation does not
+  // pixels that saturation does not, and how hot its peak is
   par = malloc(mc * 4), ok = calloc(mc, 1), sel = malloc(mc);
-  v11 = calloc(mc, 2), v8a = calloc(mc, 2);
+  v11 = calloc(mc, 2), v8a = calloc(mc, 2), g12 = calloc(mc, 2);
+  g8a = calloc(mc, 2);
   for (int j = 0; j < mc; j++) {
     int i = idx[j], n;
     par[j] = j;
@@ -783,9 +808,10 @@ static const char *run(ctx *x, const char *url, const double *box,
   }
   for (int j = 0; j < mc; j++)
     if (V(j) >= t[PEAKMIN]) ok[find(par, j)] = 1;
-  for (int j = 0; j < mc; j++) sel[j] = ok[find(par, j)];
+  for (int j = 0; j < mc; j++)
+    if ((sel[j] = ok[find(par, j)])) g12[j] = ring(b12, idx, mc, j, W, H);
   if ((e = side(x, u[0], u[1], x->bd + 1, f, idx, mc, par, sel, X0, Y0, W,
-                b12, v11)))
+                H, b12, v11, NULL)))
     goto out;
   memset(ok, 0, mc);
   for (int j = 0; j < mc; j++)
@@ -793,17 +819,15 @@ static const char *run(ctx *x, const char *url, const double *box,
       ok[find(par, j)] = 1;
   for (int j = 0; j < mc; j++)
     sel[j] = sel[j] && ok[find(par, j)] && cal(v11[j]) > t[B11MIN];
-  for (int j = 0; j < mc; j++)
-    ok[j] = sel[j] && cal(v11[j]) <= t[SAT] && V(j) <= t[SAT];
-  if ((e = side(x, u[1], NULL, x->bd + 2, f, idx, mc, par, ok, X0, Y0, W,
-                b12, v8a)))
+  if ((e = side(x, u[1], NULL, x->bd + 2, f, idx, mc, par, sel, X0, Y0, W,
+                H, b12, v8a, g8a)))
     goto out;
 
   // the spectral mask, its components, and per component the count, the sum
   // and the lowest-index peak
   for (int j = 0; j < mc; j++) {
     double a = cal(v11[j]), c = cal(v8a[j]);
-    ok[j] = sel[j] && (!ok[j] || (a + c > .01 && a > c));
+    ok[j] = sel[j] && (a > t[SAT] || V(j) > t[SAT] || (a + c > .01 && a > c));
   }
   for (int j = 0; j < mc; j++) {
     int i = idx[j], n;
@@ -831,6 +855,14 @@ static const char *run(ctx *x, const char *url, const double *box,
     if (np > t[LARGEPX] && p < t[LARGEMIN]) continue;
     if (n_[l] > 1 && p < t[PEAKED] * avg && avg < t[SAT]) continue;
     if (n_[l] == 1 && p < t[SINGLE]) continue;
+    // heat, not light: the peak's rise in b8a over its surroundings at
+    // their brightest is under nir_excess of its rise in b12. a fire
+    // barely lifts b8a (3% of b12 at 1800 K, in reflectance); sunlight off
+    // a roof, glass or a car lifts all three bands alike. a solar panel,
+    // whose silicon absorbs b8a, passes
+    if (cal(v8a[pk[l]]) - cal(g8a[pk[l]]) >=
+        t[NIR] * (p - cal(g12[pk[l]])))
+      continue;
     // the hot core: contiguous from the peak within this component, above
     // max(peak·warm_fraction, hot_floor), capped at warm_max_pixels
     // and its integrated excess radiance, Σ(b12 − the cell's background)
@@ -871,7 +903,8 @@ static const char *run(ctx *x, const char *url, const double *box,
   free(n_), free(pk), free(sum), free(vis);
 out:
   free(u[0]), free(u[1]), free(u[2]), free(b12), free(m), free(v12);
-  free(v11), free(v8a), free(cnt), free(cld), free(idx), free(par), free(pq);
+  free(v11), free(v8a), free(g12), free(g8a), free(cnt), free(cld);
+  free(idx), free(par), free(pq);
   free(ct), free(bgm), free(ok), free(sel);
   // a whole codestream is tens of MB: nothing outlives the band's use
   for (int i = 0; i < 3; i++) drop(&x->bd[i].d);

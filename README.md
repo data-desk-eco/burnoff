@@ -66,6 +66,10 @@ An optional `source` is `'eodata'` (CDSE's S3, which needs `AWS_ACCESS_KEY_ID`,
 or `'gcp'` (Google's public mirror, with no credentials). The default, `'auto'`, uses
 eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
 `thresholds` is `'name=value,...'` over the defaults in `src/burnoff.c`.
+One of them, `nir_excess` (0.1), drops a peak whose rise in B8A over its
+surroundings is a tenth or more of its rise in B12: sunlight reflected
+off roofs, glass and tanks, which a fire does not give. A large value
+turns the test off.
 
 ## In the browser
 
