@@ -46,6 +46,13 @@ but only under a summer sun (Aerial's live layer hides a site lit only in
 summer). Bright roofs with a highlight brighter in B12 than B11 (the
 Astrodome) are also left.
 
+`web/j2k.wgsl` is the jpeg2000 tier-1 and inverse 5/3 dwt for the gpu, one
+module for any host; `web/gpu.js` runs it in webgpu from the cpu's tier-2
+code-block records (their layout and the bindings are in `j2k.wgsl`'s head).
+It must stay bit-exact with openjpeg: check every coefficient and sample of
+whole band-scenes, 8x8 blocks (to N0512) and 32x32 (from N0513), against
+openjpeg's own.
+
 Keep it a detector. Archive shapes, sites and publishing are the data-desk
 ETL's (`etl/providers/data-desk/burnoff/`), in SQL over `s2_detect`'s rows.
 A tag `v*` releases a build for each platform; that ETL pins
