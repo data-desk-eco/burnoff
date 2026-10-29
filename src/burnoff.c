@@ -22,8 +22,8 @@
 //   every tile-part, and each tile-part header a PLT, the length of each of
 //   its packets. with one quality layer a packet (one precinct of one
 //   resolution) stands alone, so only the packets a decode window needs are
-//   read and the rest are decoded as empty ones, which openjpeg skips as it
-//   skips the real ones: bit-exact. older files carry no TLM: a guess at
+//   read, and j2k.c, burnoff's own decoder, reads no others. older files
+//   carry no TLM: a guess at
 //   tile k's offset plus a scan for its SOT marker (0xff90 never occurs
 //   inside entropy-coded data) finds it, a learned per-MGRS layout makes
 //   the guess right first time, and its tile-part is read whole.
@@ -40,7 +40,6 @@
 // and a test that the peak is heat rather than reflected sunlight.
 #define _GNU_SOURCE
 #include <math.h>
-#include <openjpeg.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,6 +47,7 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include "j2k.c"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -64,9 +64,9 @@ enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
   LARGEPX, LARGEMIN, WARMF, WARMMAX, SINGLE, MAXCLOUD, NIR, NT };
 #define CELL 320   // background cell: a quarter of a 640 px jp2 tile, or
                    // across 512 px tiles from baseline 05.13
-// a jp2 decode costs ~4 ms however small its window (the tile's packet
-// headers are parsed whole), about as much as 2^14 more pixels
-#define FIXED (1 << 14)
+// a jp2 decode costs ~0.2 ms however small its window (the packets it
+// needs and the code-blocks those reach), as much as 2^11 more pixels
+#define FIXED (1 << 11)
 #define SUB 32     // a cloud square: 640 m, a tenth of a background cell
 #define NP 64      // packets a tile-part may hold: 40 in a 640 px tile
 // reads closer than this are one: a request costs about as much
@@ -218,11 +218,10 @@ static unsigned be(const unsigned char *p, int n) {
 // one band file: its main header, geometry and coding, and where its
 // tile-parts are
 typedef struct {
-  buf h;                       // main header less TLM, SOC to first SOT
+  j2k j;                       // its main header, parsed
   long long first, size;       // first SOT offset, file size
   int w, h_, tw, th, nx, nt;   // image, tile, tiles across, tile count
   int ok, tlm, round;          // parsed, indexed, search rounds made
-  int nr, mg, pp[33];          // resolutions, synthesis support, precincts
   double ox, oy, res;          // upper-left corner and pixel size, metres
   long long at[256], len[256]; // tile-parts located in the file, 0 = unknown
 } band;
@@ -243,7 +242,8 @@ typedef struct { int k, x0, y0, x1, y1; } win;   // [x0,x1)×[y0,y1) of tile k
 // o at row stride ow from origin ox, oy. a stage queues all of a band's
 // decodes at once, for a host to run as one batch if it can
 typedef struct {
-  int b, k, x0, y0, x1, y1, np, n[NP], done;
+  int b, k, x0, y0, x1, y1, np, done;
+  uint32_t n[NP];
   const unsigned char *p[NP];
   unsigned short *o;
   int ow, ox, oy;
@@ -266,7 +266,7 @@ typedef struct job {
   win *wn;                        // the windows of the band at hand
   buf s, mk;                      // scratch, the mask
   int X0, Y0, X1, Y1, W, H, mc, cx0, cy0, cw, ch, gx0, gy0, ncx, nc;
-  unsigned short *b12, *m, *v12, *v11, *v8a, *g12, *g8a, *px;
+  unsigned short *b12, *m, *v12, *v11, *v8a, *g12, *g8a;
   int *cnt, *cld, *idx, *par;
   double *ct, *bgm;
   char *ok, *sel;
@@ -303,39 +303,14 @@ static void forget(job *j, const char *url) {
   j->nr = n;
 }
 
-// the packets openjpeg reads to decode [x0,x1)×[y0,y1) of tile k, bit i for
-// packet i (of one layer and component, in lrcp order), and their number
-// in *n: those of a precinct within mg coefficients of the window in one
-// of its subbands (the 5/3 synthesis support), as opj_t2_decode_packets
-// skips the rest (opj_tcd_is_subband_area_of_interest, tcd.c)
-#define CD(a, n) (-(-(a) >> (n)))   // ceil(a / 2^n)
+// the packets that decoding [x0,x1)×[y0,y1) of tile k reads (j2k.c's
+// need), bit i for packet i, and their number in *n
 static uint64_t need(const band *f, int k, int x0, int y0, int x1, int y1,
                      int *n) {
-  int t[4] = {k % f->nx * f->tw, k / f->nx * f->th}, w[4] = {x0, y0, x1, y1};
+  char c[NP];
   uint64_t m = 0;
-  t[2] = MIN(t[0] + f->tw, f->w), t[3] = MIN(t[1] + f->th, f->h_), *n = 0;
-  for (int r = 0; r < f->nr; r++) {
-    // the resolution's precincts, c across and down, from s in its bands
-    int l = f->nr - 1 - r, nb = r ? l + 1 : l, e[2], s[2], c[2];
-    for (int a = 0; a < 2; a++) {
-      int r0 = CD(t[a], l), r1 = CD(t[a + 2], l);
-      e[a] = f->pp[r] >> 4 * a & 15;
-      c[a] = r0 == r1 ? 0 : CD(r1, e[a]) - (r0 >> e[a]);
-      s[a] = CD(r0 >> e[a] << e[a], !!r), e[a] -= !!r;
-    }
-    for (int p = 0; p < c[0] * c[1]; p++, ++*n)
-      for (int b = !!r, hit = 1; b < (r ? 4 : 1); b++, hit = 1) {
-        for (int a = 0; a < 2; a++) {
-          int o = (a ? b >> 1 : b & 1) << nb >> 1;   // the band's offset
-          int q = s[a] + ((a ? p / c[0] : p % c[0]) << e[a]);
-          int p0 = MAX(q, CD(t[a] - o, nb)), p1 = MIN(q + (1 << e[a]),
-                                                      CD(t[a + 2] - o, nb));
-          hit &= p0 < MAX(CD(w[a + 2] - o, nb), 0) + f->mg &&
-                 p1 > MAX(MAX(CD(w[a] - o, nb), 0) - f->mg, 0);
-        }
-        if (hit) { m |= *n < 64 ? 1ull << *n : 0; break; }
-      }
-  }
+  *n = j2k_need(&f->j, k, x0, y0, x1, y1, c);
+  for (int i = 0; i < *n; i++) m |= (uint64_t)c[i] << i;
   return m;
 }
 
@@ -351,8 +326,7 @@ static const char *header(job *j, const char *url, band *f) {
   const char *bd = strrchr(fn, '_'), *nb = strstr(url, "_N");
   buf *b = &j->s;
   long long size = -1;
-  int own = 0, got_ = 0, n = 0, bad = 0;   // b is this file's own
-  unsigned char *c = NULL;
+  int own = 0, got_ = 0, n = 0;   // b is this file's own
   if (f->ok) return NULL;
   snprintf(key, sizeof key, "%.6s%.12s%.6s", fn, bd ? bd : "", nb ? nb : "");
 again:
@@ -384,32 +358,24 @@ again:
   f->nx = (f->w + f->tw - 1) / f->tw;
   f->nt = f->nx * ((f->h_ + f->th - 1) / f->th);
   if (f->nt > 256) return "more than 256 jp2 tiles";
-  // the main header, less the TLM: its index covers the whole file, and the
-  // decoder would seek by it past the one tile-part it is given. its
-  // entries are a tile (of st bytes, or in turn) and a length (of sp)
+  // the coding, which j2k.c refuses unless packets stand alone (one layer,
+  // no SOP or EPH, ...), and the TLM, whose entries are a tile (of st bytes,
+  // or in turn) and a length (of sp)
   long long at = sot - b->p;
+  const char *e = j2k_main(&f->j, s, sot - s);
+  if (e) return e;
+  if (f->j.mp > NP) return "too many packets";
   memset(f->at, 0, sizeof f->at);
-  f->h.n = 0, wr((char *)s, 1, 2, &f->h);
   for (unsigned char *q = s + 2; q + 4 <= sot; q += 2 + be(q + 2, 2)) {
     int L = be(q + 2, 2), st = q[5] >> 4 & 3, sp = q[5] & 64 ? 4 : 2;
-    c = q[1] == 0x52 ? q : c;
-    bad |= q[1] == 0x53 || q[1] == 0x5f || q[1] == 0x60;   // COC, POC, PPM
-    if (q[1] != 0x55) wr((char *)q, 1, 2 + L, &f->h);
-    else if (!own) { own = 1; goto again; }
+    if (q[1] != 0x55) continue;
+    if (!own) { own = 1; goto again; }
     else for (int i = 6; i + st + sp <= L + 2; i += st + sp, n++) {
       int t = st ? (int)be(q + i, st) : n;
       if (t < f->nt) f->at[t] = at, f->len[t] = be(q + i + st, sp);
       at += be(q + i + st, sp);
     }
   }
-  // packets that stand alone, so that one can be left unread: one layer,
-  // by resolution, no SOP or EPH markers, and one precinct grid
-  if (bad || !c || c[4] & 6 || c[5] > 1 || be(c + 6, 2) != 1 || c[9] > 32)
-    return "not one layer of lrcp packets";
-  f->nr = c[9] + 1, f->mg = c[13] ? 2 : 3;
-  for (int r = 0; r < f->nr; r++) f->pp[r] = c[4] & 1 ? c[14 + r] : 0xff;
-  need(f, 0, 0, 0, 0, 0, &bad);
-  if (bad > NP) return "too many packets";
   if (got_ && n) keep(url, b, size);
   f->first = sot - b->p, f->size = size, f->tlm = n > 0, f->ok = 1;
   return NULL;
@@ -422,28 +388,24 @@ static int sot(const unsigned char *p, int nt, int *k, long long *len) {
   return *k < nt && !p[10] && p[11] <= 1 && *len >= 14;
 }
 
-// tile-part k's packets, from the PLT in its header (512 bytes hold a PLT
-// of NP lengths): their offsets o in the file and lengths l, and their
-// number; 0 while that header is not in hand, -1 if it is not just a PLT
-// or its lengths do not fill the tile-part
-static int pk(job *j, const char *url, band *f, int k, long long *o, int *l) {
-  long long a = f->at[k], s = MIN(f->len[k], 512), v = 0, len, z;
+// tile-part k's packets, by j2k.c from the PLT in its header (512 bytes
+// hold one of NP lengths), or with the tile-part in hand by its packet
+// headers: their offsets o in the file and lengths l, and their number; 0
+// while that header is not in hand, -1 if it is malformed or its packets
+// do not fill it
+static int pk(job *j, const char *url, band *f, int k, long long *o,
+              uint32_t *l) {
+  long long a = f->at[k], s = f->len[k];
   rd *r = got(j, url, a, a + s);
-  const unsigned char *p = r ? r->b.p + (a - r->lo) : NULL;
-  int n = 0, i = 12, t;
-  if (!p) return 0;
-  if (!sot(p, f->nt, &t, &len) || t != k || len != f->len[k]) return -1;
-  for (; i + 5 <= s && p[i] == 0xff && p[i + 1] == 0x58;
-       i += 2 + be(p + i + 2, 2))
-    for (int q = i + 5; q < MIN(i + 2 + be(p + i + 2, 2), s); q++)
-      if (v = v << 7 | (p[q] & 127), !(p[q] & 128)) {
-        if (n < NP) l[n] = v;
-        n++, v = 0;
-      }
-  if (i + 2 > s || p[i] != 0xff || p[i + 1] != 0x93 || n > NP) return -1;
-  z = a + i + 2;
-  for (int q = 0; q < n; q++) o[q] = z, z += l[q];
-  return z == a + len ? n : -1;
+  uint32_t off[NP];
+  size_t len;
+  int t, n = j2k_need(&f->j, k, 0, 0, 0, 0, NULL);
+  if (!r && !(r = got(j, url, a, a + (s = MIN(s, 512))))) return 0;
+  if (j2k_part(&f->j, r->b.p + (a - r->lo), s, &t, &len, off, l) || t != k ||
+      (long long)len != f->len[k] || off[n - 1] + l[n - 1] != len)
+    return -1;
+  for (int i = 0; i < n; i++) o[i] = a + off[i];
+  return n;
 }
 
 // without a TLM: the tile-parts in each read of url not yet scanned, by
@@ -543,7 +505,8 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
                          int n) {
   uint64_t m[256] = {0};
   long long o[NP], *q, a, b;
-  int l[NP], c, nq = 0, miss = 0, look = 0;
+  uint32_t l[NP];
+  int c, nq = 0, miss = 0, look = 0;
   const char *e = f->tlm ? NULL : scan(j, url, f);
   layout L = {0}, *g;
   if (e) return e;
@@ -591,80 +554,34 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
   return NULL;
 }
 
-typedef struct { const unsigned char *p; size_t n, i; } mem;
-static OPJ_SIZE_T mr(void *d, OPJ_SIZE_T n, void *u) {
-  mem *m = u;
-  if (m->i >= m->n) return (OPJ_SIZE_T)-1;
-  n = n < m->n - m->i ? n : m->n - m->i;
-  memcpy(d, m->p + m->i, n);
-  return m->i += n, n;
-}
-static OPJ_OFF_T ms(OPJ_OFF_T n, void *u) {
-  mem *m = u;
-  n = n < (OPJ_OFF_T)(m->n - m->i) ? n : (OPJ_OFF_T)(m->n - m->i);
-  return m->i += n, n;
-}
-static OPJ_BOOL mk(OPJ_OFF_T n, void *u) {
-  mem *m = u;
-  return n <= (OPJ_OFF_T)m->n ? (m->i = n, 1) : 0;
-}
-
 // rows in flight and cores: a large decode with cores to spare, as when
 // the last rows of a query run alone, spreads its code-blocks over them
 static int busy, ncpu;
 
-// decode window [x0,x1)×[y0,y1) of every component into out, comp-major
-static const char *decode(const buf *s, OPJ_CODEC_FORMAT fmt, int x0, int y0,
-                          int x1, int y1, int nc, unsigned short *out) {
-  opj_codec_t *c = opj_create_decompress(fmt);
-  opj_stream_t *st = opj_stream_default_create(1);
-  opj_dparameters_t d;
-  opj_image_t *im = NULL;
-  mem m = {s->p, s->n, 0};
-  opj_set_default_decoder_parameters(&d);
-  opj_stream_set_user_data(st, &m, NULL);
-  opj_stream_set_user_data_length(st, s->n);
-  opj_stream_set_read_function(st, mr);
-  opj_stream_set_skip_function(st, ms);
-  opj_stream_set_seek_function(st, mk);
-  int n = ncpu / MAX(__atomic_load_n(&busy, __ATOMIC_RELAXED), 1);
-  int ok = opj_setup_decoder(c, &d) &&
-           (n < 2 || (x1 - x0) * (y1 - y0) < 1 << 16 ||
-            opj_codec_set_threads(c, n)) &&
-           opj_read_header(st, c, &im) &&
-           (int)im->numcomps >= nc &&
-           opj_set_decode_area(c, im, x0, y0, x1, y1) &&
-           opj_decode(c, st, im) && opj_end_decompress(c, st);
-  for (int k = 0, n = (x1 - x0) * (y1 - y0); ok && k < nc; k++)
-    if (im->comps[k].w * im->comps[k].h != (unsigned)n) ok = 0;
-    else for (int i = 0; i < n; i++) out[k * n + i] = im->comps[k].data[i];
-  opj_image_destroy(im), opj_stream_destroy(st), opj_destroy_codec(c);
-  return ok ? NULL : "jp2 decode failed";
+// one decode, by j2k.c from its packets, unread ones NULL: the one place
+// another decoder goes
+static const char *dodec(job *j, dj *d) {
+  const char *e = j2k_tile(&j->bd[d->b].j, d->k, d->p, d->n, d->x0, d->y0,
+                           d->x1, d->y1, 1, d->o + (size_t)(d->y0 - d->oy) *
+                                            d->ow + d->x0 - d->ox, d->ow, 0);
+  return d->done = 1, e;
 }
 
-// one decode, by openjpeg: the main header, then tile k's tile-part rebuilt
-// from its packets, an unread one as an empty packet (a 0 bit, padded),
-// which openjpeg skips as it would the real one. the one place another
-// decoder goes
-static const char *dodec(job *j, dj *d) {
-  long long n = 14;
-  int w = d->x1 - d->x0, h = d->y1 - d->y0;
-  buf *s = &j->s;
-  for (int i = 0; i < d->np; i++) n += d->p[i] ? d->n[i] : 1;
-  unsigned char sot[14] = {0xff, 0x90, 0, 10, d->k >> 8, d->k, n >> 24,
-                           n >> 16, n >> 8, n, 0, 1, 0xff, 0x93};
-  s->n = 0, wr((char *)j->bd[d->b].h.p, 1, j->bd[d->b].h.n, s);
-  wr((char *)sot, 1, 14, s);
-  for (int i = 0; i < d->np; i++)
-    wr(d->p[i] ? (char *)d->p[i] : "", 1, d->p[i] ? d->n[i] : 1, s);
-  wr("\xff\xd9", 1, 2, s);
-  j->px = realloc(j->px, (size_t)w * h * 2);
-  const char *e = decode(s, OPJ_CODEC_J2K, d->x0, d->y0, d->x1, d->y1, 1,
-                         j->px);
-  for (int y = 0; !e && y < h; y++)
-    memcpy(d->o + (size_t)(d->y0 + y - d->oy) * d->ow + d->x0 - d->ox,
-           j->px + (size_t)y * w, w * 2);
-  return d->done = 1, e;
+// a stage's queued decodes as one batch for a gpu (src/gpu.c, web/gpu.js):
+// their code-blocks' tier-2 records over one byte buffer, in o, and their
+// rows of the kernels' tile table, 8 int32 each in tl: the tile's rect,
+// then the window
+const char *batch(job *j, j2k_cbs *o, int32_t *tl) {
+  const char *e = NULL;
+  for (int i = 0; i < j->nq && !e; i++) {
+    dj *d = &j->dq[i];
+    j2k_box t = tbox(&j->bd[d->b].j, d->k);
+    int r[8] = {t.x0, t.y0, t.x1, t.y1, d->x0, d->y0, d->x1, d->y1};
+    memcpy(tl + 8 * i, r, sizeof r);
+    e = j2k_t2(&j->bd[d->b].j, d->k, d->p, d->n, d->x0, d->y0, d->x1, d->y1,
+               i, o);
+  }
+  return e;
 }
 
 // the decodes of windows w[0..n) of band b, into o: each window with the
@@ -677,7 +594,7 @@ static const char *decs(job *j, const char *url, int b, const win *w, int n,
     if (j->nq == j->qcap)
       j->dq = realloc(j->dq, (j->qcap = 2 * j->qcap + 16) * sizeof *j->dq);
     dj *d = &j->dq[j->nq++];
-    *d = (dj){b, w[i].k, w[i].x0, w[i].y0, w[i].x1, w[i].y1, 0, {0}, 0, {0},
+    *d = (dj){b, w[i].k, w[i].x0, w[i].y0, w[i].x1, w[i].y1, 0, 0, {0}, {0},
               o, j->W, j->X0, j->Y0};
     need(f, d->k, 0, 0, f->w, f->h_, &c);
     if ((d->np = pk(j, url, f, d->k, q, d->n)) != c)
@@ -782,8 +699,8 @@ static const char *heads(job *j) {
   int cx0 = j->cx0 = X0 / 3, cy0 = j->cy0 = Y0 / 3;
   int cw = j->cw = (X1 + 2) / 3 - cx0, ch = j->ch = (Y1 + 2) / 3 - cy0;
   j->m = malloc((size_t)2 * cw * ch * 2);
-  if ((e = decode(&j->mk, OPJ_CODEC_JP2, cx0, cy0, cx0 + cw, cy0 + ch, 2,
-                  j->m)))
+  if ((e = j2k_window(j->mk.p, j->mk.n, cx0, cy0, cx0 + cw, cy0 + ch, 2,
+                      j->m)))
     return e;
   int gx0 = j->gx0 = X0 / CELL, gy0 = j->gy0 = Y0 / CELL;
   int ncx = j->ncx = (X1 - 1) / CELL - gx0 + 1;
@@ -1152,9 +1069,8 @@ static void start(job *j, const char *url, const double *box,
 static void end(job *j) {
   for (rd *r = j->rq; r < j->rq + j->nr; r++) free(r->url), free(r->b.p);
   for (int i = 0; i < 4; i++) free(j->u[i]);
-  for (int i = 0; i < 3; i++) drop(&j->bd[i].h);
   void *p[] = {j->rq, j->dq, j->wn, j->b12, j->m, j->v12, j->v11, j->v8a,
-               j->g12, j->g8a, j->px, j->cnt, j->cld, j->idx, j->par, j->ct,
+               j->g12, j->g8a, j->cnt, j->cld, j->idx, j->par, j->ct,
                j->bgm, j->ok, j->sel};
   for (size_t i = 0; i < sizeof p / sizeof *p; i++) free(p[i]);
   drop(&j->s), drop(&j->mk);
@@ -1286,12 +1202,32 @@ static void *worker(void *_) {
   return NULL;
 }
 
+// a parallel for over the cores the rows in flight leave idle, j2k.c's
+typedef struct { void (*f)(void *, size_t); void *a; size_t n, i; } pool;
+
+static void *pooled(void *p) {
+  pool *s = p;
+  for (size_t i; (i = __atomic_fetch_add(&s->i, 1, __ATOMIC_RELAXED)) < s->n;)
+    s->f(s->a, i);
+  return NULL;
+}
+
+static void spread(void (*f)(void *, size_t), void *a, size_t n) {
+  pool s = {f, a, n, 0};
+  pthread_t th[64];
+  int t = MIN(ncpu / MAX(__atomic_load_n(&busy, __ATOMIC_RELAXED), 1), 64);
+  for (int i = 1; i < t; i++) pthread_create(&th[i], NULL, pooled, &s);
+  pooled(&s);
+  for (int i = 1; i < t; i++) pthread_join(th[i], NULL);
+}
+
 // BURNOFF_THREADS workers, by default four per core: decoding is the cost,
 // and more rows in flight only hold more memory
 static void init(void) {
   const char *n = getenv("BURNOFF_THREADS");
   int jobs = n ? atoi(n) : 4 * (ncpu = sysconf(_SC_NPROCESSORS_ONLN));
   pthread_t th;
+  j2k_spread = spread;
   curl_global_init(CURL_GLOBAL_ALL);
   for (int i = 0; i < MAX(jobs, 1); i++)
     pthread_create(&th, NULL, worker, NULL), pthread_detach(th);

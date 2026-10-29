@@ -85,7 +85,14 @@ static double cloud(const res *r, double x, double y) {
 
 // a scene's job over a lon/lat box: the box, the zone a hotspot is reported
 // in, utm zone and hemisphere, and part of parts
-typedef struct { job j; double ll[4], z[4]; int zn, so, part, parts; } web;
+typedef struct {
+  job j;
+  double ll[4], z[4];
+  int zn, so, part, parts;
+  j2k_cbs cb;                     // the stage's batch for the gpu
+  int32_t *tl;
+  uintptr_t b[6];
+} web;
 
 // the zone a hotspot is reported in is the box within the tile's own 100 km
 // square, so no hotspot of a pass is found twice, and part of parts of its
@@ -139,6 +146,19 @@ EMSCRIPTEN_KEEPALIVE job *detect(const char *url, double w, double s,
 // 0 done, 1 reads lacking (reads()), 2 decodes queued, which the next call
 // makes unless the host has
 EMSCRIPTEN_KEEPALIVE int next(job *j) { return step(j); }
+
+// the stage's queued decodes as one batch for web/gpu.js, the job's until
+// its next batch: [rec, n, seg, ns, tl, nt], heap offsets and counts (5
+// uint32 a record, a byte, 8 int32 a tile), or NULL on a malformed packet
+EMSCRIPTEN_KEEPALIVE uintptr_t *records(job *j) {
+  web *x = (web *)j;
+  x->cb.n = x->cb.nd = 0;
+  x->tl = realloc(x->tl, (size_t)32 * j->nq + 1);
+  if (batch(j, &x->cb, x->tl)) return NULL;
+  uintptr_t b[6] = {(uintptr_t)x->cb.cb, x->cb.n, (uintptr_t)x->cb.d,
+                    x->cb.nd, (uintptr_t)x->tl, j->nq};
+  return memcpy(x->b, b, sizeof b);
+}
 
 // the reads the job lacks: [[i, http url, lo, hi, wait s], ...], hi -1 to
 // the end of the file, -2 its size alone
@@ -210,6 +230,7 @@ EMSCRIPTEN_KEEPALIVE char *result(job *j, const double *pt, int np) {
     utm(pt[2 * i], pt[2 * i + 1], zn, so, &p, &q),
     fprintf(out, "%s%.3g", i ? "," : "", er ? -1 : cloud(r, p, q));
   for (int i = 0; i < r->nd; i++) free(r->d[i].pp);
-  fputs("]}", out), fclose(out), free(r->d), free(r->q), end(j), free(x);
+  fputs("]}", out), fclose(out), free(r->d), free(r->q), end(j);
+  free(x->cb.cb), free(x->cb.d), free(x->tl), free(x);
   return o;
 }

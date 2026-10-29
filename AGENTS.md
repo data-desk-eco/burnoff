@@ -1,8 +1,9 @@
 # burnoff
 
-The Data Desk Sentinel-2 hotspot detector: one C file, `src/burnoff.c`, over
-libcurl and libopenjp2, built as a DuckDB extension, and `src/burnoff.sql`,
-the macros run on load. `make test` checks that it loads, offline.
+The Data Desk Sentinel-2 hotspot detector: `src/burnoff.c` over libcurl
+and its own JPEG 2000 decoder, `src/j2k.c` (one translation unit), built as
+a DuckDB extension, and `src/burnoff.sql`, the macros run on load. `make
+test` checks that it loads, offline.
 
 - `s2_detect()` detects in one scene over a UTM box and gives the box's
   clear share, its `hotspots` and `cells`, the obscured share of each 640 m
@@ -22,7 +23,9 @@ at the same time and calls `step()` again: curl's multi interface in the
 extension (one multi handle for each worker thread), `fetch()` in the
 browser. A decode is a `dj` (band, tile, window, packets), and a stage
 gives all of a band's decodes at once, so another decoder (a GPU) can take
-them in one batch. `dodec()` is the one place that calls OpenJPEG.
+them in one batch (`batch()`: the stage's tier-2 records over one byte
+buffer and its tile table, as `j2k.wgsl` takes them). `dodec()` is the one
+place that decodes on the CPU.
 `screen()` is the pass over the B12 raster (background, threshold,
 candidates); after it, only `ring()` (3 px around each candidate) and the
 640 m squares (no data) read that raster.
@@ -31,12 +34,10 @@ When a file's main header has a TLM (the offset of each tile-part; in
 13SFR, the N0512 and N0513 files, but no N0511 or older ones), each
 tile-part header's PLT gives the length of each packet. The files have one
 quality layer, so each packet (one precinct of one resolution) is complete
-in itself. `need()` names the packets that a decode window needs, by
-OpenJPEG's own rule for the packets it skips (a precinct within 2
-coefficients of the window in a subband, in `tcd.c`).
-Only those packets are read, and the others are decoded as empty packets
-(one 0x00 byte), so the decode is identical to a decode of the whole
-tile-part. A tile-part that a window needs whole is read whole, without its
+in itself. `need()` names the packets that a decode window needs
+(`j2k_need()`: the precincts within the 5/3 synthesis's reach of the
+window, level by level), and only those are read: `j2k.c` reads no others,
+and refuses a decode that lacks one. A tile-part that a window needs whole is read whole, without its
 PLT. Reads closer than 32 KB are joined. Files without a TLM use the
 SOT-marker search with learned per-MGRS layouts, in rounds of parallel
 reads, and are read as whole tile-parts. Against eodata (`s3://`), which
@@ -79,7 +80,15 @@ module for any host; `web/gpu.js` runs it in webgpu from the cpu's tier-2
 code-block records (their layout and the bindings are in `j2k.wgsl`'s head).
 It must stay bit-exact with openjpeg: check every coefficient and sample of
 whole band-scenes, 8x8 blocks (to N0512) and 32x32 (from N0513), against
-openjpeg's own. `src/gpu.c` runs the same `j2k.wgsl` natively, over
+openjpeg's own.
+
+`src/j2k.c` decodes only the codestream shape every L1C baseline from N0400
+uses (one layer, LRCP, reversible 5/3, no SOP/EPH, a PLT in each tile-part,
+blocks up to 32x32, the mask's three components under the RCT) and refuses
+any other. Its samples must equal OpenJPEG 2.5's exactly: check a change
+against OpenJPEG over many scenes, bands, tiles and windows (tile and image
+edges, 1 px, from the needed packets alone). Its tier-2 records are
+`j2k.wgsl`'s, so the CPU and the GPU take the same input. `src/gpu.c` runs the same `j2k.wgsl` natively, over
 wgpu-native (`GPU=1`, the default, fetches it into `ext/`): `gpu_decode()`
 and `gpu_cells()`, which give an error, for the cpu path to take over, when
 there is no adapter. It builds the cells' cut tables as `gpu.js` does; a
@@ -112,7 +121,7 @@ ground and real hotspots send most cells to the exact decode, so the total
 did not fall. Single-threaded, the wasm decode is within 3-6% of native.
 Of the emscripten flags tried (-O2, LTO, mimalloc, emmalloc, SSE2 and
 SSE4.1 emulation, fast-math), only SSE2 for OpenJPEG helped (0-5%, through
-its vertical 5/3 DWT), and it is kept.
+its vertical 5/3 DWT); OpenJPEG has since gone.
 
 Measured 2026-10-29 on 13SFR, the staged reads against the blocking ones
 (web-map, 4f439d1). Detections, clear shares and cells are identical,

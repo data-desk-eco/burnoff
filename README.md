@@ -36,9 +36,8 @@ from aois, lateral s2_hotspots(aois.geom, '2025-01-01');
 
 ## Build
 
-Requires a C compiler, `pkg-config`, libcurl and OpenJPEG 2.5 or later
-(`libcurl4-openssl-dev` and `libopenjp2-7-dev` on Ubuntu, `openjpeg` in
-Homebrew). `make wasm` also needs emscripten and CMake.
+Requires a C compiler, `pkg-config` and libcurl (`libcurl4-openssl-dev` on
+Ubuntu). The JPEG 2000 decoder is burnoff's own, `src/j2k.c`. `make wasm` also needs emscripten and CMake.
 
 ```sh
 make              # ext/burnoff.duckdb_extension

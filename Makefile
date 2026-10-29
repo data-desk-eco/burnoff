@@ -1,7 +1,7 @@
-# one c file over libcurl and libopenjp2 (>= 2.5 for windowed decode). src/
+# one c file over libcurl, with its own jpeg 2000 decoder (src/j2k.c). src/
 # holds duckdb v2.0.0's c extension headers; the extension targets the stable
 # c api v1.2.0, so it loads in any duckdb from 1.2 on
-PKGS = libcurl libopenjp2
+PKGS = libcurl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
 CFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDLIBS = $(shell pkg-config --libs $(PKGS)) -lpthread -lm
@@ -32,7 +32,7 @@ E = ext/burnoff.duckdb_extension
 # the shared library plus duckdb's metadata footer: a wasm-style custom
 # section header, eight 32-byte fields (last first) and 256 bytes left for a
 # signature
-$(E): src/burnoff.c src/gpu.c ext/burnoff.sql.h ext/j2k.wgsl.h $(GPUDEP)
+$(E): src/burnoff.c src/j2k.c src/gpu.c ext/burnoff.sql.h ext/j2k.wgsl.h $(GPUDEP)
 	$(CC) $(CFLAGS) -Iext -shared -fPIC src/burnoff.c src/gpu.c $(LDLIBS) \
 	  -o ext/burnoff.so
 	{ cat ext/burnoff.so; printf '\000\223\004\020duckdb_signature\200\004'; \
@@ -67,23 +67,16 @@ test: $(E)
 install: $(E)
 	duckdb -unsigned -c "force install '$(CURDIR)/$(E)'"
 
-# the detector for the browser, with emscripten: web/burnoff.{js,wasm} over
-# openjpeg built for wasm in ext/ojp, the job's calls exported for worker.js
-OJP = ext/ojp/openjpeg-2.5.4
-EXPORTS = _detect,_next,_reads,_answer,_result,_tiles,_free,_malloc
+# the detector for the browser, with emscripten: web/burnoff.{js,wasm}, the
+# job's calls exported for worker.js
+EXPORTS = _detect,_next,_reads,_answer,_result,_records,_tiles,_free,_malloc
 wasm: web/burnoff.js
-web/burnoff.js: web/burnoff.c src/burnoff.c $(OJP)/b/bin/libopenjp2.a
-	emcc -O3 -msimd128 -Wno-constant-conversion \
-	  -I$(OJP)/src/lib/openjp2 -I$(OJP)/b/src/lib/openjp2 $< \
-	  $(OJP)/b/bin/libopenjp2.a -o $@ -sMODULARIZE -sEXPORT_ES6 \
-	  -sENVIRONMENT=worker -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB \
+web/burnoff.js: web/burnoff.c src/burnoff.c src/j2k.c
+	emcc -O3 -msimd128 -Wno-constant-conversion $< -o $@ -sMODULARIZE \
+	  -sEXPORT_ES6 -sENVIRONMENT=worker -sALLOW_MEMORY_GROWTH \
+	  -sMAXIMUM_MEMORY=4GB \
 	  -sEXPORTED_FUNCTIONS=$(EXPORTS) \
 	  -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,HEAPU8
-$(OJP)/b/bin/libopenjp2.a:
-	mkdir -p ext/ojp && curl -sL https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.4.tar.gz | tar xz -C ext/ojp
-	cd $(OJP) && emcmake cmake -B b -DBUILD_SHARED_LIBS=OFF \
-	  -DBUILD_CODEC=OFF -DCMAKE_BUILD_TYPE=Release \
-	  -DCMAKE_C_FLAGS="-O3 -msimd128 -msse -msse2" && cmake --build b -j8
 
 clean:
 	rm -rf ext
