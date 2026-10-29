@@ -4,7 +4,9 @@
 // json api, which answers cross-origin ranged reads. a detection runs in
 // stages, each a batch of reads made here at once, then decodes on the gpu,
 // so a worker holds any number in flight: one decodes while others wait.
-// without a webgpu adapter it decodes on the cpu, as it says once
+// without a webgpu adapter it decodes on the cpu, as it says once.
+// [id, 'drop'] ends detection id at its next stage, answering {dropped:
+// true}: a view that moved on frees the worker for the next one's reads
 import init from './burnoff.js'
 import {init as gpu, decode, cells} from './gpu.js'
 const m = await init()
@@ -15,6 +17,7 @@ const json = p => {
   const s = m.UTF8ToString(p)
   return m._free(p), JSON.parse(s)
 }
+const drop = new Set()
 const heap = (T, p, n) => new T(m.HEAPU8.buffer, p, n)
 // one read, which burnoff.c judges and asks for again after a failure that
 // may pass, wait seconds later
@@ -50,17 +53,18 @@ async function dec(j) {
 const call = {
   tiles: ([p]) => json(m.ccall('tiles', 'number', ['array', 'number'],
                                [bytes(p), p.length / 2])),
-  detect: async ([u, w, s, e, n, i, k, p = [], th = '']) => {
+  detect: async ([u, w, s, e, n, i, k, p = [], th = ''], id) => {
     const j = m.ccall('detect', 'number', ['string', ...Array(6).fill(
       'number'), 'string'], [u, w, s, e, n, i, k, th])
     // 1: reads lacking; 2: decodes queued, made by the next step if not here
-    for (let t; (t = m._next(j));)
+    for (let t; !drop.has(id) && (t = m._next(j));)
       await (t == 1 ? Promise.all(json(m._reads(j)).map(r => get(j, ...r)))
                     : g && dec(j).catch(() => {}))
-    return json(m.ccall('result', 'number', ['number', 'array', 'number'],
-                        [j, bytes(p), p.length / 2]))
+    const r = json(m.ccall('result', 'number', ['number', 'array', 'number'],
+                           [j, bytes(p), p.length / 2]))
+    return drop.delete(id) ? {dropped: true} : r
   },
 }
-onmessage = async ({ data: [id, fn, ...a] }) =>
-  postMessage([id, await call[fn](a)])
+onmessage = async ({ data: [id, fn, ...a] }) => fn == 'drop'
+  ? drop.add(id) : postMessage([id, await call[fn](a, id)])
 postMessage('ready')

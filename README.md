@@ -94,13 +94,16 @@ turns the test off.
 ## In the browser
 
 `make wasm` builds the same detector for a web worker. `web/worker.js`
-answers two calls:
+answers three calls:
 
 - `tiles(points)` names the MGRS tile of each lon/lat point.
 - `detect(url, w, s, e, n, part, parts, points)` gives one scene's hotspots
   over a lon/lat box, in lon/lat, and the obscured share of the 640 m
   square under each point. `part` of `parts` reads that share of the box's
   6.4 km cell columns, so several workers can share one scene.
+- `drop` ends a detection at its next stage, and the worker answers it
+  with `{dropped: true}`. A map whose view moves on uses it to free the
+  worker for the new view's reads.
 
 A `gs://gcp-public-data-sentinel-2/...` url is read through Google's JSON
 API, which answers cross-origin range requests. The page needs no proxy and
