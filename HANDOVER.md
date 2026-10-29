@@ -45,3 +45,42 @@ detections exact. The figures are estimates unless they say "measured".
 - **Measure in the worker.** The browser hides the sizes of cross-origin
   reads, so count bytes in `worker.js`, or through CDP's
   `Network.loadingFinished` on the auto-attached worker targets.
+
+## More ideas (from a code read, not yet measured)
+
+These keep detections exact. The line numbers were correct at 4d3e30c.
+
+- **Keep results across sessions.** Store each finished detection in
+  IndexedDB, keyed by URL, box, part, thresholds and wasm build
+  (`web/worker.js`, before `detect`). A view that is opened again then
+  reads no bytes.
+- **Keep the answer cache across sessions.** Put headers, masks and
+  tile-parts in OPFS or the Cache API, with headers and masks kept first.
+- **Read only the bytes not already held.** `fly` and `kept` in the worker,
+  and `got()` in C, reuse an answer only when it contains the whole read.
+  Cut each read to the bytes that no kept or in-flight answer covers. Wait
+  on a larger read in flight that contains it. This adds no requests.
+- **Order the dates of a tile, newest first.** Then a TLM date always
+  teaches the learned layouts to the older dates (5.8 to 2.4 MB, 5 to 3
+  rounds). Today this happens only when that date happens to come first.
+- **Remove duplicate scenes.** Keep one STAC item for each tile and
+  datetime, the newest baseline (`src/burnoff.sql`).
+- **Stop early on cloudy dates.** When the mask is cached and no cell
+  passes `MAXCLOUD`, do not request the b11 and b8a headers.
+- **Reuse the 16 KB header read.** That read can already contain tile 0's
+  PLT, which `parts()` requests again. The GML box and COD are the same
+  for each date of a tile, so read only from the codestream to the first
+  SOT.
+- **Read only the mask tiles that the box touches.** The mask is read
+  whole (`mask()`, `0,-1`). Only the tiles that meet the box are decoded.
+- **Request the PLTs with the headers.** With a TLM, the place of each PLT
+  is known when the main header arrives. If tile 0's PLT is in the header
+  read, b12 can read only its needed packets (52% of a site's bytes) with
+  no extra round.
+- **Resume short reads.** Request only the bytes from `lo+n`, not the full
+  range again (`check()`).
+- **Read code-blocks, not precincts, for b11 and b8a (slow links only).**
+  A 7×7 window needs only one or two code-blocks of each precinct. This
+  needs one more round to read the packet headers.
+- **Filter cloud cover in the STAC query.** This saves only catalogue
+  bytes and pages.
