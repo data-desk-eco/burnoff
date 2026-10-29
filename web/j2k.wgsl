@@ -16,9 +16,9 @@
 // bindings, group 0: 0 p, the step's parameters; 1 tl, 12 u32 a tile: its
 // rect x0 y0 x1 y1 and the window wanted x0 y0 x1 y1 in image coordinates,
 // its plane's offset, its window's offset in out (u32), 2 spare; 2 rec;
-// 3 seg; 4 dst, a plane; 5 src, a plane; 6 out. a tile's plane has its
-// width as stride, bands laid out as openjpeg does (hl right of the lower
-// resolution, lh below, hh both).
+// 3 seg; 4 dst, a plane; 5 src, a plane; 6 out; 7 to 9 the cells' (at
+// the end). a tile's plane has its width as stride, bands laid out as
+// openjpeg does (hl right of the lower resolution, lh below, hh both).
 //
 // the steps: t1 (p.n blocks) into a cleared plane; then, for each level l
 // of p.L, dwt across rows (p.n 0) into the other plane and down columns
@@ -321,4 +321,95 @@ fn fin(@builtin(global_invocation_id) g: vec3u) {
     u |= u32(clamp(v, 0, (1 << p.prec) - 1)) << (16u * e);
   }
   out[tl[t + 9u] + g.x] = u;
+}
+
+// the detector's background cells, from a decode's samples left in out, as
+// src/burnoff.c run() makes them: a group a 320 px cell of the box. cq, set
+// by the host: 0-3 the box x0 y0 x1 y1; 4 5 the jp2 tile size; 6 tiles a
+// row; 7 8 the box's first cell; 9 cells a row; 10 the mask's width (60 m
+// pixels); 11 the dim cut (a dn under it counts in the histogram); the
+// offsets in cq of 12 each jp2 tile's row of tl (or ~0), 13 floor(max_cloud
+// × n) for each pixel count n, 14 the candidate cut for each median dn, 15
+// the cloudy flags, a byte a 60 m pixel; 16 the candidates' capacity. the
+// host makes every comparison of doubles a cut with run()'s arithmetic, so
+// these are exact
+@group(0) @binding(7) var<storage, read> cq: array<u32>;
+// 8 u32 a cell: pixels, cloudy ones, no data, no data not cloudy, dim ones,
+// their median dn, 0 read or 1 too cloudy or 2 too few dim or too much no
+// data, the candidate cut
+@group(0) @binding(8) var<storage, read_write> cs: array<u32>;
+// a count, then a box index and dn for each candidate, in no order
+@group(0) @binding(9) var<storage, read_write> cand: array<atomic<u32>>;
+var<workgroup> hg: array<atomic<u32>, 4064>;
+var<workgroup> wc: array<atomic<u32>, 4>;
+var<workgroup> cut: u32;
+
+// the dn at image x y, 0 where not decoded
+fn px(x: u32, y: u32) -> u32 {
+  let s = cq[cq[12] + (y / cq[5]) * cq[6] + x / cq[4]];
+  if (s == 0xffffffffu) { return 0u; }
+  let t = 12u * s;
+  if (x < tl[t + 4u] || x >= tl[t + 6u] || y < tl[t + 5u] ||
+      y >= tl[t + 7u]) { return 0u; }
+  let i = 2u * tl[t + 9u] + (y - tl[t + 5u]) * (tl[t + 6u] - tl[t + 4u]) +
+    x - tl[t + 4u];
+  return (out[i >> 1u] >> ((i & 1u) * 16u)) & 0xffffu;
+}
+fn cloudy(x: u32, y: u32) -> u32 {
+  let i = (y / 3u) * cq[10] + x / 3u;
+  return u32(((cq[cq[15] + (i >> 2u)] >> ((i & 3u) * 8u)) & 255u) != 0u);
+}
+
+@compute @workgroup_size(256)
+fn cells(@builtin(workgroup_id) g: vec3u,
+         @builtin(local_invocation_index) li: u32) {
+  let gx = cq[7] + g.x % cq[9]; let gy = cq[8] + g.x / cq[9];
+  let ax = max(gx * 320u, cq[0]); let ay = max(gy * 320u, cq[1]);
+  let cw = min(gx * 320u + 320u, cq[2]) - ax;
+  let n = cw * (min(gy * 320u + 320u, cq[3]) - ay);
+  for (var i = li; i < 4064u; i += 256u) { atomicStore(&hg[i], 0u); }
+  if (li < 4u) { atomicStore(&wc[li], 0u); }
+  workgroupBarrier();
+  // cloud first: a cell too cloudy is not read
+  var k = 0u;
+  for (var i = li; i < n; i += 256u) { k += cloudy(ax + i % cw, ay + i / cw); }
+  atomicAdd(&wc[0], k);
+  workgroupBarrier();
+  let cld = atomicLoad(&wc[0]); let lim = cq[cq[13] + n];
+  var nd = 0u; var ndc = 0u; var nbg = 0u;
+  for (var i = li; i < n && cld <= lim; i += 256u) {
+    let x = ax + i % cw; let y = ay + i / cw; let d = px(x, y);
+    if (d == 0u) { nd++; ndc += 1u - cloudy(x, y); }
+    else if (d < cq[11]) { atomicAdd(&hg[d], 1u); nbg++; }
+  }
+  atomicAdd(&wc[1], nd); atomicAdd(&wc[2], ndc); atomicAdd(&wc[3], nbg);
+  workgroupBarrier();
+  if (li == 0u) {
+    let ndc = atomicLoad(&wc[2]); let nbg = atomicLoad(&wc[3]);
+    var st = select(0u, 1u, cld > lim);
+    if (st == 0u && (cld + ndc > lim || nbg < 10u)) { st = 2u; }
+    // the median: the first dn past half the dim pixels
+    var m = 0u; var s = 0u;
+    for (; st == 0u; m++) {
+      s += atomicLoad(&hg[m]);
+      if (s > nbg / 2u) { break; }
+    }
+    cut = select(0xffffffffu, cq[cq[14] + m], st == 0u);
+    let o = 8u * g.x;
+    cs[o] = n; cs[o + 1u] = cld; cs[o + 2u] = atomicLoad(&wc[1]);
+    cs[o + 3u] = ndc; cs[o + 4u] = nbg; cs[o + 5u] = m; cs[o + 6u] = st;
+    cs[o + 7u] = cut;
+  }
+  let t = workgroupUniformLoad(&cut);
+  for (var i = li; i < n && t != 0xffffffffu; i += 256u) {
+    let x = ax + i % cw; let y = ay + i / cw; let d = px(x, y);
+    if (d >= t) {
+      let j = atomicAdd(&cand[0], 1u);
+      if (j < cq[16]) {
+        atomicStore(&cand[2u * j + 1u], (y - cq[1]) * (cq[2] - cq[0]) + x -
+                    cq[0]);
+        atomicStore(&cand[2u * j + 2u], d);
+      }
+    }
+  }
 }
