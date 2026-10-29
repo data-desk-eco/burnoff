@@ -115,9 +115,11 @@ export async function decode(recs, bytes, tiles, levels = 4, prec = 15,
 // the detector's background cells and candidates over box (x0 y0 x1 y1,
 // pixels of one scene's last decode, kept), as src/burnoff.c run() makes
 // them: mask is the 60 m cloudy flags (a byte a pixel, mw a row), t run()'s
-// thresholds. gives cells, 8 u32 a cell row by row (see j2k.wgsl), the
-// candidates' box indices in raster order and their dn, and hot (a
-// candidate reaches peak_b12_min). opt.time gets the kernel's nanoseconds
+// thresholds. gives cells, 8 u32 a cell row by row (see j2k.wgsl); the
+// candidates' box indices in raster order, their dn and g12, their ring's
+// brightest; hot (a candidate reaches peak_b12_min); and squares, each
+// 640 m square's pixels and obscured ones, row by row. opt.time gets the
+// kernels' nanoseconds
 const cal = d => d ? (d - 1000) / 10000 : 0
 // the least dn whose value passes f
 const least = (f, d = 1) => { while (d < 65536 && !f(cal(d))) d++; return d }
@@ -159,23 +161,34 @@ export async function cells(box, mask, mw, t = {}, opt = {}) {
   const bq = mk(G.STORAGE | G.COPY_DST, cq.byteLength)
   const bc = mk(G.STORAGE | G.COPY_SRC, 32 * nc)
   const bk = mk(G.STORAGE | G.COPY_SRC | G.COPY_DST, 8 * cap + 4)
-  const r1 = mk(G.MAP_READ | G.COPY_DST, 32 * nc + 4)
+  const nqx = ((X1 - 1) >> 5) - (X0 >> 5) + 1
+  const nqy = ((Y1 - 1) >> 5) - (Y0 >> 5) + 1
+  const bg = mk(G.STORAGE | G.COPY_SRC, 4 * cap + 4)
+  const bs = mk(G.STORAGE | G.COPY_SRC, 8 * nqx * nqy)
+  const r1 = mk(G.MAP_READ | G.COPY_DST, 32 * nc + 4 + 8 * nqx * nqy)
   dev.queue.writeBuffer(bq, 0, cq)
   const qs = opt.time && dev.features.has('timestamp-query') &&
     dev.createQuerySet({type: 'timestamp', count: 2})
   const qb = qs && mk(G.QUERY_RESOLVE | G.COPY_SRC, 16)
   const qr = qs && mk(G.MAP_READ | G.COPY_DST, 16)
-  const ce = dev.createCommandEncoder(), p = pipe(8, 'cells')
+  const ce = dev.createCommandEncoder()
   ce.clearBuffer(bk, 0, 4)
-  const c = ce.beginComputePass(qs ? {timestampWrites: {querySet: qs,
-    beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1}} : {})
-  c.setPipeline(p), c.setBindGroup(0, dev.createBindGroup({
-    layout: p.getBindGroupLayout(0), entries: Object.entries(
-      {1: bt, 6: bo, 7: bq, 8: bc, 9: bk}).map(([k, b]) =>
-      ({binding: +k, resource: {buffer: b}}))}))
-  c.dispatchWorkgroups(nc), c.end()
+  // the cells, then each candidate's ring and the squares
+  ;[['cells', nc], ['ring', 1024], ['squares', nqx, nqy]].forEach(([e, x, y],
+                                                                   i) => {
+    const c = ce.beginComputePass(qs && i != 1 ? {timestampWrites: {
+      querySet: qs, [i ? 'endOfPassWriteIndex' : 'beginningOfPassWriteIndex']:
+      i >> 1}} : {}), p = pipe(8, e)
+    c.setPipeline(p), c.setBindGroup(0, dev.createBindGroup({
+      layout: p.getBindGroupLayout(0), entries: Object.entries(
+        {1: bt, 6: bo, 7: bq, 8: bc, 9: bk, 10: bg, 11: bs}).filter(([k]) =>
+        e == 'cells' ? k < 10 : e == 'ring' ? k != 11 : k != 9 && k != 10)
+        .map(([k, b]) => ({binding: +k, resource: {buffer: b}}))}))
+    c.dispatchWorkgroups(x, y), c.end()
+  })
   ce.copyBufferToBuffer(bc, 0, r1, 0, 32 * nc)
   ce.copyBufferToBuffer(bk, 0, r1, 32 * nc, 4)
+  ce.copyBufferToBuffer(bs, 0, r1, 32 * nc + 4, 8 * nqx * nqy)
   if (qs) ce.resolveQuerySet(qs, 0, 2, qb, 0),
     ce.copyBufferToBuffer(qb, 0, qr, 0, 16)
   dev.queue.submit([ce.finish()])
@@ -184,22 +197,28 @@ export async function cells(box, mask, mw, t = {}, opt = {}) {
   const k = cs[8 * nc]
   if (k > cap) throw Error(`${k} candidates, past ${cap}`)
   // then the candidates alone, sorted to raster order
-  const r2 = mk(G.MAP_READ | G.COPY_DST, 8 * k + 8)
+  const r2 = mk(G.MAP_READ | G.COPY_DST, 12 * k + 8)
   const e = dev.createCommandEncoder()
-  if (k) e.copyBufferToBuffer(bk, 4, r2, 0, 8 * k)
+  if (k) e.copyBufferToBuffer(bk, 4, r2, 0, 8 * k),
+    e.copyBufferToBuffer(bg, 0, r2, 8 * k, 4 * k)
   dev.queue.submit([e.finish()])
   await r2.mapAsync(GPUMapMode.READ)
   const pr = new Uint32Array(r2.getMappedRange()), sk = new Float64Array(k)
-  for (let i = 0; i < k; i++) sk[i] = pr[2 * i] * 65536 + pr[2 * i + 1]
+  for (let i = 0; i < k; i++) sk[i] = pr[2 * i] * 4194304 + i
   sk.sort()
   const idx = new Int32Array(k), dn = new Uint16Array(k)
-  for (let i = 0; i < k; i++) idx[i] = sk[i] / 65536, dn[i] = sk[i] % 65536
+  const g12 = new Uint16Array(k)
+  for (let i = 0; i < k; i++) {
+    const j = sk[i] % 4194304
+    idx[i] = pr[2 * j], dn[i] = pr[2 * j + 1], g12[i] = pr[2 * k + j]
+  }
   if (qr) {
     await qr.mapAsync(GPUMapMode.READ)
     const t = new BigInt64Array(qr.getMappedRange())
     opt.time = Number(t[1] - t[0])
   }
   const p5 = least(v => v >= peak_b12_min)
-  for (const b of [bq, bc, bk, r1, r2, qb, qr]) b?.destroy()
-  return {cells: cs.subarray(0, 8 * nc), idx, dn, hot: dn.some(d => d >= p5)}
+  for (const b of [bq, bc, bk, bg, bs, r1, r2, qb, qr]) b?.destroy()
+  return {cells: cs.subarray(0, 8 * nc), idx, dn, g12,
+          hot: dn.some(d => d >= p5), squares: cs.subarray(8 * nc + 1)}
 }

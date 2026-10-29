@@ -16,7 +16,7 @@
 // bindings, group 0: 0 p, the step's parameters; 1 tl, 12 u32 a tile: its
 // rect x0 y0 x1 y1 and the window wanted x0 y0 x1 y1 in image coordinates,
 // its plane's offset, its window's offset in out (u32), 2 spare; 2 rec;
-// 3 seg; 4 dst, a plane; 5 src, a plane; 6 out; 7 to 9 the cells' (at
+// 3 seg; 4 dst, a plane; 5 src, a plane; 6 out; 7 to 11 the cells' (at
 // the end). a tile's plane has its width as stride, bands laid out as
 // openjpeg does (hl right of the lower resolution, lh below, hh both).
 //
@@ -411,5 +411,75 @@ fn cells(@builtin(workgroup_id) g: vec3u,
         atomicStore(&cand[2u * j + 2u], d);
       }
     }
+  }
+}
+
+// after cells, the rest of what run() reads b12 for, so the raster is never
+// read back: each candidate's ring and the 640 m squares. run()'s raster
+// is zero outside each jp2 tile's bounding box of its cells not too cloudy
+@group(0) @binding(10) var<storage, read_write> gr: array<u32>;
+@group(0) @binding(11) var<storage, read_write> sq: array<u32>;
+
+fn cell(x: u32, y: u32) -> u32 {
+  return (y / 320u - cq[8]) * cq[9] + x / 320u - cq[7];
+}
+fn raw(x: u32, y: u32) -> u32 {
+  let tw = cq[4]; let th = cq[5];
+  let x0 = max(x / tw * tw, cq[0]); let x1 = min(x / tw * tw + tw, cq[2]);
+  let y0 = max(y / th * th, cq[1]); let y1 = min(y / th * th + th, cq[3]);
+  var b = vec4u(0xffffffffu, 0xffffffffu, 0u, 0u);
+  for (var v = y0 / 320u; v <= (y1 - 1u) / 320u; v++) {
+    for (var u = x0 / 320u; u <= (x1 - 1u) / 320u; u++) {
+      if (cs[8u * cell(u * 320u, v * 320u) + 6u] != 1u) {
+        b = vec4u(min(b.xy, vec2u(max(u * 320u, x0), max(v * 320u, y0))),
+                  max(b.zw, vec2u(min(u * 320u + 320u, x1),
+                                  min(v * 320u + 320u, y1))));
+      }
+    }
+  }
+  if (x < b.x || x >= b.z || y < b.y || y >= b.w) { return 0u; }
+  return px(x, y);
+}
+
+// the brightest pixel within 3 of a candidate, in the box, not itself one
+@compute @workgroup_size(64)
+fn ring(@builtin(global_invocation_id) g: vec3u) {
+  let w = cq[2] - cq[0]; let h = cq[3] - cq[1];
+  for (var j = g.x; j < min(atomicLoad(&cand[0]), cq[16]); j += 65536u) {
+    let i = atomicLoad(&cand[2u * j + 1u]); let x = i % w; let y = i / w;
+    var m = 0u;
+    for (var v = max(y, 3u) - 3u; v <= min(y + 3u, h - 1u); v++) {
+      for (var u = max(x, 3u) - 3u; u <= min(x + 3u, w - 1u); u++) {
+        let d = raw(cq[0] + u, cq[1] + v);
+        if (d > m && d < cs[8u * cell(cq[0] + u, cq[1] + v) + 7u]) { m = d; }
+      }
+    }
+    gr[j] = m;
+  }
+}
+
+// a 32 px square's pixels, and those obscured: in a cell too cloudy,
+// cloudy at 60 m, or no data. a group a square
+var<workgroup> qo: atomic<u32>;
+@compute @workgroup_size(64)
+fn squares(@builtin(workgroup_id) g: vec3u,
+           @builtin(local_invocation_index) li: u32) {
+  let x0 = max((cq[0] / 32u + g.x) * 32u, cq[0]);
+  let y0 = max((cq[1] / 32u + g.y) * 32u, cq[1]);
+  let w = min((cq[0] / 32u + g.x) * 32u + 32u, cq[2]) - x0;
+  let n = w * (min((cq[1] / 32u + g.y) * 32u + 32u, cq[3]) - y0);
+  if (li == 0u) { atomicStore(&qo, 0u); }
+  workgroupBarrier();
+  var k = 0u;
+  for (var i = li; i < n; i += 64u) {
+    let x = x0 + i % w; let y = y0 + i / w;
+    k += u32(cs[8u * cell(x, y) + 6u] == 1u || cloudy(x, y) != 0u ||
+             raw(x, y) == 0u);
+  }
+  atomicAdd(&qo, k);
+  workgroupBarrier();
+  if (li == 0u) {
+    let q = 2u * (g.y * ((cq[2] - 1u) / 32u - cq[0] / 32u + 1u) + g.x);
+    sq[q] = n; sq[q + 1u] = atomicLoad(&qo);
   }
 }
