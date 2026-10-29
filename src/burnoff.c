@@ -150,10 +150,12 @@ static void href(const char *url, char *u) {
 
 // a read of [lo, hi) of url (hi -1: to the end, -2: the file's size alone)
 // that a stage lacks. the host makes it and check()s each answer; the
-// stage, run again, finds it with got(). sc: scanned for SOT markers
+// stage, run again, finds it with got(). [wl, wh) is the range wanted, of
+// which reads in hand held the rest: the read is made whole by fill().
+// sc: scanned for SOT markers
 typedef struct {
   char *url;
-  long long lo, hi;
+  long long lo, hi, wl, wh;
   buf b;
   const char *e;
   int ok, tries, wait, sc;
@@ -293,15 +295,48 @@ static rd *got(job *j, const char *url, long long lo, long long hi) {
   return NULL;
 }
 
-// a read to make: LACK, or what became of the same read made already
+// r made whole: [wl, wh) from its answer and the reads in hand before it
+static void fill(job *j, rd *r) {
+  unsigned char *p = malloc(r->wh - r->wl);
+  long long size = r->b.size;
+  for (rd *q = j->rq; q <= r; q++) {
+    long long a = MAX(q->lo, r->wl), b = MIN(q->lo + (long long)q->b.n, r->wh);
+    if (q->ok && b > a && !strcmp(q->url, r->url))
+      memcpy(p + a - r->wl, q->b.p + a - q->lo, b - a),
+      size = MAX(size, q->b.size);
+  }
+  free(r->b.p), r->b = (buf){p, r->wh - r->wl, r->wh - r->wl, size, 0};
+  r->lo = r->wl, r->hi = r->wh;
+}
+
+static rd *add(job *j, const char *url, long long lo, long long hi) {
+  if (j->nr == j->rcap)
+    j->rq = realloc(j->rq, (j->rcap = 2 * j->rcap + 16) * sizeof *j->rq);
+  rd *r = &j->rq[j->nr++];
+  *r = (rd){.url = strdup(url), .lo = lo, .hi = hi, .wl = lo, .wh = hi,
+            .b.size = -1};
+  return r;
+}
+
+// a read to make: LACK, or what became of the same read made already. its
+// ends that reads in hand hold are not read again, and one they hold
+// whole is not made
 static const char *want(job *j, const char *url, long long lo,
                         long long hi) {
   for (rd *r = j->rq; r < j->rq + j->nr; r++)
-    if (r->lo == lo && r->hi == hi && !strcmp(r->url, url))
+    if (r->wl == lo && r->wh == hi && !strcmp(r->url, url))
       return r->e ? r->e : r->ok ? "tile-part not found" : LACK;
-  if (j->nr == j->rcap)
-    j->rq = realloc(j->rq, (j->rcap = 2 * j->rcap + 16) * sizeof *j->rq);
-  j->rq[j->nr++] = (rd){.url = strdup(url), .lo = lo, .hi = hi, .b.size = -1};
+  rd *r = add(j, url, lo, hi);
+  for (int c = hi > 0; c && r->lo < r->hi;) {
+    c = 0;
+    for (rd *q = j->rq; q < r; q++) {
+      long long e = q->lo + (long long)q->b.n;
+      if (!q->ok || strcmp(q->url, url)) continue;
+      if (q->lo <= r->lo && r->lo < e) r->lo = e, c = 1;
+      if (q->lo < r->hi && r->hi <= e) r->hi = q->lo, c = 1;
+    }
+  }
+  if (hi > 0 && r->lo >= r->hi) r->ok = 1, fill(j, r);
   return LACK;
 }
 
@@ -329,29 +364,40 @@ static uint64_t need(const band *f, int k, int x0, int y0, int x1, int y1,
 // processing baseline (only kakadu's comments differ), so one read serves
 // them all, and the file's size, until a read gives it, is that file's. a
 // newer file's header also carries a TLM, the offset of each of its own
-// tile-parts: that header is read for each file, and the tile-parts are
-// then read exactly where it puts them
+// tile-parts: of each such file only the codestream's header is read, to
+// a KB past where the tile's puts the first tile-part (its PLT within),
+// after the jp2 boxes the tile's header gives. the tile-parts are then
+// read exactly where its TLM puts them
 static const char *header(job *j, const char *url, band *f) {
   char key[64];
   const char *fn = strrchr(url, '/') ? strrchr(url, '/') + 1 : url;
   const char *bd = strrchr(fn, '_'), *nb = strstr(url, "_N");
   buf *b = &j->s;
-  long long size = -1;
+  long long size = -1, lo = 0, hi = 16384;
   int own = 0, got_ = 0, n = 0;   // b is this file's own
+  unsigned char *s, *sot, *q;
   if (f->ok) return NULL;
   snprintf(key, sizeof key, "%.6s%.12s%.6s", fn, bd ? bd : "", nb ? nb : "");
 again:
   if (!recall(own ? url : key, b, &size)) {
-    rd *r = got(j, url, 0, 16384), *s = r && r->b.size < 0
+    rd *r = got(j, url, lo, hi), *z = r && r->b.size < 0
                                        ? got(j, url, 0, -2) : r;
-    if (!r) return want(j, url, 0, 16384);
-    if (!s) return want(j, url, 0, -2);   // no Content-Range (file://)
-    if ((size = s->b.size) < 0) return "unknown file size";
-    b->n = 0, wr((char *)r->b.p, 1, MIN(r->b.n, 16384), b);
-    keep(key, b, size), own = got_ = 1;
+    if (!r) return want(j, url, lo, hi);
+    if (!z) return want(j, url, 0, -2);   // no Content-Range (file://)
+    if ((size = z->b.size) < 0) return "unknown file size";
+    b->n = lo, wr((char *)r->b.p + lo - r->lo, 1,
+                  MIN(r->lo + (long long)r->b.n, hi) - lo, b);
+    own = got_ = 1;
   }
-  unsigned char *s = memmem(b->p, b->n, "\xff\x4f\xff\x51", 4);
-  unsigned char *sot = s ? memmem(s, b->p + b->n - s, "\xff\x90", 2) : 0;
+  // the main header's markers, to the first SOT
+  s = memmem(b->p, b->n, "\xff\x4f\xff\x51", 4), sot = NULL;
+  for (q = s ? s + 2 : NULL; q && !sot && q + 4 <= b->p + b->n;
+       q += 2 + be(q + 2, 2))
+    if (be(q, 2) == 0xff90) sot = q;
+  if (lo && (s != b->p + lo || !sot)) {   // not where the tile's put it
+    lo = 0, hi = 16384;
+    goto again;
+  }
   if (!sot || be(s + 4, 2) < 41 || be(s + 40, 2) != 1 ||
       be(s + 16, 4) | be(s + 20, 4) | be(s + 32, 4) | be(s + 36, 4))
     return "no single-component, origin-anchored codestream header";
@@ -377,17 +423,25 @@ again:
   if (e) return e;
   if (f->j.mp > NP) return "too many packets";
   memset(f->at, 0, sizeof f->at);
-  for (unsigned char *q = s + 2; q + 4 <= sot; q += 2 + be(q + 2, 2)) {
+  for (q = s + 2; q + 4 <= sot; q += 2 + be(q + 2, 2)) {
     int L = be(q + 2, 2), st = q[5] >> 4 & 3, sp = q[5] & 64 ? 4 : 2;
     if (q[1] != 0x55) continue;
-    if (!own) { own = 1; goto again; }
+    if (!own) {
+      own = 1, lo = s - b->p, hi = sot - b->p + 1024;
+      goto again;
+    }
     else for (int i = 6; i + st + sp <= L + 2; i += st + sp, n++) {
       int t = st ? (int)be(q + i, st) : n;
       if (t < f->nt) f->at[t] = at, f->len[t] = be(q + i + st, sp);
       at += be(q + i + st, sp);
     }
   }
+  if (got_) keep(key, b, size);
   if (got_ && n) keep(url, b, size);
+  else if (n && !got(j, url, 0, b->n)) {   // cached: tile 0's PLT is in it
+    rd *r = add(j, url, 0, b->n);
+    wr((char *)b->p, 1, b->n, &r->b), r->b.size = size, r->ok = 1;
+  }
   f->first = sot - b->p, f->size = size, f->tlm = n > 0, f->ok = 1;
   return NULL;
 }
@@ -1149,6 +1203,8 @@ enum { DONE, READ, DECODE };
 // a failure. decodes left undone are run here; nothing is read or decoded
 // twice
 static int step(job *j) {
+  for (rd *r = j->rq; r < j->rq + j->nr; r++)
+    if (r->ok && r->hi >= 0 && (r->lo != r->wl || r->hi != r->wh)) fill(j, r);
   for (int i = 0; i < j->nq && !j->e; i++)
     if (!j->dq[i].done) j->e = dodec(j, &j->dq[i]);
   j->nq = 0;

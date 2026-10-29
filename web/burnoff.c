@@ -81,8 +81,6 @@ static double cloud(const res *r, double x, double y) {
        ? r->q[j * nx + i].cloud : -1;
 }
 
-// one scene's hotspots over a lon/lat box, in lon/lat, and how obscured the
-
 // a scene's job over a lon/lat box: the box, the zone a hotspot is reported
 // in, utm zone and hemisphere, and part of parts
 typedef struct {

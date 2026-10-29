@@ -11,6 +11,9 @@ extension loads, offline.
   for both hosts: `src/gpu.c` (wgpu-native, Metal or Vulkan) and
   `web/gpu.js` (WebGPU).
 - `src/burnoff.sql`: the macros run on load (`s2_scenes`, `s2_hotspots`).
+  `s2_scenes` asks the catalogue for scenes at most `max_cloud` cloudy,
+  keeps one item for each tile and datetime (the newest baseline, then the
+  newest processing), and gives them newest first.
 - `web/burnoff.c`, `web/worker.js`: the browser build and its worker.
 
 `s2_detect()` gives one scene's clear share, `hotspots` and `cells` (the
@@ -36,7 +39,14 @@ packet (a precinct of a resolution) complete in itself. `need()`
 joined. Without a TLM, an SOT-marker search with learned per-MGRS layouts
 finds the tile-parts, read whole. Against eodata (5000 requests a minute a
 key) tile-parts are read whole, joined within 1 MB, at most 20 requests a
-band.
+band. A read is cut to the bytes that no read in hand of the job holds at
+either end (`want()`), and `fill()` makes it whole from them; one that
+reads in hand hold whole is not made. A header is read as 16 KB once for
+each MGRS tile, band and baseline (the key of its cache); with a TLM, a
+later date reads only its codestream header, from where the tile's header
+puts it to 1 KB past its first SOT, so tile 0's PLT is in it, and the jp2
+boxes ahead of it are the tile's: about 1.7 KB in place of 16 KB. A cached
+header with a TLM is put in the job's reads, for tile 0's PLT.
 
 Rounds. A stage's reads are a round, and a stage asks for all that the
 answers it waits on do not decide. With a TLM a site is 3 rounds: the mask
@@ -51,7 +61,10 @@ over 4 sets of jobs in Chrome could show. Without a TLM the tile-parts any
 job has found in a file are kept for the next (`share()`), and a TLM's
 offsets teach the learned layouts, so an older date of a tile is read
 where a newer one put its tile-parts: a 10 km box of N0511 after one of
-N0512 is 3 rounds and 2.4 MB where it was 5 and 5.8 MB. Under the eodata
+N0512 is 3 rounds and 2.4 MB where it was 5 and 5.8 MB (`s2_scenes` gives
+the newest first for this). A cloudy date's b11 and b8a headers are read
+only by the first job of the scene, with its mask; a later job, the mask
+and b12's header in hand, ends before any read. Under the eodata
 budget b11's and b8a's headers come with b12's reads and b8a's tile-parts
 with b11's: 3 rounds where there were 6 to 8 (of the 588 boxes, the 154
 that read b11 all read b8a).
@@ -108,11 +121,17 @@ reads with `fetch()`, a stage's decodes through `records()`, `gpu.js` and
 adapter it decodes on the CPU and says so once. `gs://` urls go through
 Google's JSON API, which sends CORS headers; `check()` retries a 206 body
 shorter than its Content-Range, as a browser's cache can give. A worker
-makes a read that two of its detections ask for at once one fetch, and
-keeps its last 64 MB of answers, cutting a read that falls within one
-from it: detections of one scene share its headers, masks and
-tile-parts. The Aerial map (`~/Tools/aerial`, branch `burnoff-live`) runs
-it; it does best to give a scene's detections to one worker.
+keeps the pieces of files it has read (`take()`): their last 64 MB in
+memory and their last 1 GB on disk (the Cache API), the pieces from byte
+0 (headers and masks) kept longest. A read is cut to the bytes that no
+piece holds at either end, a piece still on its way included, and is made
+whole from them: no read is added, and detections of one scene share its
+headers, masks and tile-parts. Each finished detection without an error
+goes into IndexedDB, keyed by its call and the SHA-256 of the wasm, so a
+view opened again reads nothing. Without a secure context neither store is
+used. The Aerial map (`~/Tools/aerial`, branch `burnoff-live`) runs it; it
+does best to give a scene's detections to one worker, and a tile's dates
+newest first.
 
 ## Hotspots, not sunlight
 
@@ -166,3 +185,24 @@ sweeps 3.0 s against 3.5: a site's 1.3 s there is about 0.8 s of reads,
 round less is not seen. Exactness: 136 jobs local and 136 over gs://,
 112 sites and 72 sweeps, WebGPU on and off, identical to the
 OpenJPEG-era results.
+
+Reads cut to the bytes not in hand, the shorter headers, newest first and
+the worker's stores, measured 2026-10-29 against 8fdd67b, exact field for
+field throughout (the 588 boxes natively, plain and under the eodata
+budget, a scene a process and all in one, oldest and newest first; through
+DuckDB at 2, 4 and 8 rows; 88 boxes over gs://; in headless Chrome the
+four sets of jobs, WebGPU on and off, the sites and sweeps with the stores
+cut to 2 MB and 20 MB, and second sessions). Natively, a scene a process:
+6670 reads against 6674, 1800 MB against 1827, 625 rounds either way; all
+in one process 6634 against 6650 reads, 1734 MB against 1784, 636 rounds
+against 647. Newest first in one process: 629 rounds against 633 and 18
+boxes failing over file:// against 25 (more boxes read, 1757 MB against
+1747). Over gs://, 88 boxes: 269 MB against 280, 1707 reads against 1709.
+In headless Chrome over gs://, 4 workers of 8, medians of 7 runs in turn,
+cold: 112 sites 175 MB against 209 (802 reads against 848, 4.3 s against
+5.2), 72 sweeps 62 MB against 107 (368 reads against 416, 2.9 s either
+way), 136 jobs 207 MB against 273 (1143 reads against 1256, 4.8 s against
+5.6). The 136 jobs over a local server took 1.5 s against 1.45. In a
+second session the 112 sites made 4 reads (the wasm, one a worker) in 0.3
+s; without the result store, 23 reads and 9 MB, and after the 72 sweeps,
+143 to 160 MB.

@@ -1,18 +1,22 @@
 -- burnoff's macros, defined on load; spatial must be loaded to use them.
 
--- every L1C scene over a lon/lat geometry's bounds from t0 to t1 (today), with the box to
--- read in the scene's UTM metres: its MGRS 100 km square (west and north
--- edges sx, sy), widened by 2 km and rounded out to the tile's 6.4 km
--- background cells, so no hotspot of a pass is found twice. each search
--- spans the days that should half fill a 1000-scene page; a full page
--- fails the query rather than lose scenes
+-- every L1C scene over a lon/lat geometry's bounds from t0 to t1 (today) at
+-- most max_cloud % cloudy, newest first, with the box to read in the
+-- scene's UTM metres: its MGRS 100 km square (west and north edges sx, sy),
+-- widened by 2 km and rounded out to the tile's 6.4 km background cells, so
+-- no hotspot of a pass is found twice. a pass processed twice is its newest
+-- baseline alone (google's mirror can lack a newer processing of one
+-- baseline). a date with a TLM, first, teaches the older dates of its tile
+-- where their tile-parts are. each search spans the days that should half
+-- fill a 1000-scene page; a full page fails the query rather than lose
+-- scenes
 create or replace macro s2_days(g) as
 greatest(1, floor(830 / ((ST_XMax(g) - ST_XMin(g)) * 1.11
                          * cos(radians((ST_YMin(g) + ST_YMax(g)) / 2)) + 2)
                        / ((ST_YMax(g) - ST_YMin(g)) * 1.11 + 2)))::int;
 
 create or replace macro s2_scenes(g, t0, t1 := current_date,
-                                  source := 'auto')
+                                  max_cloud := 100, source := 'auto')
 as table
 select id, datetime, cloud,
        if(coalesce(nullif(source, 'auto'), s2_source()) = 'gcp',
@@ -51,6 +55,8 @@ from (
         || '&datetime=' || strftime(m, '%Y-%m-%d') || 'T00:00:00Z/'
         || strftime(least(m + to_days(s2_days(g) - 1), t1::date),
                     '%Y-%m-%d') || 'T23:59:59Z'
+        || if(max_cloud < 100, '&filter-lang=cql2-text&filter=eo%3Acloud_cover'
+              || '%3C%3D' || max_cloud, '')
         || '&fields=id,properties.datetime,properties.eo:cloud_cover,'
         || 'assets.B12.href,assets.B12.proj:code,assets.B12.proj:bbox')))::json
       j))
@@ -58,7 +64,10 @@ from (
                                         lambda l: l ->> 'rel'), 'next'),
            error('a catalogue search came back full: ask for less'), true)))
 where least(xmax, sx + 1e5) > greatest(xmin, sx)
-  and least(ymax, sy) > greatest(ymin, sy - 1e5);
+  and least(ymax, sy) > greatest(ymin, sy - 1e5) and cloud <= max_cloud
+qualify row_number() over (partition by t, datetime
+                           order by id[29:32] desc, id[-15:] desc) = 1
+order by datetime desc;
 
 -- the hotspots in a lon/lat geometry from t0 to t1 (today), one row each
 create or replace macro s2_hotspots(g, t0, t1 := current_date, max_cloud := 100,
@@ -72,7 +81,7 @@ from (
   from (select id, datetime, crs, sx, sy, r.clear,
                unnest(r.hotspots, recursive := true)
         from (select *, s2_detect(b12, xmin, ymin, xmax, ymax, thresholds) r
-              from s2_scenes(g, t0, t1 := t1, source := source)
-              where cloud <= max_cloud)))
+              from s2_scenes(g, t0, t1 := t1, max_cloud := max_cloud,
+                             source := source))))
 where x >= sx and x < sx + 1e5 and y > sy - 1e5 and y <= sy
   and ST_Intersects(g, p);
