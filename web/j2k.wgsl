@@ -324,14 +324,14 @@ fn fin(@builtin(global_invocation_id) g: vec3u) {
 }
 
 // the detector's background cells, from a decode's samples left in out, as
-// src/burnoff.c run() makes them: a group a 320 px cell of the box. cq, set
+// src/burnoff.c screen() makes them: a group a 320 px cell of the box. cq, set
 // by the host: 0-3 the box x0 y0 x1 y1; 4 5 the jp2 tile size; 6 tiles a
 // row; 7 8 the box's first cell; 9 cells a row; 10 the mask's width (60 m
 // pixels); 11 the dim cut (a dn under it counts in the histogram); the
 // offsets in cq of 12 each jp2 tile's row of tl (or ~0), 13 floor(max_cloud
 // × n) for each pixel count n, 14 the candidate cut for each median dn, 15
 // the cloudy flags, a byte a 60 m pixel; 16 the candidates' capacity. the
-// host makes every comparison of doubles a cut with run()'s arithmetic, so
+// host makes every comparison of doubles a cut with screen()'s arithmetic, so
 // these are exact
 @group(0) @binding(7) var<storage, read> cq: array<u32>;
 // 8 u32 a cell: pixels, cloudy ones, no data, no data not cloudy, dim ones,
