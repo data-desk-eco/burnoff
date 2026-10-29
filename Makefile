@@ -38,17 +38,17 @@ install: $(E)
 	duckdb -unsigned -c "force install '$(CURDIR)/$(E)'"
 
 # the detector for the browser, with emscripten: web/burnoff.{js,wasm} over
-# openjpeg built for wasm in ext/ojp
+# openjpeg built for wasm in ext/ojp, the job's calls exported for worker.js
 OJP = ext/ojp/openjpeg-2.5.4
+EXPORTS = _detect,_next,_reads,_answer,_result,_tiles,_free,_malloc
 wasm: web/burnoff.js
-web/burnoff.js: web/burnoff.c web/shim/curl/curl.h src/burnoff.c \
-                ext/burnoff.sql.h $(OJP)/b/bin/libopenjp2.a
-	emcc -O3 -msimd128 -Wno-constant-conversion -Iweb/shim -Iext \
+web/burnoff.js: web/burnoff.c src/burnoff.c $(OJP)/b/bin/libopenjp2.a
+	emcc -O3 -msimd128 -Wno-constant-conversion \
 	  -I$(OJP)/src/lib/openjp2 -I$(OJP)/b/src/lib/openjp2 $< \
 	  $(OJP)/b/bin/libopenjp2.a -o $@ -sMODULARIZE -sEXPORT_ES6 \
 	  -sENVIRONMENT=worker -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=4GB \
-	  -sEXPORTED_FUNCTIONS=_detect,_tiles,_free,_malloc \
-	  -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString
+	  -sEXPORTED_FUNCTIONS=$(EXPORTS) \
+	  -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,HEAPU8
 $(OJP)/b/bin/libopenjp2.a:
 	mkdir -p ext/ojp && curl -sL https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.4.tar.gz | tar xz -C ext/ojp
 	cd $(OJP) && emcmake cmake -B b -DBUILD_SHARED_LIBS=OFF \

@@ -1,9 +1,11 @@
-// burnoff's detector for the browser: src/burnoff.c, its duckdb functions
-// unused, over the xhr shim in shim/curl, with in c what s2_scenes and
+// burnoff's detector for the browser: src/burnoff.c, its duckdb and curl
+// host left out, driven by web/worker.js, with in c what s2_scenes and
 // s2_hotspots do in sql: the mgrs tiles over a lon/lat box, and a scene's
-// hotspots over it in lon/lat. each call gives json in a buffer the caller
+// hotspots over it in lon/lat. a detection is a job that worker.js steps,
+// making the reads each stage lacks; json comes in a buffer the caller
 // frees
 #include "../src/burnoff.c"
+#include <emscripten.h>
 
 // wgs84 transverse mercator by krüger's series to third order, under a
 // millimetre within a zone
@@ -80,61 +82,116 @@ static double cloud(const res *r, double x, double y) {
 }
 
 // one scene's hotspots over a lon/lat box, in lon/lat, and how obscured the
-// 640 m square of each of np points (lon, lat pairs) was, or -1 unread. the
-// zone a hotspot is reported in is the box within the tile's own 100 km
+
+// a scene's job over a lon/lat box: the box, the zone a hotspot is reported
+// in, utm zone and hemisphere, and part of parts
+typedef struct { job j; double ll[4], z[4]; int zn, so, part, parts; } web;
+
+// the zone a hotspot is reported in is the box within the tile's own 100 km
 // square, so no hotspot of a pass is found twice, and part of parts of its
 // 6.4 km background cell columns, so workers can share it. a detection is
 // one component of at most max_pixels, so the zone is read with that many
 // pixels more on every side, rounded out to whole cells: a hotspot is then
 // what a read of the whole tile finds, wherever the zone's edges fall
-EMSCRIPTEN_KEEPALIVE char *detect(const char *url, double w, double s,
-                                  double e, double n, int part, int parts,
-                                  const double *pt, int np, const char *th) {
-  static ctx x;
-  const char *fn = strrchr(url, '/') ? strrchr(url, '/') + 1 : url, *er;
-  int zn = atoi(fn + 1), so = fn[3] < 'N';
-  double t[NT], z[4] = {INFINITY, INFINITY, -INFINITY, -INFINITY}, b[4], p, q;
-  band *f = x.bd;
-  res r = {.clear = NAN};
+static int fit(job *j) {
+  web *x = (web *)j;
+  band *f = j->bd;
+  double *z = x->z, *b = j->box, *l = x->ll, p, q;
+  double sx = round(f->ox / 1e5) * 1e5, sy = round(f->oy / 1e5) * 1e5;
+  double m = (j->t[MAXPX] + 1) * f->res, c0, c1;
+  for (int i = 0; i < 81; i++) {
+    utm(l[0] + (l[2] - l[0]) * (i % 9) / 8, l[1] + (l[3] - l[1]) * (i / 9) / 8,
+        x->zn, x->so, &p, &q);
+    z[0] = MIN(z[0], p), z[1] = MIN(z[1], q);
+    z[2] = MAX(z[2], p), z[3] = MAX(z[3], q);
+  }
+  z[0] = MAX(z[0], sx), z[1] = MAX(z[1], sy - 1e5);
+  z[2] = MIN(z[2], sx + 1e5), z[3] = MIN(z[3], sy);
+  c0 = floor((z[0] - f->ox) / 6400), c1 = ceil((z[2] - f->ox) / 6400);
+  z[0] = MAX(z[0], f->ox + 6400 * (c0 + floor((c1 - c0) * x->part /
+                                               x->parts)));
+  z[2] = MIN(z[2], f->ox + 6400 * (c0 + floor((c1 - c0) * (x->part + 1) /
+                                               x->parts)));
+  b[0] = f->ox + floor((z[0] - m - f->ox) / 6400) * 6400;
+  b[2] = f->ox + ceil((z[2] + m - f->ox) / 6400) * 6400;
+  b[1] = f->oy - ceil((f->oy - z[1] + m) / 6400) * 6400;
+  b[3] = f->oy - floor((f->oy - z[3] - m) / 6400) * 6400;
+  return !(z[2] > z[0] && z[3] > z[1]);
+}
+
+// a job: one scene's hotspots over a lon/lat box, its cells split part of
+// parts, for next() to advance
+EMSCRIPTEN_KEEPALIVE job *detect(const char *url, double w, double s,
+                                 double e, double n, int part, int parts,
+                                 const char *th) {
+  web *x = calloc(1, sizeof *x);
+  const char *fn = strrchr(url, '/') ? strrchr(url, '/') + 1 : url;
+  double t[NT];
+  memcpy(t, TD, sizeof t);
+  const char *er = params(th, t);
+  start(&x->j, url, NULL, t);
+  *x = (web){x->j, {w, s, e, n}, {INFINITY, INFINITY, -INFINITY, -INFINITY},
+             atoi(fn + 1), fn[3] < 'N', part, parts};
+  x->j.e = er, x->j.fit = fit;
+  return &x->j;
+}
+
+// 0 done, 1 reads lacking (reads()), 2 decodes queued, which the next call
+// makes unless the host has
+EMSCRIPTEN_KEEPALIVE int next(job *j) { return step(j); }
+
+// the reads the job lacks: [[i, http url, lo, hi, wait s], ...], hi -1 to
+// the end of the file, -2 its size alone
+EMSCRIPTEN_KEEPALIVE char *reads(job *j) {
+  char *o, u[4096];
+  size_t len;
+  FILE *f = open_memstream(&o, &len);
+  fputc('[', f);
+  for (int i = 0, c = 0; i < j->nr; i++) {
+    rd *r = j->rq + i;
+    if (r->ok || r->e) continue;
+    href(r->url, u);
+    fprintf(f, "%s[%d,\"%s\",%lld,%lld,%d]", c++ ? "," : "", i, u, r->lo,
+            r->hi, r->wait);
+  }
+  fputc(']', f), fclose(f);
+  return o;
+}
+
+// the answer to read i: its status (-1: none), the file's size from its
+// Content-Range (-1: none), its body, malloc'd and now the job's, and the
+// seconds a 429 asked us to wait
+EMSCRIPTEN_KEEPALIVE void answer(job *j, int i, int s, double size,
+                                 unsigned char *p, int n, int wait) {
+  rd *r = j->rq + i;
+  free(r->b.p), r->b = (buf){p, n, n, size, wait};
+  check(r, s < 0, s);
+}
+
+// the job's json, which ends it: clear (-1 unread), error, hotspots in
+// lon/lat, and how obscured the 640 m square of each of np points (lon,
+// lat pairs) was, or -1 unread
+EMSCRIPTEN_KEEPALIVE char *result(job *j, const double *pt, int np) {
+  web *x = (web *)j;
+  band *f = j->bd;
+  res *r = &j->r;
+  const char *er = j->e;
+  double *z = x->z, p, q;
+  int zn = x->zn, so = x->so;
   char *o = NULL;
   size_t len;
   FILE *out = open_memstream(&o, &len);
-  memcpy(t, TD, sizeof t);
-  if (!x.c)
-    x.c = curl_easy_init(), curl_easy_setopt(x.c, CURLOPT_WRITEFUNCTION, wr),
-    curl_easy_setopt(x.c, CURLOPT_HEADERFUNCTION, hd);
-  if (!(er = params(th, t)) && !(er = header(&x, url, f))) {
-    double sx = round(f->ox / 1e5) * 1e5, sy = round(f->oy / 1e5) * 1e5;
-    double m = (t[MAXPX] + 1) * f->res, c0, c1;
-    for (int i = 0; i < 81; i++) {
-      utm(w + (e - w) * (i % 9) / 8, s + (n - s) * (i / 9) / 8, zn, so, &p,
-          &q);
-      z[0] = MIN(z[0], p), z[1] = MIN(z[1], q);
-      z[2] = MAX(z[2], p), z[3] = MAX(z[3], q);
-    }
-    z[0] = MAX(z[0], sx), z[1] = MAX(z[1], sy - 1e5);
-    z[2] = MIN(z[2], sx + 1e5), z[3] = MIN(z[3], sy);
-    c0 = floor((z[0] - f->ox) / 6400), c1 = ceil((z[2] - f->ox) / 6400);
-    z[0] = MAX(z[0], f->ox + 6400 * (c0 + floor((c1 - c0) * part / parts)));
-    z[2] = MIN(z[2], f->ox + 6400 * (c0 + floor((c1 - c0) * (part + 1) /
-                                                 parts)));
-    b[0] = f->ox + floor((z[0] - m - f->ox) / 6400) * 6400;
-    b[2] = f->ox + ceil((z[2] + m - f->ox) / 6400) * 6400;
-    b[1] = f->oy - ceil((f->oy - z[1] + m) / 6400) * 6400;
-    b[3] = f->oy - floor((f->oy - z[3] - m) / 6400) * 6400;
-    if (z[2] > z[0] && z[3] > z[1]) er = run(&x, url, b, t, &r);
-  }
-  fprintf(out, "{\"clear\":%.6g,\"error\":", isnan(r.clear) ? -1 : r.clear);
+  fprintf(out, "{\"clear\":%.6g,\"error\":", isnan(r->clear) ? -1 : r->clear);
   fprintf(out, er ? "\"%s\",\"hotspots\":[" : "null,\"hotspots\":[", er);
-  for (int i = 0, k = 0; !er && i < r.nd; i++) {
-    det *d = &r.d[i];
+  for (int i = 0, k = 0; !er && i < r->nd; i++) {
+    det *d = &r->d[i];
     if (d->x < z[0] || d->x >= z[2] || d->y <= z[1] || d->y > z[3]) continue;
     geo(d->x, d->y, zn, so, &p, &q);
     fprintf(out, "%s{\"lon\":%.7f,\"lat\":%.7f,\"max_b12\":%.4f,\"avg_b12\":"
       "%.4f,\"peak_b11\":%.4f,\"ratio\":%.4g,\"peakedness\":%.4f,\"pixels\":"
       "%d,\"radiance\":%.4f,\"saturated\":%s,\"cloud\":%.3g", k++ ? "," : "",
       p, q, d->max, d->avg, d->b11, isinf(d->ratio) ? 1e308 : d->ratio, d->pk,
-      d->px, d->rad, d->sat ? "true" : "false", cloud(&r, d->x, d->y));
+      d->px, d->rad, d->sat ? "true" : "false", cloud(r, d->x, d->y));
     // and its pixels, each its b12 and its square's corners
     fputs(",\"px\":[", out);
     for (int j = 0; j < d->px; j++) {
@@ -151,8 +208,8 @@ EMSCRIPTEN_KEEPALIVE char *detect(const char *url, double w, double s,
   fputs("],\"cloud\":[", out);
   for (int i = 0; i < np; i++)
     utm(pt[2 * i], pt[2 * i + 1], zn, so, &p, &q),
-    fprintf(out, "%s%.3g", i ? "," : "", er ? -1 : cloud(&r, p, q));
-  for (int i = 0; i < r.nd; i++) free(r.d[i].pp);
-  fputs("]}", out), fclose(out), free(r.d), free(r.q);
+    fprintf(out, "%s%.3g", i ? "," : "", er ? -1 : cloud(r, p, q));
+  for (int i = 0; i < r->nd; i++) free(r->d[i].pp);
+  fputs("]}", out), fclose(out), free(r->d), free(r->q), end(j), free(x);
   return o;
 }

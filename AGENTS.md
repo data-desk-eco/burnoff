@@ -10,12 +10,40 @@ the macros run on load. `make test` checks that it loads, offline.
 - `s2_get()` is a GET for the catalogue; `s2_scenes`/`s2_hotspots` search
   CDSE's STAC for a geometry and detect at query time.
 
-It reads JP2 tile-parts directly, uses the L1C `MSK_CLASSI` mask, and runs
+It reads the JP2 files directly, uses the L1C `MSK_CLASSI` mask, and runs
 the compact-source thresholds over a box in one pass with 320 px
-background cells. From baseline N0511 the main header's TLM gives each
-tile-part's offset, so that header is read for each file and tile-parts
-are read exactly; older files use the SOT-marker search with learned
-per-MGRS layouts.
+background cells.
+
+A detection is a job (`step()` in `src/burnoff.c`) in stages: the headers
+and the mask; B12; the background, candidates and windows; B11 and B8A;
+the detections. Each stage gives a set of byte-range reads, all known
+before any is made, and then a set of decodes. The host makes the reads
+at the same time and calls `step()` again: curl's multi interface in the
+extension (one multi handle for each worker thread), `fetch()` in the
+browser. A decode is a `dj` (band, tile, window, packets), and a stage
+gives all of a band's decodes at once, so another decoder (a GPU) can take
+them in one batch. `dodec()` is the one place that calls OpenJPEG.
+`screen()` is the pass over the B12 raster (background, threshold,
+candidates); after it, only `ring()` (3 px around each candidate) and the
+640 m squares (no data) read that raster.
+
+When a file's main header has a TLM (the offset of each tile-part; in
+13SFR, the N0512 and N0513 files, but no N0511 or older ones), each
+tile-part header's PLT gives the length of each packet. The files have one
+quality layer, so each packet (one precinct of one resolution) is complete
+in itself. `need()` names the packets that a decode window needs, by
+OpenJPEG's own rule for the packets it skips (a precinct within 2
+coefficients of the window in a subband, in `tcd.c`).
+Only those packets are read, and the others are decoded as empty packets
+(one 0x00 byte), so the decode is identical to a decode of the whole
+tile-part. A tile-part that a window needs whole is read whole, without its
+PLT. Reads closer than 32 KB are joined. Files without a TLM use the
+SOT-marker search with learned per-MGRS layouts, in rounds of parallel
+reads, and are read as whole tile-parts. Against eodata (`s3://`), which
+allows 5000 requests a minute per key, tile-parts are always read whole,
+joined within 1 MB, and at most 20 requests are made for each band (the
+closest runs are joined). Without a TLM, the whole codestream is read once
+more than a quarter of the tile-parts are needed.
 
 Two costs set its speed: JPEG2000 decoding for large boxes, and eodata's
 5000 requests a minute per key for many small ones. An optimisation decodes
@@ -59,29 +87,46 @@ A tag `v*` releases a build for each platform; that ETL pins
 `burnoff-linux_amd64.duckdb_extension`.
 
 web/ builds the same detector for the browser (`make wasm`, emscripten):
-`web/burnoff.c` includes `src/burnoff.c` over a libcurl shim of
-synchronous XHRs, so it runs in a web worker, and adds in C what
-`s2_scenes` and `s2_hotspots` do in SQL (MGRS tiles, UTM, the zone a hotspot
-is reported in). `gs://` urls go through Google's JSON API, which sends
-CORS headers. A read is posted to the page before it is made (`ahead`),
-and the page fetches it, so blocking reads come from the HTTP cache. That
-cache can hand a read a 206 whose body is short of its Content-Range while
-another read of the file is in flight (seen in Aerial at ~1 in 400 reads
-once B8A was read more); `get()` retries such a body as it does a 5xx. The
-Aerial map (`~/Tools/aerial`, branch `burnoff-live`,
-`web/flaring/live.js`) runs it.
+`web/burnoff.c` includes `src/burnoff.c` without its DuckDB and curl host,
+and adds in C what `s2_scenes` and `s2_hotspots` do in SQL (MGRS tiles,
+UTM, the zone a hotspot is reported in). `web/worker.js` steps the job:
+it gets a stage's reads from `reads()`, makes them with `fetch()`, gives
+each answer to `answer()`, and calls `next()` again. Nothing blocks, so a
+worker holds several detections at once. `gs://` urls go through Google's
+JSON API, which sends CORS headers. A browser's HTTP cache can give a 206
+whose body is shorter than its Content-Range (seen in Aerial at ~1 in 400
+reads); `check()` retries such a body as it does a 5xx. The Aerial map
+(`~/Tools/aerial`, branch `burnoff-live`, `web/flaring/live.js`) runs it.
 
 Measured 2026-10-26 (M2, 16 workers, Permian at z11): first hotspots 2.9 s
 after load, 44 sites and ~1900 dated looks in 40 s. A site read is ~0.4 s
-and bound by round trips, not bytes or decode. Packet surgery (fetching
-only the precincts a window needs, others replaced by empty packets) is
-bit-exact and cuts a 320 px cell to ~45% of a tile-part, but needs 5-7
-requests against 1, so it is not used. Nor is a screen decode (B12 first
-without its lowest bitplanes, under a certified error bound, then exact
-decodes only where a peak is possible): it was exact, and 6-9x faster on
-cloudy files, but on clear land (Permian, Catalonia) bright ground and
-real hotspots send most cells to the exact decode, so the total did not
-fall. Single-threaded, the wasm decode is within 3-6% of native. Of the
-emscripten flags tried (-O2, LTO, mimalloc, emmalloc, SSE2 and SSE4.1
-emulation, fast-math), only SSE2 for OpenJPEG helped (0-5%, through its
-vertical 5/3 DWT), and it is kept.
+and bound by round trips, not bytes or decode. A screen decode is not used
+(B12 first without its lowest bitplanes, under a certified error bound,
+then exact decodes only where a peak is possible): it was exact, and 6-9x
+faster on cloudy files, but on clear land (Permian, Catalonia) bright
+ground and real hotspots send most cells to the exact decode, so the total
+did not fall. Single-threaded, the wasm decode is within 3-6% of native.
+Of the emscripten flags tried (-O2, LTO, mimalloc, emmalloc, SSE2 and
+SSE4.1 emulation, fast-math), only SSE2 for OpenJPEG helped (0-5%, through
+its vertical 5/3 DWT), and it is kept.
+
+Measured 2026-10-29 on 13SFR, the staged reads against the blocking ones
+(web-map, 4f439d1). Detections, clear shares and cells are identical,
+field for field, on 588 boxes (full tiles, quarters, 10 km and 2 km sites,
+JP2 tile and image edges, off the image) over 14 scenes from N0400 to
+N0513 (cloudy and clear, with and without a TLM), over file://, under the
+eodata budget, through DuckDB, over gs:// (88 boxes) and in headless
+Chrome (136 jobs local, 320 over gs://). Packet reads decode identically,
+pixel for pixel, to whole tile-parts on 13,500 random windows of nine
+N0512 and N0513 band files. Over gs:// on an M2, native, per row with a
+TLM: a 10 km site reads B12 0.73 to 0.34 MB, B11 and B8A 0.37 to 0.09 MB
+each, in 0.24 to 0.14 s; a 2 km site B12 0.35 to 0.06 MB in 0.14 to
+0.10 s; a quarter tile B12 17.0 to 4.7 MB and B11 3.3 to 0.9 MB in 1.4 to
+0.9 s; a whole tile B11 17.0 to 3.6 MB in 3.8 to 2.9 s. A 10 km site makes
+~10 requests in 4-5 rounds against ~2-3 requests. B8A over B11's windows
+reads the same bytes as over its own, so it comes with B11 and saves a
+round. Without a TLM, a whole tile takes 5.4 to 2.0 s, as more than a
+quarter of a band no longer reads the whole file. In Chrome against
+gs://, 112 site reads on four clear scenes took 19.6 s with 16 workers
+(the old way, Aerial's) and 10.7 s with 4 workers holding 8 each; 72
+sweep reads 16.0 s and 6.8 s.

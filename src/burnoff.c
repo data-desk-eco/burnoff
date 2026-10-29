@@ -13,16 +13,23 @@
 // row carries its error rather than failing the query.
 //
 // why it is fast:
-// - sentinel-2 jp2s carry no tile index (TLM) before baseline 05.12, so a
-//   reader walks every earlier tile-part header to reach tile k, one range
-//   request each. 0xff90 never occurs inside entropy-coded data, so a guess
-//   at tile k's offset plus a scan for its SOT marker finds it instead, and a
-//   learned per-MGRS layout makes the guess right first time. a box that
-//   needs much of a band takes the whole codestream in one request.
-// - a tile-part behind the file's own main header is a complete codestream,
-//   and openjpeg decodes just a window of it. decoding is nearly all the
-//   cost, so b12 is decoded only over clear background cells, and b11 and
-//   b8a only over windows around candidate hotspots.
+// - a job is a sequence of stages (step()), each a batch of byte-range
+//   reads, all known before any is made, and then a batch of decodes. the
+//   host makes a stage's reads at once and resumes the job: curl's multi
+//   interface here, fetch() in the browser (web/). a row waits one round
+//   trip a stage, not one a read, and nothing blocks while it waits.
+// - from baseline 05.11 a jp2's main header carries a TLM, the offset of
+//   every tile-part, and each tile-part header a PLT, the length of each of
+//   its packets. with one quality layer a packet (one precinct of one
+//   resolution) stands alone, so only the packets a decode window needs are
+//   read and the rest are decoded as empty ones, which openjpeg skips as it
+//   skips the real ones: bit-exact. older files carry no TLM: a guess at
+//   tile k's offset plus a scan for its SOT marker (0xff90 never occurs
+//   inside entropy-coded data) finds it, a learned per-MGRS layout makes
+//   the guess right first time, and its tile-part is read whole.
+// - decoding is nearly all the cost, so b12 is decoded only over clear
+//   background cells, and b11 and b8a only over windows around candidate
+//   hotspots.
 // - the 60 m cloud mask (a few KB) is read first: jp2 tiles under cloud are
 //   never fetched. headers and masks are cached across rows, so many sites
 //   on one scene read them once.
@@ -32,21 +39,15 @@
 // components, the morphological gates, the hot core grown from each peak
 // and a test that the peak is heat rather than reflected sunlight.
 #define _GNU_SOURCE
-#define DUCKDB_EXTENSION_NAME burnoff
-#define DUCKDB_EXTENSION_API_VERSION_MAJOR 1
-#define DUCKDB_EXTENSION_API_VERSION_MINOR 2
-#define DUCKDB_EXTENSION_API_VERSION_PATCH 0
-#include "duckdb_extension.h"
-#include <curl/curl.h>
 #include <math.h>
 #include <openjpeg.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
-DUCKDB_EXTENSION_EXTERN
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -67,6 +68,9 @@ enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
 // headers are parsed whole), about as much as 2^14 more pixels
 #define FIXED (1 << 14)
 #define SUB 32     // a cloud square: 640 m, a tenth of a background cell
+#define NP 64      // packets a tile-part may hold: 40 in a 640 px tile
+// reads closer than this are one: a request costs about as much
+#define GAP (32 << 10)
 
 // "name=value,name=value" over t
 static const char *params(const char *s, double *t) {
@@ -88,12 +92,12 @@ static const char *params(const char *s, double *t) {
 // QUANTIFICATION_VALUE of 10000. older baselines have no raster cloud mask.
 static double cal(int dn) { return dn ? (dn - 1000) / 10000. : 0; }
 
-// bytes read: where they start in the file, the file's size when known, and
-// the seconds a 429 asked us to wait
+// bytes read, the file's size when the answer gave it, and the seconds a
+// 429 asked us to wait
 typedef struct {
   unsigned char *p;
   size_t n, cap;
-  long long off, size;
+  long long size;
   int wait;
 } buf;
 
@@ -117,13 +121,6 @@ static size_t hd(char *d, size_t s, size_t n, void *u) {
   return s * n;
 }
 
-// bytes [lo, hi) or, with hi < 0, from lo to the end. a range past the end
-// is PAST, which eodata answers with a 404 rather than a 416. transient
-// failures (network errors, 429, 5xx) retry: a 429 after the wait it names,
-// as eodata allows 5000 requests a minute for each key, and the rest with a
-// backoff, as cdse sheds load with 503s
-static const char PAST[] = "range past the end of the file";
-
 // the http url of an s3://, gs:// or other url
 static void href(const char *url, char *u) {
   const char *s3 = getenv("AWS_S3_ENDPOINT");
@@ -141,46 +138,43 @@ static void href(const char *url, char *u) {
   }
 }
 
-// a read the detector is about to make: a browser starts it at once, so
-// that its own blocking read finds it cached (web/shim/curl)
-#ifndef ahead
-#define ahead(u, lo, hi) (void)(u)
-#endif
+// a read of [lo, hi) of url (hi -1: to the end, -2: the file's size alone)
+// that a stage lacks. the host makes it and check()s each answer; the
+// stage, run again, finds it with got(). sc: scanned for SOT markers
+typedef struct {
+  char *url;
+  long long lo, hi;
+  buf b;
+  const char *e;
+  int ok, tries, wait, sc;
+} rd;
 
-static const char *get(CURL *c, const char *url, long long lo, long long hi,
-                       buf *b) {
-  char range[48], u[4096];
-  href(url, u);
-  if (hi < 0) snprintf(range, sizeof range, "%lld-", lo);
-  else snprintf(range, sizeof range, "%lld-%lld", lo, hi - 1);
-  curl_easy_setopt(c, CURLOPT_URL, u);
-  curl_easy_setopt(c, CURLOPT_RANGE, lo || hi >= 0 ? range : NULL);
-  curl_easy_setopt(c, CURLOPT_WRITEDATA, b);
-  curl_easy_setopt(c, CURLOPT_HEADERDATA, b);
-  for (int i = 0; i < 8; i++) {
-    long code = 0;
-    b->n = 0, b->size = -1, b->wait = 0;
-    CURLcode e = curl_easy_perform(c);
-    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
-    // a body short of its range, as a browser's cache can hand over while
-    // another read of the file is in flight, retries as a 5xx does
-    if (!e && code == 206 && b->size > 0 &&
-        lo + (long long)b->n < (hi < 0 ? b->size : MIN(hi, b->size)))
-      code = 500;
-    if (!e && (code == 416 || (code == 404 && lo))) return PAST;
-    if (!e && code < 400) {
-      b->off = code == 200 ? 0 : lo;   // a server that ignored the range
-      if (b->size < 0 && (hi < 0 || code == 200)) b->size = b->off + b->n;
-      return NULL;
-    }
-    if (!e && code != 429 && code < 500) return "http error";
-    if (e == CURLE_FILE_COULDNT_READ_FILE || e == CURLE_URL_MALFORMAT ||
-        e == CURLE_UNSUPPORTED_PROTOCOL || e == CURLE_LOGIN_DENIED)
-      return curl_easy_strerror(e);
-    sleep(code == 429 && b->wait > 0 ? MIN(b->wait, 60)
-                                     : 1 << (i < 5 ? i : 5));
-  }
-  return "fetch failed after retries";
+// a range past the end is PAST, which eodata answers with a 404 rather than
+// a 416; a stage that lacks a read gives LACK, one that is done early FIN
+static const char PAST[] = "range past the end of the file", LACK[] = "",
+                  FIN[] = "";
+
+// one answer to r, its body in r->b, e a failure to connect: done, an
+// error, or r->wait seconds before it is made again. transient failures
+// (network errors, 429, 5xx) retry: a 429 after the wait it names, as
+// eodata allows 5000 requests a minute for each key, and the rest with a
+// backoff, as cdse sheds load with 503s
+static void check(rd *r, int e, long code) {
+  buf *b = &r->b;
+  // a body short of its range, as a browser's cache can hand over while
+  // another read of the file is in flight, retries as a 5xx does
+  if (!e && code == 206 && b->size > 0 &&
+      r->lo + (long long)b->n < (r->hi < 0 ? b->size : MIN(r->hi, b->size)))
+    code = 500;
+  if (!e && (code == 416 || (code == 404 && r->lo))) r->e = PAST;
+  else if (!e && code < 400) {
+    if (code == 200 && r->hi > -2) r->lo = 0, r->hi = -1;   // range ignored
+    if (b->size < 0 && r->hi == -1) b->size = r->lo + b->n;
+    r->ok = 1;
+  } else if (!e && code != 429 && code < 500) r->e = "http error";
+  else if (++r->tries == 8) r->e = "fetch failed after retries";
+  else r->wait = code == 429 && b->wait > 0 ? MIN(b->wait, 60)
+                                            : 1 << MIN(r->tries - 1, 5);
 }
 
 // a direct-mapped cache of file headers and cloud masks, a few KB each,
@@ -221,18 +215,129 @@ static unsigned be(const unsigned char *p, int n) {
   return v;
 }
 
-// one band file: main header, geometry, and its tile-parts as read
+// one band file: its main header, geometry and coding, and where its
+// tile-parts are
 typedef struct {
-  buf h, d;                    // main header (SOC to first SOT), tile-parts
+  buf h;                       // main header less TLM, SOC to first SOT
   long long first, size;       // first SOT offset, file size
   int w, h_, tw, th, nx, nt;   // image, tile, tiles across, tile count
+  int ok, tlm, round;          // parsed, indexed, search rounds made
+  int nr, mg, pp[33];          // resolutions, synthesis support, precincts
   double ox, oy, res;          // upper-left corner and pixel size, metres
   long long at[256], len[256]; // tile-parts located in the file, 0 = unknown
-  size_t tp[256];              // where tile-part k sits in d
-  char have[256];
 } band;
 
-typedef struct { CURL *c; buf b, s; band bd[3]; unsigned short *px; } ctx;
+// one detection; x y is the peak pixel's centre in the box's UTM metres,
+// and pp its hot core's px pixels, each its row << 16 | column in the tile,
+// then its b12
+typedef struct {
+  double x, y, max, avg, b11, ratio, pk, rad;
+  int px, sat, *pp;
+} det;
+typedef struct { double x, y, cloud; } sq;   // an obscured square's centre
+typedef struct { double clear; det *d; sq *q; int nd, cap, nq, qcap; } res;
+typedef struct { int k, x0, y0, x1, y1; } win;   // [x0,x1)×[y0,y1) of tile k
+
+// a decode, and the seam for another decoder: band b's tile k over its
+// window, from its np packets (p[i] of n[i] bytes, NULL where unread), into
+// o at row stride ow from origin ox, oy. a stage queues all of a band's
+// decodes at once, for a host to run as one batch if it can
+typedef struct {
+  int b, k, x0, y0, x1, y1, np, n[NP], done;
+  const unsigned char *p[NP];
+  unsigned short *o;
+  int ow, ox, oy;
+} dj;
+
+// a job: the hotspots in a box of one scene, and its clear-sky share. a
+// host with its own box (the browser's) sets fit, called once b12's grid
+// is known, which fills box or gives 1 to read nothing
+typedef struct job {
+  char *u[4];                     // b12, b11, b8a, the cloud mask
+  double box[4], t[NT];
+  res r;
+  const char *e;
+  int (*fit)(struct job *);
+  int st, budget, nr, rcap, nq, qcap, nw;
+  long long gap;
+  band bd[3];
+  rd *rq;                         // the reads made and to make
+  dj *dq;                         // the decodes queued
+  win *wn;                        // the windows of the band at hand
+  buf s, mk;                      // scratch, the mask
+  int X0, Y0, X1, Y1, W, H, mc, cx0, cy0, cw, ch, gx0, gy0, ncx, nc;
+  unsigned short *b12, *m, *v12, *v11, *v8a, *g12, *g8a, *px;
+  int *cnt, *cld, *idx, *par;
+  double *ct, *bgm;
+  char *ok, *sel;
+} job;
+
+// the read in hand that holds [lo, hi) of url
+static rd *got(job *j, const char *url, long long lo, long long hi) {
+  for (rd *r = j->rq; r < j->rq + j->nr; r++)
+    if (r->ok && r->lo <= lo &&
+        (hi < 0 ? r->hi == hi : hi <= r->lo + (long long)r->b.n) &&
+        !strcmp(r->url, url))
+      return r;
+  return NULL;
+}
+
+// a read to make: LACK, or what became of the same read made already
+static const char *want(job *j, const char *url, long long lo,
+                        long long hi) {
+  for (rd *r = j->rq; r < j->rq + j->nr; r++)
+    if (r->lo == lo && r->hi == hi && !strcmp(r->url, url))
+      return r->e ? r->e : r->ok ? "tile-part not found" : LACK;
+  if (j->nr == j->rcap)
+    j->rq = realloc(j->rq, (j->rcap = 2 * j->rcap + 16) * sizeof *j->rq);
+  j->rq[j->nr++] = (rd){.url = strdup(url), .lo = lo, .hi = hi, .b.size = -1};
+  return LACK;
+}
+
+// a band done with: its reads go
+static void forget(job *j, const char *url) {
+  int n = 0;
+  for (rd *r = j->rq; r < j->rq + j->nr; r++)
+    if (strcmp(r->url, url)) j->rq[n++] = *r;
+    else free(r->url), free(r->b.p);
+  j->nr = n;
+}
+
+// the packets openjpeg reads to decode [x0,x1)×[y0,y1) of tile k, bit i for
+// packet i (of one layer and component, in lrcp order), and their number
+// in *n: those of a precinct within mg coefficients of the window in one
+// of its subbands (the 5/3 synthesis support), as opj_t2_decode_packets
+// skips the rest (opj_tcd_is_subband_area_of_interest, tcd.c)
+#define CD(a, n) (-(-(a) >> (n)))   // ceil(a / 2^n)
+static uint64_t need(const band *f, int k, int x0, int y0, int x1, int y1,
+                     int *n) {
+  int t[4] = {k % f->nx * f->tw, k / f->nx * f->th}, w[4] = {x0, y0, x1, y1};
+  uint64_t m = 0;
+  t[2] = MIN(t[0] + f->tw, f->w), t[3] = MIN(t[1] + f->th, f->h_), *n = 0;
+  for (int r = 0; r < f->nr; r++) {
+    // the resolution's precincts, c across and down, from s in its bands
+    int l = f->nr - 1 - r, nb = r ? l + 1 : l, e[2], s[2], c[2];
+    for (int a = 0; a < 2; a++) {
+      int r0 = CD(t[a], l), r1 = CD(t[a + 2], l);
+      e[a] = f->pp[r] >> 4 * a & 15;
+      c[a] = r0 == r1 ? 0 : CD(r1, e[a]) - (r0 >> e[a]);
+      s[a] = CD(r0 >> e[a] << e[a], !!r), e[a] -= !!r;
+    }
+    for (int p = 0; p < c[0] * c[1]; p++, ++*n)
+      for (int b = !!r, hit = 1; b < (r ? 4 : 1); b++, hit = 1) {
+        for (int a = 0; a < 2; a++) {
+          int o = (a ? b >> 1 : b & 1) << nb >> 1;   // the band's offset
+          int q = s[a] + ((a ? p / c[0] : p % c[0]) << e[a]);
+          int p0 = MAX(q, CD(t[a] - o, nb)), p1 = MIN(q + (1 << e[a]),
+                                                      CD(t[a + 2] - o, nb));
+          hit &= p0 < MAX(CD(w[a + 2] - o, nb), 0) + f->mg &&
+                 p1 > MAX(MAX(CD(w[a] - o, nb), 0) - f->mg, 0);
+        }
+        if (hit) { m |= *n < 64 ? 1ull << *n : 0; break; }
+      }
+  }
+  return m;
+}
 
 // a band's header. it is the same on every date of one MGRS tile, band and
 // processing baseline (only kakadu's comments differ), so one read serves
@@ -240,28 +345,25 @@ typedef struct { CURL *c; buf b, s; band bd[3]; unsigned short *px; } ctx;
 // newer file's header also carries a TLM, the offset of each of its own
 // tile-parts: that header is read for each file, and the tile-parts are
 // then read exactly where it puts them
-static const char *header(ctx *x, const char *url, band *f) {
+static const char *header(job *j, const char *url, band *f) {
   char key[64];
   const char *fn = strrchr(url, '/') ? strrchr(url, '/') + 1 : url;
   const char *bd = strrchr(fn, '_'), *nb = strstr(url, "_N");
-  buf *b = &x->b;
+  buf *b = &j->s;
   long long size = -1;
-  int own = 0, got = 0, n = 0;   // b is this file's own, read just now
+  int own = 0, got_ = 0, n = 0, bad = 0;   // b is this file's own
+  unsigned char *c = NULL;
+  if (f->ok) return NULL;
   snprintf(key, sizeof key, "%.6s%.12s%.6s", fn, bd ? bd : "", nb ? nb : "");
 again:
   if (!recall(own ? url : key, b, &size)) {
-    const char *e = get(x->c, url, 0, 16384, b);
-    if (e) return e;
-    if ((size = b->size) < 0) {   // no Content-Range (file://)
-      curl_off_t n = -1;
-      curl_easy_setopt(x->c, CURLOPT_NOBODY, 1L);
-      curl_easy_perform(x->c);
-      curl_easy_getinfo(x->c, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &n);
-      curl_easy_setopt(x->c, CURLOPT_NOBODY, 0L);
-      curl_easy_setopt(x->c, CURLOPT_HTTPGET, 1L);
-      if ((size = n) < 0) return "unknown file size";
-    }
-    keep(key, b, size), own = got = 1;
+    rd *r = got(j, url, 0, 16384), *s = r && r->b.size < 0
+                                       ? got(j, url, 0, -2) : r;
+    if (!r) return want(j, url, 0, 16384);
+    if (!s) return want(j, url, 0, -2);   // no Content-Range (file://)
+    if ((size = s->b.size) < 0) return "unknown file size";
+    b->n = 0, wr((char *)r->b.p, 1, MIN(r->b.n, 16384), b);
+    keep(key, b, size), own = got_ = 1;
   }
   unsigned char *s = memmem(b->p, b->n, "\xff\x4f\xff\x51", 4);
   unsigned char *sot = s ? memmem(s, b->p + b->n - s, "\xff\x90", 2) : 0;
@@ -286,10 +388,12 @@ again:
   // decoder would seek by it past the one tile-part it is given. its
   // entries are a tile (of st bytes, or in turn) and a length (of sp)
   long long at = sot - b->p;
-  memset(f->at, 0, sizeof f->at), memset(f->have, 0, sizeof f->have);
+  memset(f->at, 0, sizeof f->at);
   f->h.n = 0, wr((char *)s, 1, 2, &f->h);
   for (unsigned char *q = s + 2; q + 4 <= sot; q += 2 + be(q + 2, 2)) {
     int L = be(q + 2, 2), st = q[5] >> 4 & 3, sp = q[5] & 64 ? 4 : 2;
+    c = q[1] == 0x52 ? q : c;
+    bad |= q[1] == 0x53 || q[1] == 0x5f || q[1] == 0x60;   // COC, POC, PPM
     if (q[1] != 0x55) wr((char *)q, 1, 2 + L, &f->h);
     else if (!own) { own = 1; goto again; }
     else for (int i = 6; i + st + sp <= L + 2; i += st + sp, n++) {
@@ -298,8 +402,16 @@ again:
       at += be(q + i + st, sp);
     }
   }
-  if (got && n) keep(url, b, size);
-  f->first = sot - b->p, f->size = size, f->d.n = 0;
+  // packets that stand alone, so that one can be left unread: one layer,
+  // by resolution, no SOP or EPH markers, and one precinct grid
+  if (bad || !c || c[4] & 6 || c[5] > 1 || be(c + 6, 2) != 1 || c[9] > 32)
+    return "not one layer of lrcp packets";
+  f->nr = c[9] + 1, f->mg = c[13] ? 2 : 3;
+  for (int r = 0; r < f->nr; r++) f->pp[r] = c[4] & 1 ? c[14 + r] : 0xff;
+  need(f, 0, 0, 0, 0, 0, &bad);
+  if (bad > NP) return "too many packets";
+  if (got_ && n) keep(url, b, size);
+  f->first = sot - b->p, f->size = size, f->tlm = n > 0, f->ok = 1;
   return NULL;
 }
 
@@ -310,47 +422,47 @@ static int sot(const unsigned char *p, int nt, int *k, long long *len) {
   return *k < nt && !p[10] && p[11] <= 1 && *len >= 14;
 }
 
-// tile-part k: fetch around a predicted offset (the expected length, when
-// known, sizing the read) and scan for SOT markers. tile-parts are in tile
-// order, so those found bracket k: the next read starts where k - 1 ends,
-// takes the whole bracket once it is small, and otherwise interpolates
-// within it
-static const char *tile(ctx *x, const char *url, band *f, const char *need,
-                        int k, long long pred, long long want) {
-  long long M = want ? 64 << 10 : 256 << 10, lo = pred - M, len;
-  long long W = 2 * M + (want ? want + want / 8 : 512 << 10);
-  long long B = f->first, A = 0;   // k lies in [B, A), or [B, size)
-  int kb = -1, ka = f->nt, j;
-  buf *b = &x->b;
-  for (int i = 0; i < 12; i++) {
-    lo = MAX(MIN(lo, f->size - W), f->first);
-    const char *e = get(x->c, url, lo, lo + W, b);
-    if (e == PAST) e = get(x->c, url, 0, 1, b), b->n = 0;   // learn the size
-    if (e) return e;
-    f->size = b->size > 0 ? b->size : f->size;
-    for (size_t q = 0; q + 12 <= b->n; q++) {
-      if (b->p[q] != 0xff || !sot(b->p + q, f->nt, &j, &len)) continue;
-      long long at = b->off + q;
-      if (at + len > f->size) continue;
-      f->at[j] = at, f->len[j] = len;
-      if (need[j] && !f->have[j] && q + len <= b->n)   // k, or one wanted
-        f->tp[j] = f->d.n, f->have[j] = 1, wr((char *)b->p + q, 1, len, &f->d);
-      else if (j == k) {   // k runs past the read
-        if ((e = get(x->c, url, at, at + len, b))) return e;
-        if (b->n != (size_t)len) return "short tile-part";
-        f->tp[k] = f->d.n, f->have[k] = 1;
-        return wr((char *)b->p, 1, len, &f->d), NULL;
+// tile-part k's packets, from the PLT in its header (512 bytes hold a PLT
+// of NP lengths): their offsets o in the file and lengths l, and their
+// number; 0 while that header is not in hand, -1 if it is not just a PLT
+// or its lengths do not fill the tile-part
+static int pk(job *j, const char *url, band *f, int k, long long *o, int *l) {
+  long long a = f->at[k], s = MIN(f->len[k], 512), v = 0, len, z;
+  rd *r = got(j, url, a, a + s);
+  const unsigned char *p = r ? r->b.p + (a - r->lo) : NULL;
+  int n = 0, i = 12, t;
+  if (!p) return 0;
+  if (!sot(p, f->nt, &t, &len) || t != k || len != f->len[k]) return -1;
+  for (; i + 5 <= s && p[i] == 0xff && p[i + 1] == 0x58;
+       i += 2 + be(p + i + 2, 2))
+    for (int q = i + 5; q < MIN(i + 2 + be(p + i + 2, 2), s); q++)
+      if (v = v << 7 | (p[q] & 127), !(p[q] & 128)) {
+        if (n < NP) l[n] = v;
+        n++, v = 0;
       }
-      if (j < k && j > kb) kb = j, B = at + len;
-      if (j > k && j < ka) ka = j, A = at;
+  if (i + 2 > s || p[i] != 0xff || p[i + 1] != 0x93 || n > NP) return -1;
+  z = a + i + 2;
+  for (int q = 0; q < n; q++) o[q] = z, z += l[q];
+  return z == a + len ? n : -1;
+}
+
+// without a TLM: the tile-parts in each read of url not yet scanned, by
+// their SOT markers. a read past the end of the file, whose size was
+// another date's, asks for its size
+static const char *scan(job *j, const char *url, band *f) {
+  for (rd *r = j->rq; r < j->rq + j->nr; r++) {
+    if (r->sc || strcmp(r->url, url) || !(r->ok || r->e == PAST)) continue;
+    r->sc = 1, f->size = r->b.size > 0 ? r->b.size : f->size;
+    if (r->e) return want(j, url, 0, 1);
+    for (const unsigned char *p = r->b.p, *z = p + r->b.n;
+         (p = memchr(p, 0xff, z - p)) && z - p >= 12; p++) {
+      long long len, at = r->lo + (p - r->b.p);
+      int k;
+      if (sot(p, f->nt, &k, &len) && at + len <= f->size)
+        f->at[k] = at, f->len[k] = len;
     }
-    if (f->have[k]) return NULL;
-    long long gap = (ka < f->nt ? A : f->size) - B;
-    W = kb == k - 1 ? MAX(W, 512 << 10) : MIN(gap, 4 << 20);
-    lo = kb == k - 1 || gap <= 4 << 20
-       ? B : B + gap * (k - kb - 1) / (ka - kb - 1) - W / 2;
   }
-  return "tile-part not found";
+  return NULL;
 }
 
 // learned layouts: where each tile-part sat, as fractions of file size, per
@@ -374,77 +486,101 @@ static layout *learned(const char *url, const char *band) {
   return strcpy(lay[nlay].key, key), &lay[nlay++];
 }
 
-// every tile-part in need[]: the whole codestream in one request when much
-// of the band is wanted, else one at a time. dry, the indexed reads are
-// only announced, bar the first if it is about to be made
-static const char *parts(ctx *x, const char *url, band *f, const char *need,
-                         int dry) {
-  int miss = 0;
-  char u[4096];
-  long long done = 0;   // announced up to
-  int skip = dry == 2;
-  for (int k = 0; k < f->nt; k++) miss += need[k] && !f->have[k];
-  if (!miss) return NULL;
-  if (!dry) parts(x, url, f, need, 2);
-  else href(url, u);
-  if (miss > f->nt / 4 && !dry) {
-    const char *e = get(x->c, url, f->first, -1, &f->d);
-    long long len;
-    int k;
-    if (e) return e;
-    f->size = f->d.size;
-    for (size_t q = 0; q + 12 <= f->d.n && sot(f->d.p + q, f->nt, &k, &len) &&
-                       q + len <= f->d.n; q += len)
-      f->tp[k] = q, f->at[k] = f->first + q, f->len[k] = len, f->have[k] = 1;
+// where to look for tile-part k, in q: first where the layout puts it (the
+// expected length sizing the read), or evenly spread; then from where the
+// tile-part before it ends, or between the nearest found either side, the
+// whole gap once it is small and otherwise where k should sit within it
+static void seek(const band *f, const layout *l, int k, long long *q) {
+  long long s = f->size, p, W, A = s;
+  if (!f->round) {
+    long long w = l->at[k] ? l->len[k] * s : 0, M = w ? 64 << 10 : 256 << 10;
+    p = (l->at[k] ? (long long)(l->at[k] * s)
+                  : f->first + (long long)((double)k * (s - f->first) /
+                                           f->nt)) - M;
+    W = 2 * M + (w ? w + w / 8 : 512 << 10);
+  } else {
+    int a = k, b = k;
+    while (--a >= 0 && !f->at[a]);
+    while (++b < f->nt && !f->at[b]);
+    long long B = a < 0 ? f->first : f->at[a] + f->len[a], g;
+    A = b < f->nt ? f->at[b] : s, g = A - B;
+    W = a == k - 1 ? 1 << 20 : MIN(g, 4 << 20);
+    p = a == k - 1 || g <= 4 << 20 ? B
+      : B + g * (k - a - 1) / (b - a - 1) - W / 2;
   }
+  q[0] = MAX(MIN(p, s - W), f->first), q[1] = MIN(q[0] + W, A);
+}
+
+static int cmp(const void *a, const void *b) {
+  return (*(long long *)a > *(long long *)b) -
+         (*(long long *)a < *(long long *)b);
+}
+
+// ranges q[0..n) (lo, hi pairs) as runs: in order, joined where the gap is
+// at most g, then the closest joined until at most m are left (m 0: any)
+static int merge(long long *q, int n, long long g, int m) {
+  int c = 0;
+  qsort(q, n, 16, cmp);
+  for (int i = 0; i < n; i++)
+    if (c && q[2 * i] - q[2 * c - 1] <= g)
+      q[2 * c - 1] = MAX(q[2 * c - 1], q[2 * i + 1]);
+    else q[2 * c] = q[2 * i], q[2 * c + 1] = q[2 * i + 1], c++;
+  for (; m && c > m; c--) {
+    int b = 0;
+    for (int i = 1; i < c - 1; i++)
+      if (q[2 * i + 2] - q[2 * i + 1] < q[2 * b + 2] - q[2 * b + 1]) b = i;
+    q[2 * b + 1] = q[2 * b + 3];
+    memmove(q + 2 * b + 2, q + 2 * b + 4, (c - b - 2) * 16);
+  }
+  return c;
+}
+
+// band f's reads for decode windows w[0..n), as runs: each tile-part whole
+// where it is wanted whole, as without a TLM or under a request budget,
+// else the PLT in its header and then the packets the windows need. LACK
+// until all are in hand
+static const char *parts(job *j, const char *url, band *f, const win *w,
+                         int n) {
+  uint64_t m[256] = {0};
+  long long o[NP], *q, a, b;
+  int l[NP], c, nq = 0, miss = 0, look = 0;
+  const char *e = f->tlm ? NULL : scan(j, url, f);
+  layout L = {0}, *g;
+  if (e) return e;
+  for (int i = 0; i < n; i++)
+    m[w[i].k] |= need(f, w[i].k, w[i].x0, w[i].y0, w[i].x1, w[i].y1, &c);
   // a band not yet seen on this MGRS tile borrows b12's layout, which the
   // same date's b12 read has just taught
-  layout l = {0}, *g;
   pthread_mutex_lock(&lk);
-  if ((g = learned(url, NULL))) l = *g;
-  for (int k = 0; (g = learned(url, "_B12.jp2")) && k < 256; k++)
-    if (!l.at[k]) l.at[k] = g->at[k], l.len[k] = g->len[k];
+  if (!f->tlm && (g = learned(url, NULL))) L = *g;
+  for (int k = 0; !f->tlm && (g = learned(url, "_B12.jp2")) && k < 256; k++)
+    if (!L.at[k]) L.at[k] = g->at[k], L.len[k] = g->len[k];
   pthread_mutex_unlock(&lk);
-  // one read takes k and the wanted tile-parts that the layout puts within
-  // 1 MB after it, as a request costs more than a MB in region; where they
-  // are known (a TLM, or a read that found them), exactly
+  q = malloc((size_t)16 * NP * f->nt);
   for (int k = 0; k < f->nt; k++) {
-    if (!need[k] || f->have[k]) continue;
-    if (f->at[k] && f->at[k] >= done) {
-      long long lo = f->at[k], hi = lo + f->len[k];
-      buf *b = &x->b;
-      for (int j = k + 1; j < f->nt; j++)
-        if (need[j] && !f->have[j] && f->at[j] >= hi &&
-            f->at[j] < hi + (1 << 20))
-          hi = f->at[j] + f->len[j];
-      if (dry) {
-        if (!skip) ahead(u, lo, hi);
-        skip = 0, done = hi;
-        continue;
-      }
-      const char *e = get(x->c, url, lo, hi, b);
-      if (e) return e;
-      for (int j = k; j < f->nt; j++)
-        if (need[j] && !f->have[j] && f->at[j] >= lo &&
-            f->at[j] + f->len[j] <= b->off + (long long)b->n)
-          f->tp[j] = f->d.n, f->have[j] = 1,
-          wr((char *)b->p + f->at[j] - b->off, 1, f->len[j], &f->d);
-      if (!f->have[k]) return "short tile-part";
+    if (!m[k] || ((a = f->at[k]) && got(j, url, a, b = a + f->len[k])))
       continue;
-    }
-    if (dry) continue;
-    long long p = l.at[k]
-      ? (long long)(l.at[k] * f->size)
-      : f->first + (long long)((double)k * (f->size - f->first) / f->nt);
-    long long end = p + (long long)(l.len[k] * f->size);
-    for (int j = k + 1; l.at[k] && j < f->nt; j++)
-      if (need[j] && !f->have[j] && l.at[j] &&
-          (long long)(l.at[j] * f->size) - end < 1 << 20)
-        end = (long long)((l.at[j] + l.len[j]) * f->size);
-    const char *e = tile(x, url, f, need, k, p, l.at[k] ? end - p : 0);
-    if (e) return e;
+    if (miss++, !a) { seek(f, &L, k, q + 2 * nq++), look = 1; continue; }
+    need(f, k, 0, 0, f->w, f->h_, &c);
+    int np = !f->tlm || j->budget || m[k] == (c < 64 ? (1ull << c) - 1 : ~0ull)
+           ? -2 : pk(j, url, f, k, o, l);
+    if (np == -1 || np > 0 ? np != c : 0)
+      return free(q), "malformed tile-part header";
+    if (np < 0) q[2 * nq] = a, q[2 * nq++ + 1] = b;
+    else if (!np) q[2 * nq] = a, q[2 * nq++ + 1] = a + MIN(f->len[k], 512);
+    else for (int i = 0; i < np; i++)
+      if (m[k] >> i & 1 && !got(j, url, o[i], o[i] + l[i]))
+        q[2 * nq] = o[i], q[2 * nq++ + 1] = o[i] + l[i];
   }
-  if (dry) return NULL;
+  // without a TLM and much of the band wanted: the whole codestream
+  if (!f->tlm && j->budget && miss > f->nt / 4)
+    q[0] = f->first, q[1] = -1, nq = 1;
+  else nq = merge(q, nq, j->gap, j->budget);
+  if (look && ++f->round > 12) e = "tile-part not found";
+  for (int i = 0; i < nq && (!e || e == LACK); i++)
+    e = want(j, url, q[2 * i], q[2 * i + 1]);
+  free(q);
+  if (e || f->tlm) return e;
   pthread_mutex_lock(&lk);
   if ((g = learned(url, NULL)))
     for (int k = 0; k < f->nt; k++)
@@ -506,23 +642,52 @@ static const char *decode(const buf *s, OPJ_CODEC_FORMAT fmt, int x0, int y0,
   return ok ? NULL : "jp2 decode failed";
 }
 
-// tile k's pixels under image window [x0,x1)×[y0,y1), clipped to the tile,
-// into out (row stride ow, origin ox0,oy0)
-static const char *dec(ctx *x, band *f, int k, int x0, int y0, int x1, int y1,
-                       unsigned short *out, int ow, int ox0, int oy0) {
-  int tx = k % f->nx * f->tw, ty = k / f->nx * f->th;
-  x0 = MAX(x0, tx), y0 = MAX(y0, ty);
-  x1 = MIN(x1, tx + f->tw), y1 = MIN(y1, ty + f->th);
-  if (x1 <= x0 || y1 <= y0) return NULL;
-  x->s.n = 0, wr((char *)f->h.p, 1, f->h.n, &x->s);
-  wr((char *)f->d.p + f->tp[k], 1, f->len[k], &x->s);
-  wr("\xff\xd9", 1, 2, &x->s);
-  x->px = realloc(x->px, (size_t)(x1 - x0) * (y1 - y0) * 2);
-  const char *e = decode(&x->s, OPJ_CODEC_J2K, x0, y0, x1, y1, 1, x->px);
-  for (int y = y0; !e && y < y1; y++)
-    memcpy(out + (size_t)(y - oy0) * ow + x0 - ox0,
-           x->px + (size_t)(y - y0) * (x1 - x0), (x1 - x0) * 2);
-  return e;
+// one decode, by openjpeg: the main header, then tile k's tile-part rebuilt
+// from its packets, an unread one as an empty packet (a 0 bit, padded),
+// which openjpeg skips as it would the real one. the one place another
+// decoder goes
+static const char *dodec(job *j, dj *d) {
+  long long n = 14;
+  int w = d->x1 - d->x0, h = d->y1 - d->y0;
+  buf *s = &j->s;
+  for (int i = 0; i < d->np; i++) n += d->p[i] ? d->n[i] : 1;
+  unsigned char sot[14] = {0xff, 0x90, 0, 10, d->k >> 8, d->k, n >> 24,
+                           n >> 16, n >> 8, n, 0, 1, 0xff, 0x93};
+  s->n = 0, wr((char *)j->bd[d->b].h.p, 1, j->bd[d->b].h.n, s);
+  wr((char *)sot, 1, 14, s);
+  for (int i = 0; i < d->np; i++)
+    wr(d->p[i] ? (char *)d->p[i] : "", 1, d->p[i] ? d->n[i] : 1, s);
+  wr("\xff\xd9", 1, 2, s);
+  j->px = realloc(j->px, (size_t)w * h * 2);
+  const char *e = decode(s, OPJ_CODEC_J2K, d->x0, d->y0, d->x1, d->y1, 1,
+                         j->px);
+  for (int y = 0; !e && y < h; y++)
+    memcpy(d->o + (size_t)(d->y0 + y - d->oy) * d->ow + d->x0 - d->ox,
+           j->px + (size_t)y * w, w * 2);
+  return d->done = 1, e;
+}
+
+// the decodes of windows w[0..n) of band b, into o: each window with the
+// packets of its tile in hand
+static const char *decs(job *j, const char *url, int b, const win *w, int n,
+                        unsigned short *o) {
+  band *f = j->bd + b;
+  long long q[NP];
+  for (int i = 0, c; i < n; i++) {
+    if (j->nq == j->qcap)
+      j->dq = realloc(j->dq, (j->qcap = 2 * j->qcap + 16) * sizeof *j->dq);
+    dj *d = &j->dq[j->nq++];
+    *d = (dj){b, w[i].k, w[i].x0, w[i].y0, w[i].x1, w[i].y1, 0, {0}, 0, {0},
+              o, j->W, j->X0, j->Y0};
+    need(f, d->k, 0, 0, f->w, f->h_, &c);
+    if ((d->np = pk(j, url, f, d->k, q, d->n)) != c)
+      return "malformed tile-part header";
+    for (int p = 0; p < c; p++) {
+      rd *r = got(j, url, q[p], q[p] + d->n[p]);
+      d->p[p] = r ? r->b.p + (q[p] - r->lo) : NULL;
+    }
+  }
+  return NULL;
 }
 
 static char *swap(const char *url, const char *from, const char *to) {
@@ -532,17 +697,6 @@ static char *swap(const char *url, const char *from, const char *to) {
   sprintf(r, "%.*s%s", (int)(p - url), url, to);
   return r;
 }
-
-// one detection; x y is the peak pixel's centre in the box's UTM metres,
-// and pp its hot core's px pixels, each its row << 16 | column in the tile,
-// then its b12
-typedef struct {
-  double x, y, max, avg, b11, ratio, pk, rad;
-  int px, sat, *pp;
-} det;
-typedef struct { double x, y, cloud; } sq;   // an obscured square's centre
-typedef struct { double clear; det *d; sq *q; int nd, cap, nq, qcap; } res;
-typedef struct { int k, x0, y0, x1, y1; } win;   // [x0,x1)×[y0,y1) of tile k
 
 static int find(int *p, int i) {
   while (p[i] != i) i = p[i] = p[p[i]];
@@ -576,32 +730,201 @@ static int ring(const unsigned short *raster, const int *idx, int mc, int j,
   return m;
 }
 
-// band g's values at the selected candidates (box pixel indices idx) into
-// dst, decoded into the box-sized raster over windows: each component's box
-// of them in each jp2 tile, merged while the union costs less than a second
-// decode. each box is RING wider, so that with bg each candidate's ring()
-// is decoded too. the same tile-parts of band next, which a subset of
-// these candidates will want, are announced
-static const char *side(ctx *x, const char *url, const char *next, band *g,
-                        const band *f, const int *idx, int mc, int *par,
-                        const char *sel, int X0, int Y0, int W, int H,
-                        unsigned short *raster, unsigned short *dst,
-                        unsigned short *bg) {
-  int *bb = malloc((size_t)mc * 16), nw = 0;
+static int cloudy(const job *j, int row, int col) {
+  size_t i = (size_t)((j->Y0 + row) / 3 - j->cy0) * j->cw +
+             (j->X0 + col) / 3 - j->cx0;
+  return j->m[i] || j->m[(size_t)j->cw * j->ch + i];
+}
+
+// the mask, whole (a few KB): opaque cloud and cirrus layers
+static const char *mask(job *j) {
+  char key[4200];
+  long long aux;
+  rd *r;
+  if (!j->u[3] || j->mk.n) return NULL;
+  snprintf(key, sizeof key, "%s#c", j->u[3]);
+  if (recall(key, &j->mk, &aux)) return NULL;
+  if (!(r = got(j, j->u[3], 0, -1))) return want(j, j->u[3], 0, -1);
+  wr((char *)r->b.p, 1, r->b.n, &j->mk), keep(key, &j->mk, 0);
+  return NULL;
+}
+
+static int grid(const band *g, const band *f) {
+  return g->w == f->w && g->h_ == f->h_ && g->tw == f->tw && g->ox == f->ox &&
+         g->oy == f->oy;
+}
+
+// stage 0, the headers and the mask: the box in pixels, its background
+// cells, cloud first, and b12's windows: each jp2 tile is decoded over the
+// bounding box of its clear cells, and one with none is never fetched. b11's
+// and b8a's headers are asked for too, to come with b12's reads
+static const char *heads(job *j) {
+  band *f = j->bd;
+  const char *nb = strstr(j->u[0], "_N"), *e, *m;
+  if (!nb || atoi(nb + 2) < 400) return "needs baseline N0400 or later";
+  if (!j->u[1] || !j->u[2] || !j->u[3]) return "b12 url not in SAFE form";
+  e = header(j, j->u[0], f), m = mask(j);
+  if (!j->budget) header(j, j->u[1], j->bd + 1), header(j, j->u[2], j->bd + 2);
+  if (e) return e;
+  if (j->fit && j->fit(j)) return FIN;
+  double v[4] = {floor((j->box[0] - f->ox) / f->res),
+                 floor((f->oy - j->box[3]) / f->res),
+                 ceil((j->box[2] - f->ox) / f->res),
+                 ceil((f->oy - j->box[1]) / f->res)};
+  int lim[4] = {f->w, f->h_, f->w, f->h_}, p[4], tb[256][4];
   char need[256] = {0};
-  const char *e = NULL;
+  for (int i = 0; i < 4; i++)
+    p[i] = v[i] < 0 ? 0 : v[i] > lim[i] ? lim[i] : v[i];
+  int X0 = j->X0 = p[0], Y0 = j->Y0 = p[1], X1 = j->X1 = p[2],
+      Y1 = j->Y1 = p[3], W = j->W = X1 - X0, H = j->H = Y1 - Y0;
+  if (W <= 0 || H <= 0) return FIN;   // the box misses this tile
+  if (m) return m;
+  int cx0 = j->cx0 = X0 / 3, cy0 = j->cy0 = Y0 / 3;
+  int cw = j->cw = (X1 + 2) / 3 - cx0, ch = j->ch = (Y1 + 2) / 3 - cy0;
+  j->m = malloc((size_t)2 * cw * ch * 2);
+  if ((e = decode(&j->mk, OPJ_CODEC_JP2, cx0, cy0, cx0 + cw, cy0 + ch, 2,
+                  j->m)))
+    return e;
+  int gx0 = j->gx0 = X0 / CELL, gy0 = j->gy0 = Y0 / CELL;
+  int ncx = j->ncx = (X1 - 1) / CELL - gx0 + 1;
+  int nc = j->nc = ncx * ((Y1 - 1) / CELL - gy0 + 1);
+  int *cnt = j->cnt = calloc(nc, sizeof *cnt),
+      *cld = j->cld = calloc(nc, sizeof *cld);
+  for (int y = Y0; y < Y1; y++) {
+    unsigned short *m0 = j->m + (y / 3 - cy0) * cw, *m1 = m0 + cw * ch;
+    int *cn = cnt + (y / CELL - gy0) * ncx, *cd = cld + (cn - cnt);
+    for (int xx = X0; xx < X1; xx++)
+      cn[xx / CELL - gx0]++, cd[xx / CELL - gx0] += m0[xx / 3 - cx0] ||
+                                                   m1[xx / 3 - cx0];
+  }
+  for (int c = 0; c < nc; c++) {
+    int gx = gx0 + c % ncx, gy = gy0 + c / ncx;
+    int x0 = MAX(gx * CELL, X0), y0 = MAX(gy * CELL, Y0);
+    int x1 = MIN(gx * CELL + CELL, X1), y1 = MIN(gy * CELL + CELL, Y1);
+    if (cld[c] > j->t[MAXCLOUD] * cnt[c]) continue;
+    // a cell can straddle jp2 tiles (512 px from N0513): each gets its part
+    for (int ty = y0 / f->th; ty <= (y1 - 1) / f->th; ty++)
+      for (int tx = x0 / f->tw; tx <= (x1 - 1) / f->tw; tx++) {
+        int k = ty * f->nx + tx, *b = tb[k];
+        int a0 = MAX(x0, tx * f->tw), a1 = MAX(y0, ty * f->th);
+        int a2 = MIN(x1, tx * f->tw + f->tw), a3 = MIN(y1, ty * f->th + f->th);
+        if (!need[k]) b[0] = a0, b[1] = a1, b[2] = a2, b[3] = a3, need[k] = 1;
+        b[0] = MIN(b[0], a0), b[1] = MIN(b[1], a1);
+        b[2] = MAX(b[2], a2), b[3] = MAX(b[3], a3);
+      }
+  }
+  j->wn = malloc(256 * sizeof *j->wn), j->nw = 0;
+  for (int k = 0; k < f->nt; k++)
+    if (need[k])
+      j->wn[j->nw++] = (win){k, tb[k][0], tb[k][1], tb[k][2], tb[k][3]};
+  j->b12 = calloc((size_t)W * H, 2);
+  return NULL;
+}
+
+// stage 1: b12's tile-parts or packets, and its decodes. while b12 lacks
+// reads, the PLTs of b11 and b8a in its tiles come with them, so that the
+// packets around candidates are a round trip away once b12 is decoded
+static const char *b12(job *j) {
+  const char *e = parts(j, j->u[0], j->bd, j->wn, j->nw);
+  for (int i = 0; e == LACK && !j->budget && i < 2 * j->nw; i++) {
+    band *g = j->bd + 1 + i % 2;
+    int k = j->wn[i / 2].k;
+    long long a = g->ok && g->tlm ? g->at[k] : 0, b = a + MIN(g->len[k], 512);
+    if (a && !got(j, j->u[1 + i % 2], a, b)) want(j, j->u[1 + i % 2], a, b);
+  }
+  return e ? e : decs(j, j->u[0], 0, j->wn, j->nw, j->b12);
+}
+
+// over the b12 raster alone: per cell the background (no data counts as
+// obscured; the median of the dim pixels, below b12_min, from a histogram
+// of their counts) and its contrast threshold, the clear share, the
+// obscured share of each 640 m square, and the candidates: pixels above
+// b12_min and their cell's threshold, in raster order. whether a peak of
+// peak_b12_min is among them, which a detection needs
+static int screen(job *j) {
+  const double *t = j->t;
+  const unsigned short *b12 = j->b12;
+  int X0 = j->X0, Y0 = j->Y0, X1 = j->X1, Y1 = j->Y1, W = j->W, H = j->H;
+  int gx0 = j->gx0, gy0 = j->gy0, ncx = j->ncx, nc = j->nc, *cnt = j->cnt;
+  int *cld = j->cld, seen = W * H, clear = 0, hot = 0, cap = 0;
+  double *ct = j->ct = malloc(nc * sizeof *ct);
+  double *bgm = j->bgm = malloc(nc * sizeof *bgm);
+  int cut = (int)ceil(1000 + t[B12MIN] * 10000), *hist = calloc(cut, 4);
+  for (int c = 0; c < nc; c++) clear += cnt[c] - cld[c];
+  for (int c = 0; c < nc; c++) {
+    int gx = gx0 + c % ncx, gy = gy0 + c / ncx, nbg = 0, nd = 0, ndc = 0;
+    int ax = MAX(gx * CELL - X0, 0), ay = MAX(gy * CELL - Y0, 0);
+    int bx = MIN(gx * CELL + CELL - X0, W), by = MIN(gy * CELL + CELL - Y0, H);
+    ct[c] = INFINITY;
+    if (cld[c] > t[MAXCLOUD] * cnt[c]) continue;
+    memset(hist, 0, cut * 4);
+    for (int r0 = ay; r0 < by; r0++)
+      for (int c0 = ax; c0 < bx; c0++) {
+        int dn = b12[(size_t)r0 * W + c0];
+        if (!dn) nd++, ndc += !cloudy(j, r0, c0);
+        else if (dn < cut && cal(dn) < t[B12MIN]) hist[dn]++, nbg++;
+      }
+    seen -= nd, clear -= ndc;
+    if (cld[c] + ndc > t[MAXCLOUD] * cnt[c] || nbg < 10) continue;
+    int i = 0;
+    for (int s = 0; (s += hist[i]) <= nbg / 2; i++);
+    double med = bgm[c] = cal(i);
+    ct[c] = (med > t[BGFLOOR] ? med : t[BGFLOOR]) * t[CONTRAST];
+  }
+  free(hist);
+  if (seen > 0) j->r.clear = (double)clear / seen;
+  int qx0 = X0 / SUB, qy0 = Y0 / SUB, nqx = (X1 - 1) / SUB - qx0 + 1;
+  int nq = nqx * ((Y1 - 1) / SUB - qy0 + 1);
+  int *qn = calloc(nq, sizeof *qn), *qo = calloc(nq, sizeof *qo);
+  for (int r0 = 0; r0 < H; r0++)
+    for (int c0 = 0; c0 < W; c0++) {
+      int gx = X0 + c0, gy = Y0 + r0;
+      int c = (gy / CELL - gy0) * ncx + gx / CELL - gx0;
+      int q = (gy / SUB - qy0) * nqx + gx / SUB - qx0;
+      qn[q]++, qo[q] += cld[c] > t[MAXCLOUD] * cnt[c] || cloudy(j, r0, c0) ||
+                        !b12[(size_t)r0 * W + c0];
+    }
+  res *r = &j->r;
+  for (int q = 0; q < nq; q++) {
+    if (r->nq == r->qcap)
+      r->q = realloc(r->q, (r->qcap = 2 * r->qcap + 64) * sizeof *r->q);
+    r->q[r->nq++] = (sq){j->bd->ox + ((qx0 + q % nqx) * SUB + SUB / 2.) *
+                         j->bd->res, j->bd->oy - ((qy0 + q / nqx) * SUB +
+                         SUB / 2.) * j->bd->res, (double)qo[q] / qn[q]};
+  }
+  free(qn), free(qo);
+  for (int r0 = 0; r0 < H; r0++)
+    for (int c0 = 0; c0 < W; c0++) {
+      double v = cal(b12[(size_t)r0 * W + c0]);
+      int c = ((Y0 + r0) / CELL - gy0) * ncx + (X0 + c0) / CELL - gx0;
+      if (v <= t[B12MIN] || v <= ct[c]) continue;
+      if (j->mc == cap)
+        j->idx = realloc(j->idx, (cap = cap ? 2 * cap : 256) * 4);
+      j->idx[j->mc++] = r0 * W + c0, hot |= v >= t[PEAKMIN];
+    }
+  return hot;
+}
+
+// the windows around the selected candidates: each component's box of them
+// in each jp2 tile, merged while the union costs less than a second decode.
+// each box is RING wider, so that with bg each candidate's ring() is decoded
+// too
+static void wins(job *j) {
+  band *f = j->bd;
+  int mc = j->mc, *idx = j->idx, *par = j->par, X0 = j->X0, Y0 = j->Y0;
+  int W = j->W, H = j->H, *bb = malloc((size_t)mc * 16), nw = 0, cap = 0;
   win *wn = NULL;
-  for (int j = 0; j < mc; j++)
-    bb[4 * j] = bb[4 * j + 1] = INT32_MAX, bb[4 * j + 2] = bb[4 * j + 3] = -1;
-  for (int j = 0; j < mc; j++) {
-    int *b = bb + 4 * find(par, j), gx = X0 + idx[j] % W, gy = Y0 + idx[j] / W;
-    if (!sel[j]) continue;
+  for (int k = 0; k < mc; k++)
+    bb[4 * k] = bb[4 * k + 1] = INT32_MAX, bb[4 * k + 2] = bb[4 * k + 3] = -1;
+  for (int k = 0; k < mc; k++) {
+    int *b = bb + 4 * find(par, k), gx = X0 + idx[k] % W, gy = Y0 + idx[k] / W;
+    if (!j->sel[k]) continue;
     b[0] = MIN(b[0], MAX(gx - RING, X0));
     b[1] = MIN(b[1], MAX(gy - RING, Y0));
     b[2] = MAX(b[2], MIN(gx + RING + 1, X0 + W));
     b[3] = MAX(b[3], MIN(gy + RING + 1, Y0 + H));
   }
-  for (int l = 0, cap = 0; l < mc; l++) {
+  for (int l = 0; l < mc; l++) {
     int *b = bb + 4 * l;
     if (b[2] < 0) continue;
     for (int ty = b[1] / f->th; ty <= (b[3] - 1) / f->th; ty++)
@@ -614,239 +937,119 @@ static const char *side(ctx *x, const char *url, const char *next, band *g,
   }
   free(bb);
   for (int i = 0; i < nw; i++)
-    for (int j = i + 1; j < nw; j++) {
-      win *a = &wn[i], *b = &wn[j];
+    for (int k = i + 1; k < nw; k++) {
+      win *a = &wn[i], *b = &wn[k];
       win v = {a->k, MIN(a->x0, b->x0), MIN(a->y0, b->y0), MAX(a->x1, b->x1),
                MAX(a->y1, b->y1)};
       if (a->k != b->k || area(&v) > area(a) + area(b) + FIXED) continue;
-      *a = v, wn[j] = wn[--nw], j = i;   // and look again from i
+      *a = v, wn[k] = wn[--nw], k = i;   // and look again from i
     }
-  for (int i = 0; i < nw; i++) need[wn[i].k] = 1;
-  if (nw && !(e = header(x, url, g)) &&
-      (g->w != f->w || g->h_ != f->h_ || g->tw != f->tw || g->ox != f->ox ||
-       g->oy != f->oy))
-    e = "bands on different grids";
-  if (nw && !e && next && !header(x, next, x->bd + 2))
-    parts(x, next, x->bd + 2, need, 1);
-  if (nw && !e) e = parts(x, url, g, need, 0);
-  for (int i = 0; i < nw && !e; i++)
-    e = dec(x, g, wn[i].k, wn[i].x0, wn[i].y0, wn[i].x1, wn[i].y1, raster, W,
-            X0, Y0);
-  for (int j = 0; j < mc && !e; j++)
-    if (sel[j] && (dst[j] = raster[idx[j]], bg))
-      bg[j] = ring(raster, idx, mc, j, W, H);
-  free(wn), drop(&g->d);
-  return e;
+  free(j->wn), j->wn = wn, j->nw = nw;
 }
 
-// one job: the hotspots in a box of one scene, and its clear-sky share
-static const char *run(ctx *x, const char *url, const double *box,
-                       const double *t, res *r) {
-  band *f = x->bd;
-  const char *nb = strstr(url, "_N"), *e = NULL;
-  r->nd = r->nq = 0, r->clear = NAN;
-  if (!nb || atoi(nb + 2) < 400) return "needs baseline N0400 or later";
-  char *u[3] = {swap(url, "B12.jp2", "B11.jp2"),
-                swap(url, "B12.jp2", "B8A.jp2"),
-                swap(url, "/IMG_DATA/", "/QI_DATA/MSK_CLASSI_B00.jp2")};
-  unsigned short *b12 = NULL, *m = NULL, *v12 = NULL, *v11 = NULL,
-                 *v8a = NULL, *g12 = NULL, *g8a = NULL;
-  int *cnt = NULL, *cld = NULL, *idx = NULL, *par = NULL, *pq = NULL;
-  double *ct = NULL, *bgm = NULL;
-  char need[256] = {0}, *ok = NULL, *sel = NULL;
-  int X0, Y0, X1, Y1, W, H, mc = 0;
-  if (!u[0] || !u[1] || !u[2]) { e = "b12 url not in SAFE form"; goto out; }
-  if ((e = header(x, url, f))) goto out;
-  {
-    double v[4] = {floor((box[0] - f->ox) / f->res),
-                   floor((f->oy - box[3]) / f->res),
-                   ceil((box[2] - f->ox) / f->res),
-                   ceil((f->oy - box[1]) / f->res)};
-    int lim[4] = {f->w, f->h_, f->w, f->h_}, p[4];
-    for (int i = 0; i < 4; i++)
-      p[i] = v[i] < 0 ? 0 : v[i] > lim[i] ? lim[i] : v[i];
-    X0 = p[0], Y0 = p[1], X1 = p[2], Y1 = p[3], W = X1 - X0, H = Y1 - Y0;
-  }
-  if (W <= 0 || H <= 0) goto out;   // the box misses this tile
+#define V(k) cal(j->v12[k])
 
-  // the 60 m mask, whole (a few KB): opaque cloud and cirrus layers
-  char key[4200];
-  long long aux;
-  int cx0 = X0 / 3, cy0 = Y0 / 3, cw = (X1 + 2) / 3 - cx0;
-  int ch = (Y1 + 2) / 3 - cy0;
-  snprintf(key, sizeof key, "%s#c", u[2]);
-  if (!recall(key, &x->s, &aux)) {
-    if ((e = get(x->c, u[2], 0, -1, &x->s))) goto out;
-    keep(key, &x->s, 0);
+// stage 2, after b12's decodes: the screen, then components of the
+// candidates; only those holding a possible peak need b11. a component can
+// hold a detection only if one pixel is both a possible peak and bright in
+// b11, and b8a then decides those of its pixels that saturation does not,
+// and how hot its peak is
+static const char *back(job *j) {
+  forget(j, j->u[0]);
+  if (!screen(j)) return FIN;
+  int mc = j->mc, *idx = j->idx, W = j->W, *par;
+  par = j->par = malloc(mc * 4), j->ok = calloc(mc, 1), j->sel = malloc(mc);
+  j->v12 = malloc(mc * 2), j->v11 = calloc(mc, 2), j->v8a = calloc(mc, 2);
+  j->g12 = calloc(mc, 2), j->g8a = calloc(mc, 2);
+  for (int k = 0; k < mc; k++) j->v12[k] = j->b12[idx[k]];
+  for (int k = 0; k < mc; k++) {
+    int i = idx[k], n;
+    par[k] = k;
+    if (i % W && k && idx[k - 1] == i - 1) par[find(par, k)] = find(par, k - 1);
+    if (i >= W && (n = at(idx, k, i - W)) >= 0)
+      par[find(par, k)] = find(par, n);
   }
-  m = malloc((size_t)2 * cw * ch * 2);
-  if ((e = decode(&x->s, OPJ_CODEC_JP2, cx0, cy0, cx0 + cw, cy0 + ch, 2, m)))
-    goto out;
-#define CLOUDY(row, col)                                                    \
-  (m[((Y0 + (row)) / 3 - cy0) * cw + (X0 + (col)) / 3 - cx0] ||            \
-   m[cw * ch + ((Y0 + (row)) / 3 - cy0) * cw + (X0 + (col)) / 3 - cx0])
+  for (int k = 0; k < mc; k++)
+    if (V(k) >= j->t[PEAKMIN]) j->ok[find(par, k)] = 1;
+  for (int k = 0; k < mc; k++)
+    if ((j->sel[k] = j->ok[find(par, k)]))
+      j->g12[k] = ring(j->b12, idx, mc, k, W, j->H);
+  return wins(j), NULL;
+}
 
-  // background cells, cloud first: each jp2 tile is decoded over the
-  // bounding box of its clear cells, and one with none is never fetched
-  int gx0 = X0 / CELL, gy0 = Y0 / CELL, ncx = (X1 - 1) / CELL - gx0 + 1;
-  int nc = ncx * ((Y1 - 1) / CELL - gy0 + 1), seen = W * H, clear = 0;
-  int tb[256][4];
-  cnt = calloc(nc, sizeof *cnt), cld = calloc(nc, sizeof *cld);
-  ct = malloc(nc * sizeof *ct), bgm = malloc(nc * sizeof *bgm);
-  for (int y = Y0; y < Y1; y++) {
-    unsigned short *m0 = m + (y / 3 - cy0) * cw, *m1 = m0 + cw * ch;
-    int *cn = cnt + (y / CELL - gy0) * ncx, *cd = cld + (cn - cnt);
-    for (int xx = X0; xx < X1; xx++) {
-      int cl = m0[xx / 3 - cx0] || m1[xx / 3 - cx0];
-      cn[xx / CELL - gx0]++, cd[xx / CELL - gx0] += cl, clear += !cl;
-    }
-  }
-  for (int c = 0; c < nc; c++) {
-    int gx = gx0 + c % ncx, gy = gy0 + c / ncx;
-    int x0 = MAX(gx * CELL, X0), y0 = MAX(gy * CELL, Y0);
-    int x1 = MIN(gx * CELL + CELL, X1), y1 = MIN(gy * CELL + CELL, Y1);
-    if (cld[c] > t[MAXCLOUD] * cnt[c]) continue;
-    // a cell can straddle jp2 tiles (512 px from N0513): each gets its part
-    for (int ty = y0 / f->th; ty <= (y1 - 1) / f->th; ty++)
-      for (int tx = x0 / f->tw; tx <= (x1 - 1) / f->tw; tx++) {
-        int k = ty * f->nx + tx, *b = tb[k];
-        int a0 = MAX(x0, tx * f->tw), a1 = MAX(y0, ty * f->th);
-        int a2 = MIN(x1, tx * f->tw + f->tw), a3 = MIN(y1, ty * f->th + f->th);
-        if (!need[k]) b[0] = a0, b[1] = a1, b[2] = a2, b[3] = a3, need[k] = 1;
-        b[0] = MIN(b[0], a0), b[1] = MIN(b[1], a1);
-        b[2] = MAX(b[2], a2), b[3] = MAX(b[3], a3);
-      }
-  }
-  b12 = calloc((size_t)W * H, 2);
-  if ((e = parts(x, url, f, need, 0))) goto out;
-  for (int k = 0; k < f->nt; k++)
-    if (need[k] && (e = dec(x, f, k, tb[k][0], tb[k][1], tb[k][2], tb[k][3],
-                            b12, W, X0, Y0)))
-      goto out;
-  drop(&f->d);
+// stage 3: b11's reads and decodes, into the b12 raster, whose values are
+// kept where they are wanted. b8a's reads over the same windows come with
+// them: its own windows, a subset, need the same packets (measured on 13SFR,
+// to the byte), so this saves a round trip for nothing
+static const char *b11(job *j) {
+  band *f = j->bd, *g = j->bd + 1, *h = j->bd + 2;
+  const char *e = j->nw ? header(j, j->u[1], g) : NULL;
+  if (!e && j->nw && !grid(g, f)) e = "bands on different grids";
+  if (!e && j->nw) e = parts(j, j->u[1], g, j->wn, j->nw);
+  if (j->nw && !j->budget && !header(j, j->u[2], h) && grid(h, f))
+    parts(j, j->u[2], h, j->wn, j->nw);
+  return e ? e : decs(j, j->u[1], 1, j->wn, j->nw, j->b12);
+}
 
-  // per cell: no data counts as obscured; the median of the dim pixels
-  // (below b12_min) is the background, from a histogram of their counts
-  int cut = (int)ceil(1000 + t[B12MIN] * 10000), *hist = calloc(cut, 4);
-  for (int c = 0; c < nc; c++) {
-    int gx = gx0 + c % ncx, gy = gy0 + c / ncx, nbg = 0, nd = 0, ndc = 0;
-    int ax = MAX(gx * CELL - X0, 0), ay = MAX(gy * CELL - Y0, 0);
-    int bx = MIN(gx * CELL + CELL - X0, W), by = MIN(gy * CELL + CELL - Y0, H);
-    ct[c] = INFINITY;
-    if (cld[c] > t[MAXCLOUD] * cnt[c]) continue;
-    memset(hist, 0, cut * 4);
-    for (int r0 = ay; r0 < by; r0++)
-      for (int c0 = ax; c0 < bx; c0++) {
-        int dn = b12[(size_t)r0 * W + c0];
-        if (!dn) nd++, ndc += !CLOUDY(r0, c0);
-        else if (dn < cut && cal(dn) < t[B12MIN]) hist[dn]++, nbg++;
-      }
-    seen -= nd, clear -= ndc;
-    if (cld[c] + ndc > t[MAXCLOUD] * cnt[c] || nbg < 10) continue;
-    int i = 0;
-    for (int s = 0; (s += hist[i]) <= nbg / 2; i++);
-    double med = bgm[c] = cal(i);
-    ct[c] = (med > t[BGFLOOR] ? med : t[BGFLOOR]) * t[CONTRAST];
-  }
-  free(hist);
-  if (seen > 0) r->clear = (double)clear / seen;
+// stage 4: b11 at the candidates, those still selected, and b8a's windows
+static const char *pick(job *j) {
+  int mc = j->mc;
+  forget(j, j->u[1]);
+  for (int k = 0; k < mc; k++)
+    if (j->sel[k]) j->v11[k] = j->b12[j->idx[k]];
+  memset(j->ok, 0, mc);
+  for (int k = 0; k < mc; k++)
+    if (j->sel[k] && V(k) >= j->t[PEAKMIN] && cal(j->v11[k]) > j->t[B11MIN])
+      j->ok[find(j->par, k)] = 1;
+  for (int k = 0; k < mc; k++)
+    j->sel[k] = j->sel[k] && j->ok[find(j->par, k)] &&
+                cal(j->v11[k]) > j->t[B11MIN];
+  return wins(j), NULL;
+}
 
-  // the obscured share of each 640 m square, by cloud, no data or a cell
-  // too cloudy to read: what a look at a site in it is judged by
-  {
-    int qx0 = X0 / SUB, qy0 = Y0 / SUB, nqx = (X1 - 1) / SUB - qx0 + 1;
-    int nq = nqx * ((Y1 - 1) / SUB - qy0 + 1);
-    int *qn = calloc(nq, sizeof *qn), *qo = calloc(nq, sizeof *qo);
-    for (int r0 = 0; r0 < H; r0++)
-      for (int c0 = 0; c0 < W; c0++) {
-        int gx = X0 + c0, gy = Y0 + r0;
-        int c = (gy / CELL - gy0) * ncx + gx / CELL - gx0;
-        int q = (gy / SUB - qy0) * nqx + gx / SUB - qx0;
-        qn[q]++, qo[q] += cld[c] > t[MAXCLOUD] * cnt[c] || CLOUDY(r0, c0) ||
-                          !b12[(size_t)r0 * W + c0];
-      }
-    for (int q = 0; q < nq; q++) {
-      if (r->nq == r->qcap)
-        r->q = realloc(r->q, (r->qcap = 2 * r->qcap + 64) * sizeof *r->q);
-      r->q[r->nq++] = (sq){f->ox + ((qx0 + q % nqx) * SUB + SUB / 2.) * f->res,
-                           f->oy - ((qy0 + q / nqx) * SUB + SUB / 2.) * f->res,
-                           (double)qo[q] / qn[q]};
-    }
-    free(qn), free(qo);
-  }
+// stage 5: b8a's reads and decodes
+static const char *b8a(job *j) {
+  band *f = j->bd, *h = j->bd + 2;
+  const char *e = j->nw ? header(j, j->u[2], h) : NULL;
+  if (!e && j->nw && !grid(h, f)) e = "bands on different grids";
+  if (!e && j->nw) e = parts(j, j->u[2], h, j->wn, j->nw);
+  return e ? e : decs(j, j->u[2], 2, j->wn, j->nw, j->b12);
+}
 
-  // candidates: b12 alone passes (above b12_min and the cell's contrast),
-  // in raster order. the spectral mask is a subset, and a detection needs
-  // a peak of peak_b12_min, so a box without one is done
-  int hot = 0, cap = 0;
-  for (int r0 = 0; r0 < H; r0++)
-    for (int c0 = 0; c0 < W; c0++) {
-      double v = cal(b12[(size_t)r0 * W + c0]);
-      int c = ((Y0 + r0) / CELL - gy0) * ncx + (X0 + c0) / CELL - gx0;
-      if (v <= t[B12MIN] || v <= ct[c]) continue;
-      if (mc == cap) idx = realloc(idx, (cap = cap ? 2 * cap : 256) * 4);
-      idx[mc++] = r0 * W + c0, hot |= v >= t[PEAKMIN];
-    }
-  if (!hot) goto out;
-  v12 = malloc(mc * 2);
-  for (int j = 0; j < mc; j++) v12[j] = b12[idx[j]];
-#define V(j) cal(v12[j])
-
-  // components of the candidates; only those holding a possible peak need
-  // b11. a component can hold a detection only if one pixel is both a
-  // possible peak and bright in b11, and b8a then decides those of its
-  // pixels that saturation does not, and how hot its peak is
-  par = malloc(mc * 4), ok = calloc(mc, 1), sel = malloc(mc);
-  v11 = calloc(mc, 2), v8a = calloc(mc, 2), g12 = calloc(mc, 2);
-  g8a = calloc(mc, 2);
-  for (int j = 0; j < mc; j++) {
-    int i = idx[j], n;
-    par[j] = j;
-    if (i % W && j && idx[j - 1] == i - 1) par[find(par, j)] = find(par, j - 1);
-    if (i >= W && (n = at(idx, j, i - W)) >= 0)
-      par[find(par, j)] = find(par, n);
-  }
-  for (int j = 0; j < mc; j++)
-    if (V(j) >= t[PEAKMIN]) ok[find(par, j)] = 1;
-  for (int j = 0; j < mc; j++)
-    if ((sel[j] = ok[find(par, j)])) g12[j] = ring(b12, idx, mc, j, W, H);
-  if ((e = side(x, u[0], u[1], x->bd + 1, f, idx, mc, par, sel, X0, Y0, W,
-                H, b12, v11, NULL)))
-    goto out;
-  memset(ok, 0, mc);
-  for (int j = 0; j < mc; j++)
-    if (sel[j] && V(j) >= t[PEAKMIN] && cal(v11[j]) > t[B11MIN])
-      ok[find(par, j)] = 1;
-  for (int j = 0; j < mc; j++)
-    sel[j] = sel[j] && ok[find(par, j)] && cal(v11[j]) > t[B11MIN];
-  if ((e = side(x, u[1], NULL, x->bd + 2, f, idx, mc, par, sel, X0, Y0, W,
-                H, b12, v8a, g8a)))
-    goto out;
-
-  // the spectral mask, its components, and per component the count, the sum
-  // and the lowest-index peak
-  for (int j = 0; j < mc; j++) {
-    double a = cal(v11[j]), c = cal(v8a[j]);
-    ok[j] = sel[j] && (a > t[SAT] || V(j) > t[SAT] || (a + c > .01 && a > c));
-  }
-  for (int j = 0; j < mc; j++) {
-    int i = idx[j], n;
-    par[j] = j;
-    if (!ok[j]) continue;
-    if (i % W && j && idx[j - 1] == i - 1 && ok[j - 1])
-      par[find(par, j)] = find(par, j - 1);
-    if (i >= W && (n = at(idx, j, i - W)) >= 0 && ok[n])
-      par[find(par, j)] = find(par, n);
-  }
-  int *n_ = calloc(mc, 4), *pk = malloc(mc * 4);
+// stage 6: b8a at the candidates and around them; the spectral mask, its
+// components, and per component the count, the sum and the lowest-index
+// peak; the detections
+static const char *dets(job *j) {
+  int mc = j->mc, *idx = j->idx, *par = j->par, W = j->W, H = j->H;
+  int X0 = j->X0, Y0 = j->Y0, *n_ = calloc(mc, 4), *pk = malloc(mc * 4);
+  int *pq = malloc(mc * 4);
+  const double *t = j->t;
   double *sum = calloc(mc, 8);
-  char *vis = calloc(mc, 1);
-  pq = malloc(mc * 4);
-  for (int j = 0; j < mc; j++) {
-    if (!ok[j]) continue;
-    int l = find(par, j);
-    if (!n_[l]++ || V(j) > V(pk[l])) pk[l] = j;
-    sum[l] += V(j);
+  char *ok = j->ok, *vis = calloc(mc, 1);
+  band *f = j->bd;
+  res *r = &j->r;
+  for (int k = 0; k < mc; k++)
+    if (j->sel[k])
+      j->v8a[k] = j->b12[idx[k]], j->g8a[k] = ring(j->b12, idx, mc, k, W, H);
+  for (int k = 0; k < mc; k++) {
+    double a = cal(j->v11[k]), c = cal(j->v8a[k]);
+    ok[k] = j->sel[k] &&
+            (a > t[SAT] || V(k) > t[SAT] || (a + c > .01 && a > c));
+  }
+  for (int k = 0; k < mc; k++) {
+    int i = idx[k], n;
+    par[k] = k;
+    if (!ok[k]) continue;
+    if (i % W && k && idx[k - 1] == i - 1 && ok[k - 1])
+      par[find(par, k)] = find(par, k - 1);
+    if (i >= W && (n = at(idx, k, i - W)) >= 0 && ok[n])
+      par[find(par, k)] = find(par, n);
+  }
+  for (int k = 0; k < mc; k++) {
+    if (!ok[k]) continue;
+    int l = find(par, k);
+    if (!n_[l]++ || V(k) > V(pk[l])) pk[l] = k;
+    sum[l] += V(k);
   }
   for (int l = 0; l < mc; l++) {
     if (!n_[l]) continue;
@@ -860,27 +1063,27 @@ static const char *run(ctx *x, const char *url, const double *box,
     // barely lifts b8a (3% of b12 at 1800 K, in reflectance); sunlight off
     // a roof, glass or a car lifts all three bands alike. a solar panel,
     // whose silicon absorbs b8a, passes
-    if (cal(v8a[pk[l]]) - cal(g8a[pk[l]]) >=
-        t[NIR] * (p - cal(g12[pk[l]])))
+    if (cal(j->v8a[pk[l]]) - cal(j->g8a[pk[l]]) >=
+        t[NIR] * (p - cal(j->g12[pk[l]])))
       continue;
     // the hot core: contiguous from the peak within this component, above
     // max(peak·warm_fraction, hot_floor), capped at warm_max_pixels
     // and its integrated excess radiance, Σ(b12 − the cell's background)
     int pi = idx[pk[l]], hd = 0, tl = 1, size = 0;
     double th = p * t[WARMF] > t[HOT] ? p * t[WARMF] : t[HOT], rad = 0;
-    double bg = bgm[((Y0 + pi / W) / CELL - gy0) * ncx +
-                    (X0 + pi % W) / CELL - gx0];
+    double bg = j->bgm[((Y0 + pi / W) / CELL - j->gy0) * j->ncx +
+                       (X0 + pi % W) / CELL - j->gx0];
     vis[pq[0] = pk[l]] = 1;
     while (hd < tl) {
-      int j = pq[hd++], i = idx[j], nb4[4], k = 0;
-      size++, rad += V(j) > bg ? V(j) - bg : 0;
+      int k = pq[hd++], i = idx[k], nb4[4], c = 0;
+      size++, rad += V(k) > bg ? V(k) - bg : 0;
       if (size > t[WARMMAX]) break;
-      if (i >= W) nb4[k++] = at(idx, mc, i - W);
-      if (i + W < W * H) nb4[k++] = at(idx, mc, i + W);
-      if (i % W) nb4[k++] = j > 0 && idx[j - 1] == i - 1 ? j - 1 : -1;
-      if ((i + 1) % W) nb4[k++] = j + 1 < mc && idx[j + 1] == i + 1 ? j + 1
+      if (i >= W) nb4[c++] = at(idx, mc, i - W);
+      if (i + W < W * H) nb4[c++] = at(idx, mc, i + W);
+      if (i % W) nb4[c++] = k > 0 && idx[k - 1] == i - 1 ? k - 1 : -1;
+      if ((i + 1) % W) nb4[c++] = k + 1 < mc && idx[k + 1] == i + 1 ? k + 1
                                                                     : -1;
-      for (int z = 0; z < k; z++) {
+      for (int z = 0; z < c; z++) {
         int q = nb4[z];
         if (q >= 0 && !vis[q] && ok[q] && find(par, q) == l && V(q) > th)
           vis[pq[tl++] = q] = 1;
@@ -888,10 +1091,10 @@ static const char *run(ctx *x, const char *url, const double *box,
     }
     for (int z = 0; z < tl; z++) vis[pq[z]] = 0;
     if (size > t[WARMMAX]) continue;
-    double a = cal(v11[pk[l]]);
+    double a = cal(j->v11[pk[l]]);
     int *pp = malloc(tl * 2 * sizeof *pp);
     for (int z = 0, i; z < tl; z++)
-      i = idx[pq[z]], pp[2 * z + 1] = v12[pq[z]],
+      i = idx[pq[z]], pp[2 * z + 1] = j->v12[pq[z]],
       pp[2 * z] = (Y0 + i / W) << 16 | (X0 + i % W);
     if (r->nd == r->cap) r->d = realloc(r->d, (r->cap = 2 * r->cap + 8) *
                                                   sizeof *r->d);
@@ -900,19 +1103,132 @@ static const char *run(ctx *x, const char *url, const double *box,
                           a > 1e-6 ? p / a : INFINITY, p / avg, rad, size,
                           p >= t[SAT], pp};
   }
-  free(n_), free(pk), free(sum), free(vis);
-out:
-  free(u[0]), free(u[1]), free(u[2]), free(b12), free(m), free(v12);
-  free(v11), free(v8a), free(g12), free(g8a), free(cnt), free(cld);
-  free(idx), free(par), free(pq);
-  free(ct), free(bgm), free(ok), free(sel);
-  // a whole codestream is tens of MB: nothing outlives the band's use
-  for (int i = 0; i < 3; i++) drop(&x->bd[i].d);
-  drop(&x->b), drop(&x->s);
-  return e;
+  free(n_), free(pk), free(pq), free(sum), free(vis);
+  return NULL;
 }
 
-// a pool of workers, each with its own connection, running queued rows
+static const char *(*const stage[])(job *) = {heads, b12, back, b11, pick,
+                                              b8a, dets};
+enum { DONE, READ, DECODE };
+
+// the job advanced as far as it goes: READ while a stage lacks reads (those
+// in j->rq neither ok nor failed), DECODE once a stage has queued decodes
+// (j->dq), which the host may run and mark done, or DONE, with j->e set on
+// a failure. decodes left undone are run here; nothing is read or decoded
+// twice
+static int step(job *j) {
+  for (int i = 0; i < j->nq && !j->e; i++)
+    if (!j->dq[i].done) j->e = dodec(j, &j->dq[i]);
+  j->nq = 0;
+  while (!j->e && j->st < (int)(sizeof stage / sizeof *stage)) {
+    const char *e = stage[j->st](j);
+    if (e == LACK) return READ;
+    if (e == FIN) j->st = sizeof stage / sizeof *stage;
+    else if (e) j->e = e;
+    else j->st++;
+    if (j->nq) return DECODE;
+  }
+  return DONE;
+}
+
+// a job over a box (or, with box NULL, one fit() gives) of b12's url. eodata
+// allows 5000 requests a minute for each key, and in region a request costs
+// more than a MB: its tile-parts are read whole, joined within a MB, at most
+// 20 reads to a band (without a TLM, the whole codestream once a quarter of
+// its tile-parts are wanted). elsewhere a request costs its round trip
+static void start(job *j, const char *url, const double *box,
+                  const double *t) {
+  j->u[0] = strdup(url);
+  j->u[1] = swap(url, "B12.jp2", "B11.jp2");
+  j->u[2] = swap(url, "B12.jp2", "B8A.jp2");
+  j->u[3] = swap(url, "/IMG_DATA/", "/QI_DATA/MSK_CLASSI_B00.jp2");
+  if (box) memcpy(j->box, box, sizeof j->box);
+  memcpy(j->t, t, sizeof j->t);
+  j->budget = strncmp(url, "s3://", 5) ? 0 : 20;
+  j->gap = j->budget ? 1 << 20 : GAP, j->r.clear = NAN;
+}
+
+// all but its result
+static void end(job *j) {
+  for (rd *r = j->rq; r < j->rq + j->nr; r++) free(r->url), free(r->b.p);
+  for (int i = 0; i < 4; i++) free(j->u[i]);
+  for (int i = 0; i < 3; i++) drop(&j->bd[i].h);
+  void *p[] = {j->rq, j->dq, j->wn, j->b12, j->m, j->v12, j->v11, j->v8a,
+               j->g12, j->g8a, j->px, j->cnt, j->cld, j->idx, j->par, j->ct,
+               j->bgm, j->ok, j->sel};
+  for (size_t i = 0; i < sizeof p / sizeof *p; i++) free(p[i]);
+  drop(&j->s), drop(&j->mk);
+}
+
+#ifndef __EMSCRIPTEN__
+#define DUCKDB_EXTENSION_NAME burnoff
+#define DUCKDB_EXTENSION_API_VERSION_MAJOR 1
+#define DUCKDB_EXTENSION_API_VERSION_MINOR 2
+#define DUCKDB_EXTENSION_API_VERSION_PATCH 0
+#include "duckdb_extension.h"
+#include <curl/curl.h>
+DUCKDB_EXTENSION_EXTERN
+
+// a worker's connections: a handle that holds the key and options, which
+// each read's is copied from, and a multi handle over which a stage's
+// reads go at once and which keeps their connections
+typedef struct { CURL *c; CURLM *m; } ctx;
+
+// the reads of q[0..n) neither ok nor failed, made at once, after the
+// longest wait one was asked for
+static void fetch(ctx *x, rd *q, int n) {
+  int wait = 0, left;
+  char u[4096], range[48];
+  CURLMsg *g;
+  for (rd *r = q; r < q + n; r++)
+    if (r->url && !r->ok && !r->e) wait = MAX(wait, r->wait);
+  if (wait) sleep(wait);
+  for (rd *r = q; r < q + n; r++) {
+    if (!r->url || r->ok || r->e) continue;
+    CURL *c = curl_easy_duphandle(x->c);
+    href(r->url, u);
+    snprintf(range, sizeof range, r->hi < 0 ? "%lld-" : "%lld-%lld", r->lo,
+             r->hi - 1);
+    curl_easy_setopt(c, CURLOPT_URL, u);
+    curl_easy_setopt(c, CURLOPT_RANGE, r->hi > -2 && (r->lo || r->hi >= 0)
+                                       ? range : NULL);
+    curl_easy_setopt(c, CURLOPT_NOBODY, (long)(r->hi == -2));
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &r->b);
+    curl_easy_setopt(c, CURLOPT_HEADERDATA, &r->b);
+    curl_easy_setopt(c, CURLOPT_PRIVATE, r);
+    r->b.n = 0, r->b.size = -1, r->b.wait = 0;
+    curl_multi_add_handle(x->m, c);
+  }
+  for (int k = 1; k;)
+    if (!curl_multi_perform(x->m, &k) && k)
+      curl_multi_poll(x->m, NULL, 0, 1000, NULL);
+  while ((g = curl_multi_info_read(x->m, &left))) {
+    rd *r;
+    long code = 0;
+    curl_off_t len = -1;
+    CURLcode e = g->data.result;
+    curl_easy_getinfo(g->easy_handle, CURLINFO_PRIVATE, (char **)&r);
+    curl_easy_getinfo(g->easy_handle, CURLINFO_RESPONSE_CODE, &code);
+    curl_easy_getinfo(g->easy_handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T,
+                      &len);
+    if (r->hi == -2) r->b.size = len;
+    if (e == CURLE_FILE_COULDNT_READ_FILE || e == CURLE_URL_MALFORMAT ||
+        e == CURLE_UNSUPPORTED_PROTOCOL || e == CURLE_LOGIN_DENIED)
+      r->e = curl_easy_strerror(e);
+    else check(r, e != CURLE_OK, code);
+    curl_multi_remove_handle(x->m, g->easy_handle);
+    curl_easy_cleanup(g->easy_handle);
+  }
+}
+
+static void open_(ctx *x) {
+  *x = (ctx){curl_easy_init(), curl_multi_init()};
+  curl_easy_setopt(x->c, CURLOPT_WRITEFUNCTION, wr);
+  curl_easy_setopt(x->c, CURLOPT_HEADERFUNCTION, hd);
+  curl_multi_setopt(x->m, CURLMOPT_MAX_HOST_CONNECTIONS, 6L);
+}
+
+// a pool of workers, each with its own connections, running queued rows
 typedef struct row {
   struct row *next;
   char *url;
@@ -928,13 +1244,13 @@ static pthread_mutex_t qm = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t qc = PTHREAD_COND_INITIALIZER;
 
 static void *worker(void *_) {
-  ctx x = {0};
+  ctx x;
   const char *id = getenv("AWS_ACCESS_KEY_ID"),
              *secret = getenv("AWS_SECRET_ACCESS_KEY"),
              *region = getenv("AWS_REGION");
   char sig[64], *cred = NULL;
   (void)_;
-  x.c = curl_easy_init();
+  open_(&x);
   snprintf(sig, sizeof sig, "aws:amz:%s:s3", region ? region : "us-east-1");
   if (id && secret && asprintf(&cred, "%s:%s", id, secret) > 0) {
     curl_easy_setopt(x.c, CURLOPT_AWS_SIGV4, sig);
@@ -945,8 +1261,6 @@ static void *worker(void *_) {
   if (!access("/etc/ssl/certs/ca-certificates.crt", R_OK))
     curl_easy_setopt(x.c, CURLOPT_CAINFO, NULL),
     curl_easy_setopt(x.c, CURLOPT_CAPATH, "/etc/ssl/certs");
-  curl_easy_setopt(x.c, CURLOPT_WRITEFUNCTION, wr);
-  curl_easy_setopt(x.c, CURLOPT_HEADERFUNCTION, hd);
   curl_easy_setopt(x.c, CURLOPT_CONNECTTIMEOUT, 15L);
   curl_easy_setopt(x.c, CURLOPT_LOW_SPEED_LIMIT, 1024L);   // a stalled
   curl_easy_setopt(x.c, CURLOPT_LOW_SPEED_TIME, 30L);      // read retries
@@ -957,7 +1271,13 @@ static void *worker(void *_) {
     if (!(qh = w->next)) qt = NULL;
     pthread_mutex_unlock(&qm);
     __atomic_add_fetch(&busy, 1, __ATOMIC_RELAXED);
-    w->e = w->e ? w->e : run(&x, w->url, w->box, w->th, &w->r);
+    if (!w->e) {
+      job j = {0};
+      start(&j, w->url, w->box, w->th);
+      for (int s; (s = step(&j));)
+        if (s == READ) fetch(&x, j.rq, j.nr);
+      w->e = j.e, w->r = j.r, end(&j);
+    }
     __atomic_sub_fetch(&busy, 1, __ATOMIC_RELAXED);
     pthread_mutex_lock(w->m);
     if (!--*w->left) pthread_cond_signal(w->c);
@@ -1101,40 +1421,32 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
 // s2_get(url): the body of an http get, four urls at a time, as the
 // catalogue answers more with 429s. a failure fails the query, so a search
 // never loses scenes
-typedef struct { char **u; buf *b; const char **e; idx_t n, next; } fetch;
-
-static void *getter(void *a) {
-  fetch *g = a;
-  CURL *c = curl_easy_init();
-  curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, wr);
-  curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, hd);
-  for (idx_t i; (i = __atomic_fetch_add(&g->next, 1, __ATOMIC_RELAXED)) <
-                g->n;)
-    g->e[i] = g->u[i] ? get(c, g->u[i], 0, -1, &g->b[i]) : NULL;
-  curl_easy_cleanup(c);
-  return NULL;
-}
-
 static void s2_get(duckdb_function_info info, duckdb_data_chunk in,
                    duckdb_vector out) {
   duckdb_vector v = duckdb_data_chunk_get_vector(in, 0);
   idx_t n = duckdb_data_chunk_get_size(in);
-  fetch g = {calloc(n, sizeof(char *)), calloc(n, sizeof(buf)),
-            calloc(n, sizeof(char *)), n, 0};
-  pthread_t th[4];
-  for (idx_t i = 0; i < n; i++) g.u[i] = valid(v, i) ? str(v, i) : NULL;
-  for (int k = 0; k < 4; k++) pthread_create(&th[k], NULL, getter, &g);
-  for (int k = 0; k < 4; k++) pthread_join(th[k], NULL);
+  rd *q = calloc(n ? n : 1, sizeof *q);
+  ctx x;
+  open_(&x);
+  for (idx_t i = 0; i < n; i++)
+    q[i] = (rd){.url = valid(v, i) ? str(v, i) : NULL, .hi = -1, .b.size = -1};
+  for (idx_t i = 0; i < n; i += 4)
+    for (int k = 1; k;) {
+      k = 0;
+      for (idx_t m = i; m < MIN(i + 4, n); m++)
+        k |= q[m].url && !q[m].ok && !q[m].e;
+      if (k) fetch(&x, q + i, MIN(4, n - i));
+    }
   duckdb_vector_ensure_validity_writable(out);
   for (idx_t i = 0; i < n; i++) {
-    if (g.e[i]) duckdb_scalar_function_set_error(info, g.e[i]);
-    if (!g.u[i]) duckdb_validity_set_row_invalid(
+    if (q[i].e) duckdb_scalar_function_set_error(info, q[i].e);
+    if (!q[i].url) duckdb_validity_set_row_invalid(
       duckdb_vector_get_validity(out), i);
     else duckdb_vector_assign_string_element_len(out, i,
-      (const char *)g.b[i].p, g.b[i].n);
-    free(g.u[i]), drop(&g.b[i]);
+      (const char *)q[i].b.p, q[i].b.n);
+    free(q[i].url), drop(&q[i].b);
   }
-  free(g.u), free(g.b), free(g.e);
+  free(q), curl_easy_cleanup(x.c), curl_multi_cleanup(x.m);
 }
 
 // the default source: eodata when its key is set, else google's mirror
@@ -1210,3 +1522,4 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   if (ok == DuckDBError) access->set_error(info, "could not register");
   return ok == DuckDBSuccess;
 }
+#endif

@@ -85,9 +85,14 @@ answers two calls:
 A `gs://gcp-public-data-sentinel-2/...` url is read through Google's JSON
 API, which answers cross-origin range requests. The page needs no proxy and
 no catalogue: a tile's scenes come from one listing of the bucket for each
-satellite and year. The worker posts each read that it is about to make as
-`['ahead', url, range]`. The page fetches it at once, so the worker's
-blocking read is answered from the browser's HTTP cache.
+satellite and year.
+
+A detection runs in stages. Each stage is a set of byte-range reads, all
+known before any of them is made, and then a set of decodes. The worker
+makes the reads of a stage at the same time with `fetch()` and does not
+wait on them, so one worker can run several detections at once: one
+decodes while the others wait for their reads. The worker answers each
+call with its id, in the order the calls finish.
 
 The Aerial map (`data-desk-eco/aerial`) uses it for a live layer.
 
