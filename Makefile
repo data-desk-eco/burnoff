@@ -5,6 +5,7 @@ PKGS = libcurl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
 CFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDLIBS = $(shell pkg-config --libs $(PKGS)) -lpthread -lm
+SRC = src/burnoff.c
 PLATFORM ?= $(shell uname -sm | awk '{ \
 	os = $$1 == "Darwin" ? "osx" : tolower($$1); \
 	arch = $$2 ~ /^(x86_64|amd64)$$/ ? "amd64" : "arm64"; \
@@ -23,6 +24,7 @@ GL_osx = -framework Metal -framework QuartzCore -framework Foundation -lobjc \
 GL_linux = -ldl -Wl,--gc-sections,--exclude-libs,ALL,-s
 ifeq ($(GPU),1)
 CFLAGS += -DGPU -Iext/wgpu/include
+SRC += src/gpu.c
 LDLIBS += ext/wgpu/lib/libwgpu_native.a $(GL_$(word 1,$(subst _, ,$(PLATFORM))))
 GPUDEP = ext/wgpu
 endif
@@ -33,8 +35,7 @@ E = ext/burnoff.duckdb_extension
 # section header, eight 32-byte fields (last first) and 256 bytes left for a
 # signature
 $(E): src/burnoff.c src/j2k.c src/gpu.c ext/burnoff.sql.h ext/j2k.wgsl.h $(GPUDEP)
-	$(CC) $(CFLAGS) -Iext -shared -fPIC src/burnoff.c src/gpu.c $(LDLIBS) \
-	  -o ext/burnoff.so
+	$(CC) $(CFLAGS) -Iext -shared -fPIC $(SRC) $(LDLIBS) -o ext/burnoff.so
 	{ cat ext/burnoff.so; printf '\000\223\004\020duckdb_signature\200\004'; \
 	  for f in "" "" "" C_STRUCT $(VERSION) v1.2.0 $(PLATFORM) 4; do \
 	    printf '%s' "$$f"; head -c $$((32 - $${#f})) /dev/zero; done; \
@@ -69,7 +70,8 @@ install: $(E)
 
 # the detector for the browser, with emscripten: web/burnoff.{js,wasm}, the
 # job's calls exported for worker.js
-EXPORTS = _detect,_next,_reads,_answer,_result,_records,_tiles,_free,_malloc
+EXPORTS = _detect,_next,_reads,_answer,_result,_records,_took,_tiles,_free,$\
+  _malloc
 wasm: web/burnoff.js
 web/burnoff.js: web/burnoff.c src/burnoff.c src/j2k.c
 	emcc -O3 -msimd128 -Wno-constant-conversion $< -o $@ -sMODULARIZE \

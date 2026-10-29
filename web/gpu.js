@@ -1,20 +1,22 @@
 // jpeg2000 decoding in webgpu, bit-exact with openjpeg: j2k.wgsl's tier-1
 // and inverse 5/3 dwt, fed the cpu's tier-2 records (laid out in j2k.wgsl)
-// straight from the wasm heap. it works in a dedicated worker. one call
-// takes any number of tiles, of any number of scenes: a whole stage is one
-// dispatch a step
-let dev, src, last
-const pipes = {}
+// straight from the wasm heap, and b12's screen. it works in a dedicated
+// worker. one call takes any number of tiles, of any number of scenes: a
+// whole stage is one compute pass, a dispatch a step, ending in a canary
+// that must be read back with the results (src/gpu.c says why). a device
+// lost is asked for again on the next call
+let dev, src, pipes
 export async function init() {
   if (dev) return dev
   const ad = await navigator.gpu?.requestAdapter()
   if (!ad) throw Error('no webgpu adapter')
   const l = ad.limits
-  src = await (await fetch(new URL('j2k.wgsl', import.meta.url))).text()
-  return dev = await ad.requestDevice({requiredFeatures:
-      ad.features.has('timestamp-query') ? ['timestamp-query'] : [],
-    requiredLimits: {maxStorageBufferBindingSize: l.maxStorageBufferBindingSize,
-                     maxBufferSize: l.maxBufferSize}})
+  src ??= await (await fetch(new URL('j2k.wgsl', import.meta.url))).text()
+  const d = await ad.requestDevice({requiredLimits: {
+    maxBufferSize: l.maxBufferSize,
+    maxStorageBufferBindingSize: l.maxStorageBufferBindingSize}})
+  d.lost.then(() => dev = null)
+  return pipes = {}, dev = d
 }
 // a module for blocks of up to 8 × 8, whose state stays in registers, and
 // one for larger, compiled when first needed
@@ -22,17 +24,56 @@ const pipe = (R, e) => pipes[R + e] ??= dev.createComputePipeline({
   layout: 'auto', compute: {entryPoint: e, module: pipes[R] ??=
     dev.createShaderModule({code: src.replace(R > 8 ? /\/\/8\{[^]*?\/\/\}/ :
                                               /\/\/32\{[^]*?\/\/\}/, '')})}})
+const G = () => GPUBufferUsage
+// a buffer of s bytes, with d's bytes if given
+const buf = (u, s, d) => {
+  const b = dev.createBuffer({size: Math.max(16, s + 3 & ~3), usage: u})
+  const k = d?.byteLength & ~3
+  if (d) dev.queue.writeBuffer(b, 0, d.buffer, d.byteOffset, k),
+    k < d.byteLength && dev.queue.writeBuffer(b, k,
+      Uint8Array.from([0, 1, 2, 3], i => d[k + i] ?? 0))
+  return b
+}
+// a dispatch of entry e in pass c, with bindings b (and uniform slot i)
+const run = (c, e, R, b, x, y = 1, u, i) => {
+  const p = pipe(R, e)
+  c.setPipeline(p), c.setBindGroup(0, dev.createBindGroup({
+    layout: p.getBindGroupLayout(0), entries: [...u ? [{binding: 0,
+      resource: {buffer: u, offset: 256 * i, size: 16}}] : [],
+      ...Object.entries(b).map(([k, b]) =>
+        ({binding: +k, resource: {buffer: b}}))]})),
+  c.dispatchWorkgroups(x, y)
+}
+// h's pass ended by the canary, its copies (buffer, offset, bytes) read
+// back with it, submitted; its buffers go. gives the bytes read
+async function fetch_(h, cps) {
+  const {ce, c} = h, y = c ? buf(G().STORAGE | G().COPY_SRC, 4)
+    : buf(G().COPY_SRC | G().COPY_DST, 4, Uint32Array.of(0xb0ff))
+  if (c) run(c, 'mark', 8, {12: y}, 1), c.end()
+  let s = 0
+  for (const [, , n] of cps) s += n
+  const r = buf(G().MAP_READ | G().COPY_DST, s + 4)
+  s = 0
+  for (const [b, o, n] of cps) ce.copyBufferToBuffer(b, o, r, s, n), s += n
+  ce.copyBufferToBuffer(y, 0, r, s, 4), dev.queue.submit([ce.finish()])
+  for (const b of [y, ...h.drop ?? []]) b.destroy()
+  await r.mapAsync(GPUMapMode.READ)
+  const a = r.getMappedRange().slice(0)
+  r.destroy()
+  if (new Uint32Array(a, s, 1)[0] != 0xb0ff) throw Error('gpu work dropped')
+  return a.slice(0, s)
+}
 
 // recs (Uint32Array, 5 a block), bytes (Uint8Array), tiles (Int32Array, 8 a
 // tile: its rect and the window wanted, in image coordinates); levels of
 // decomposition and bit depth from the codestream. gives the windows'
-// samples, each from an even offset, or with opt.keep none: they stay on
-// the gpu for cells(). opt.time gets the kernels' nanoseconds, opt.planes
-// the coefficients after tier-1
+// samples, each from an even offset, or with keep a handle to them, not
+// yet run, for cells(). it reads its arguments before it first waits, so
+// they may be views of a heap that can grow
 export async function decode(recs, bytes, tiles, levels = 4, prec = 15,
-                             opt = {}) {
-  await init()
-  const n = recs.length / 5, nt = tiles.length / 8, G = GPUBufferUsage
+                             keep) {
+  if (!dev) await init()
+  const n = recs.length / 5, nt = tiles.length / 8, S = G().STORAGE
   const tl = new Uint32Array(12 * nt)
   let px = 0, ow = 0, wmax = 0, amax = 0, R = 8
   for (let i = 0; i < nt; i++) {
@@ -44,181 +85,55 @@ export async function decode(recs, bytes, tiles, levels = 4, prec = 15,
   }
   for (let i = 3; i < recs.length; i += 5)
     if ((recs[i] & 0xffff) + 0x707 & 0xf0f0) R = 32
-  const buf = (u, s, d) => {
-    const b = dev.createBuffer({size: Math.max(16, s + 3 & ~3), usage: u})
-    const k = d?.byteLength & ~3
-    if (d) dev.queue.writeBuffer(b, 0, d.buffer, d.byteOffset, k),
-      k < d.byteLength && dev.queue.writeBuffer(b, k,
-        Uint8Array.from([0, 1, 2, 3], i => d[k + i] ?? 0))
-    return b
-  }
-  const S = G.STORAGE | G.COPY_DST, u = buf(G.UNIFORM | G.COPY_DST, 256 * 9)
-  const bt = buf(S, tl.byteLength, tl), br = buf(S, recs.byteLength, recs)
-  const bs = buf(S, bytes.byteLength, bytes), pl = buf(S | G.COPY_SRC, 4 * px)
-  const tmp = buf(S, 4 * px), bo = buf(S | G.COPY_SRC, 4 * ow)
-  const rd = opt.keep ? null : buf(G.MAP_READ | G.COPY_DST, 4 * ow)
   // each step's parameters: tier-1's, the dwt's rows and columns a level,
   // and the last columns'
-  const steps = [[n, 0], ...Array.from({length: 2 * levels - 1},
-    (_, i) => [i & 1, (i >> 1) + 1]), [0, levels]]
-  steps.forEach(([a, l], i) => dev.queue.writeBuffer(u, 256 * i,
-    new Uint32Array([a, levels, l, prec])))
-  const qs = opt.time && dev.features.has('timestamp-query') &&
-    dev.createQuerySet({type: 'timestamp', count: 4})
-  const ce = dev.createCommandEncoder(), wg = Math.ceil(n / 64)
-  // timestamps: tier-1's start and end, the dwt's first start and last end
-  const pass = (i, b, e, p, bufs, x, y) => {
-    const c = ce.beginComputePass(qs && b + e > -2 ? {timestampWrites: {
-      querySet: qs, beginningOfPassWriteIndex: b < 0 ? undefined : b,
-      endOfPassWriteIndex: e < 0 ? undefined : e}} : {})
-    c.setPipeline(p), c.setBindGroup(0, dev.createBindGroup({
-      layout: p.getBindGroupLayout(0), entries: [
-        {binding: 0, resource: {buffer: u, offset: 256 * i, size: 16}},
-        ...Object.entries({1: bt, ...bufs}).map(([k, b]) =>
-          ({binding: +k, resource: {buffer: b}}))]}))
-    c.dispatchWorkgroups(x, y), c.end()
-  }
-  ce.clearBuffer(pl)
-  pass(0, 0, 1, pipe(R, 't1'), {2: br, 3: bs, 4: pl}, Math.min(wg, 65535),
-       Math.ceil(wg / 65535))
-  let pc
-  if (opt.planes) pc = buf(G.MAP_READ | G.COPY_DST, 4 * px),
-    ce.copyBufferToBuffer(pl, 0, pc, 0, 4 * px)
-  for (let i = 1; i < steps.length - 1; i++)
-    pass(i, i == 1 ? 2 : -1, i == steps.length - 2 ? 3 : -1, pipe(R, 'dwt'),
-         i & 1 ? {5: pl, 4: tmp} : {5: tmp, 4: pl}, Math.ceil(amax / 256), nt)
-  pass(steps.length - 1, -1, -1, pipe(R, 'fin'), {5: tmp, 6: bo},
-       Math.ceil(wmax / 256), nt)
-  if (rd) ce.copyBufferToBuffer(bo, 0, rd, 0, 4 * ow)
-  let qr
-  if (qs) {
-    const q = buf(G.QUERY_RESOLVE | G.COPY_SRC, 32)
-    qr = buf(G.MAP_READ | G.COPY_DST, 32)
-    ce.resolveQuerySet(qs, 0, 4, q, 0), ce.copyBufferToBuffer(q, 0, qr, 0, 32)
-  }
-  dev.queue.submit([ce.finish()])
-  if (rd) await rd.mapAsync(GPUMapMode.READ)
-  const r = rd && new Uint16Array(rd.getMappedRange().slice(0))
-  if (pc) await pc.mapAsync(GPUMapMode.READ),
-    opt.planes = new Int32Array(pc.getMappedRange().slice(0))
-  if (qr) {
-    await qr.mapAsync(GPUMapMode.READ)
-    const t = new BigInt64Array(qr.getMappedRange())
-    opt.time = {t1: Number(t[1] - t[0]), dwt: Number(t[3] - t[2])}
-  }
-  last?.bt.destroy(), last?.bo.destroy(), last = opt.keep && {bt, bo, tl}
-  for (const b of [u, br, bs, pl, tmp, rd, pc, qr, ...last ? [] : [bt, bo]])
-    b?.destroy()
-  return r
+  const u = buf(G().UNIFORM | G().COPY_DST, 256 * (2 * levels + 1))
+  for (let i = 0; i <= 2 * levels; i++)
+    dev.queue.writeBuffer(u, 256 * i, Uint32Array.of(i ? (i - 1) & (i < 2 *
+      levels) : n, levels, i + 1 >> 1, prec))
+  const W = S | G().COPY_DST, bt = buf(W, tl.byteLength, tl)
+  const br = buf(W, recs.byteLength, recs), bs = buf(W, bytes.byteLength, bytes)
+  const pl = buf(S, 4 * px), tmp = buf(S, 4 * px)
+  const bo = buf(S | G().COPY_SRC, 4 * ow), ce = dev.createCommandEncoder()
+  const c = ce.beginComputePass(), wg = Math.ceil(n / 64)
+  run(c, 't1', R, {1: bt, 2: br, 3: bs, 4: pl}, Math.min(wg, 65535),
+      Math.ceil(wg / 65535), u, 0)
+  for (let i = 1; i < 2 * levels; i++)
+    run(c, 'dwt', R, i & 1 ? {1: bt, 5: pl, 4: tmp} : {1: bt, 5: tmp, 4: pl},
+        Math.ceil(amax / 256), nt, u, i)
+  run(c, 'fin', R, {1: bt, 5: tmp, 6: bo}, Math.ceil(wmax / 256), nt, u,
+      2 * levels)
+  const h = {ce, c, bt, bo, drop: [u, br, bs, pl, tmp]}
+  if (keep) return h
+  h.drop.push(bt, bo)
+  return new Uint16Array(await fetch_(h, [[bo, 0, 4 * ow]]))
 }
 
-// the detector's background cells and candidates over box (x0 y0 x1 y1,
-// pixels of one scene's last decode, kept), as src/burnoff.c run() makes
-// them: mask is the 60 m cloudy flags (a byte a pixel, mw a row), t run()'s
-// thresholds. gives cells, 8 u32 a cell row by row (see j2k.wgsl); the
-// candidates' box indices in raster order, their dn and g12, their ring's
-// brightest; hot (a candidate reaches peak_b12_min); and squares, each
-// 640 m square's pixels and obscured ones, row by row. opt.time gets the
-// kernels' nanoseconds
-const cal = d => d ? (d - 1000) / 10000 : 0
-// the least dn whose value passes f
-const least = (f, d = 1) => { while (d < 65536 && !f(cal(d))) d++; return d }
-export async function cells(box, mask, mw, t = {}, opt = {}) {
-  const {b12_min = .3, peak_b12_min = .5, contrast_ratio = 3,
-         background_floor = .15, max_cloud_local = .75} = t
-  const [X0, Y0, X1, Y1] = box, {bt, bo, tl} = last, G = GPUBufferUsage
-  let tw = 0, th = 0, iw = 0, ih = 0
-  for (let i = 0; i < tl.length; i += 12)
-    tw = Math.max(tw, tl[i + 2] - tl[i]),
-    th = Math.max(th, tl[i + 3] - tl[i + 1]),
-    iw = Math.max(iw, tl[i + 2]), ih = Math.max(ih, tl[i + 3])
-  const nx = Math.ceil(iw / tw), gx0 = X0 / 320 | 0, gy0 = Y0 / 320 | 0
-  const ncx = ((X1 - 1) / 320 | 0) - gx0 + 1
-  const nc = ncx * (((Y1 - 1) / 320 | 0) - gy0 + 1)
-  const cap = Math.min((X1 - X0) * (Y1 - Y0), 1 << 22)
-  // run()'s comparisons of doubles as cuts in dn: dim under m; a candidate
-  // at or over a and over the contrast on its cell's median
-  let m = 1
-  while (m < Math.ceil(1000 + b12_min * 10000) && cal(m) < b12_min) m++
-  if (m > 4064) throw Error('b12_min past the histogram')
-  const a = least(v => v > b12_min), ns = nx * Math.ceil(ih / th)
-  const o = 17 + ns + 102401 + m
-  const cq = new Uint32Array(o + (mask.length + 3 >> 2))
-  cq.set([X0, Y0, X1, Y1, tw, th, nx, gx0, gy0, ncx, mw, m, 17, 17 + ns,
-          17 + ns + 102401, o, cap])
-  cq.fill(~0, 17, 17 + ns)
-  for (let i = 0; i < tl.length; i += 12)
-    cq[17 + (tl[i + 1] / th | 0) * nx + (tl[i] / tw | 0)] = i / 12
-  for (let n = 0; n <= 102400; n++)
-    cq[17 + ns + n] = Math.floor(max_cloud_local * n)
-  for (let i = 0; i < m; i++) {
-    const ct = Math.max(cal(i), background_floor) * contrast_ratio
-    cq[o - m + i] = Math.max(a, least(v => v > ct,
-                                      Math.max(1, Math.floor(ct * 1e4) + 990)))
-  }
-  new Uint8Array(cq.buffer, 4 * o).set(mask)
-  const mk = (u, s) => dev.createBuffer({size: s, usage: u})
-  const bq = mk(G.STORAGE | G.COPY_DST, cq.byteLength)
-  const bc = mk(G.STORAGE | G.COPY_SRC, 32 * nc)
-  const bk = mk(G.STORAGE | G.COPY_SRC | G.COPY_DST, 8 * cap + 4)
-  const nqx = ((X1 - 1) >> 5) - (X0 >> 5) + 1
-  const nqy = ((Y1 - 1) >> 5) - (Y0 >> 5) + 1
-  const bg = mk(G.STORAGE | G.COPY_SRC, 4 * cap + 4)
-  const bs = mk(G.STORAGE | G.COPY_SRC, 8 * nqx * nqy)
-  const r1 = mk(G.MAP_READ | G.COPY_DST, 32 * nc + 4 + 8 * nqx * nqy)
-  dev.queue.writeBuffer(bq, 0, cq)
-  const qs = opt.time && dev.features.has('timestamp-query') &&
-    dev.createQuerySet({type: 'timestamp', count: 2})
-  const qb = qs && mk(G.QUERY_RESOLVE | G.COPY_SRC, 16)
-  const qr = qs && mk(G.MAP_READ | G.COPY_DST, 16)
-  const ce = dev.createCommandEncoder()
-  ce.clearBuffer(bk, 0, 4)
-  // the cells, then each candidate's ring and the squares
-  ;[['cells', nc], ['ring', 1024], ['squares', nqx, nqy]].forEach(([e, x, y],
-                                                                   i) => {
-    const c = ce.beginComputePass(qs && i != 1 ? {timestampWrites: {
-      querySet: qs, [i ? 'endOfPassWriteIndex' : 'beginningOfPassWriteIndex']:
-      i >> 1}} : {}), p = pipe(8, e)
-    c.setPipeline(p), c.setBindGroup(0, dev.createBindGroup({
-      layout: p.getBindGroupLayout(0), entries: Object.entries(
-        {1: bt, 6: bo, 7: bq, 8: bc, 9: bk, 10: bg, 11: bs}).filter(([k]) =>
-        e == 'cells' ? k < 10 : e == 'ring' ? k != 11 : k != 9 && k != 10)
-        .map(([k, b]) => ({binding: +k, resource: {buffer: b}}))}))
-    c.dispatchWorkgroups(x, y), c.end()
-  })
-  ce.copyBufferToBuffer(bc, 0, r1, 0, 32 * nc)
-  ce.copyBufferToBuffer(bk, 0, r1, 32 * nc, 4)
-  ce.copyBufferToBuffer(bs, 0, r1, 32 * nc + 4, 8 * nqx * nqy)
-  if (qs) ce.resolveQuerySet(qs, 0, 2, qb, 0),
-    ce.copyBufferToBuffer(qb, 0, qr, 0, 16)
-  dev.queue.submit([ce.finish()])
-  await r1.mapAsync(GPUMapMode.READ)
-  const cs = new Uint32Array(r1.getMappedRange().slice(0))
-  const k = cs[8 * nc]
-  if (k > cap) throw Error(`${k} candidates, past ${cap}`)
-  // then the candidates alone, sorted to raster order
-  const r2 = mk(G.MAP_READ | G.COPY_DST, 12 * k + 8)
-  const e = dev.createCommandEncoder()
-  if (k) e.copyBufferToBuffer(bk, 4, r2, 0, 8 * k),
-    e.copyBufferToBuffer(bg, 0, r2, 8 * k, 4 * k)
-  dev.queue.submit([e.finish()])
-  await r2.mapAsync(GPUMapMode.READ)
-  const pr = new Uint32Array(r2.getMappedRange()), sk = new Float64Array(k)
-  for (let i = 0; i < k; i++) sk[i] = pr[2 * i] * 4194304 + i
-  sk.sort()
-  const idx = new Int32Array(k), dn = new Uint16Array(k)
-  const g12 = new Uint16Array(k)
-  for (let i = 0; i < k; i++) {
-    const j = sk[i] % 4194304
-    idx[i] = pr[2 * j], dn[i] = pr[2 * j + 1], g12[i] = pr[2 * k + j]
-  }
-  if (qr) {
-    await qr.mapAsync(GPUMapMode.READ)
-    const t = new BigInt64Array(qr.getMappedRange())
-    opt.time = Number(t[1] - t[0])
-  }
-  const p5 = least(v => v >= peak_b12_min)
-  for (const b of [bq, bc, bk, bg, bs, r1, r2, qb, qr]) b?.destroy()
-  return {cells: cs.subarray(0, 8 * nc), idx, dn, g12,
-          hot: dn.some(d => d >= p5), squares: cs.subarray(8 * nc + 1)}
+// b12's screen, as src/burnoff.c screen() makes it, over decode h (from
+// decode(..., keep)): j2k.wgsl's cells, ring and squares, reading cq
+// (burnoff.c table()). gives 8 u32 a cell, the candidates' number k, 2 a
+// 640 m square, then 2 a candidate (box index, dn) in no order and its
+// ring, k
+export async function cells(h, cq) {
+  const S = G().STORAGE | G().COPY_SRC, [X0, Y0, X1, Y1] = cq
+  const nc = cq[9] * (((Y1 - 1) / 320 | 0) - cq[8] + 1), cap = cq[16]
+  const nx = ((X1 - 1) >> 5) - (X0 >> 5) + 1
+  const ny = ((Y1 - 1) >> 5) - (Y0 >> 5) + 1, m = 8 * nc + 1 + 2 * nx * ny
+  const bq = buf(G().STORAGE | G().COPY_DST, cq.byteLength, cq)
+  const bc = buf(S, 32 * nc), bk = buf(S, 8 * cap + 4), bg = buf(S, 4 * cap)
+  const bs = buf(S, 8 * nx * ny), b = {1: h.bt, 6: h.bo, 7: bq, 8: bc}
+  // the cells, then each candidate's ring and the squares, read back with
+  // the candidates' number, then the candidates
+  run(h.c, 'cells', 8, {...b, 9: bk}, nc)
+  run(h.c, 'ring', 8, {...b, 9: bk, 10: bg}, 1024)
+  run(h.c, 'squares', 8, {...b, 11: bs}, nx, ny)
+  h.drop.push(h.bt, h.bo, bq, bc, bs)
+  const a = new Uint32Array(await fetch_(h, [[bc, 0, 32 * nc], [bk, 0, 4],
+                                             [bs, 0, 8 * nx * ny]]))
+  const k = a[8 * nc], o = k <= cap && new Uint32Array(m + 3 * k)
+  if (o && k) o.set(new Uint32Array(await fetch_({ce:
+    dev.createCommandEncoder()}, [[bk, 4, 8 * k], [bg, 0, 4 * k]])), m)
+  bk.destroy(), bg.destroy()
+  if (!o) throw Error(k + ' candidates, past ' + cap)
+  return o.set(a), o
 }

@@ -37,7 +37,10 @@ from aois, lateral s2_hotspots(aois.geom, '2025-01-01');
 ## Build
 
 Requires a C compiler, `pkg-config` and libcurl (`libcurl4-openssl-dev` on
-Ubuntu). The JPEG 2000 decoder is burnoff's own, `src/j2k.c`. `make wasm` also needs emscripten and CMake.
+Ubuntu). The JPEG 2000 decoder is burnoff's own, `src/j2k.c`. The build
+downloads wgpu-native into `ext/` so that the extension can decode on the
+GPU (Metal on macOS, Vulkan on Linux); `make GPU=0` builds without it.
+`make wasm` also needs emscripten.
 
 ```sh
 make              # ext/burnoff.duckdb_extension
@@ -45,6 +48,24 @@ make test         # loads it and runs a detection offline
 make install      # so that `load burnoff` works in any directory
 make wasm         # web/burnoff.{js,wasm}, with emscripten
 ```
+
+## How it decodes
+
+A detection reads the cloud mask, then B12 over the clear parts of the
+box, then B11 and B8A only in small windows around candidate hotspots.
+From baseline N0512 the files index their packets, so only the packets
+that a window needs are read. Burnoff parses those packets on the CPU.
+Large decodes then run on the GPU, which also computes the background
+and candidates over B12. Small decodes, such as the windows around
+candidates, run on the CPU, which is as fast for them. Without a GPU,
+everything runs on the CPU. The results are the same, value for value,
+either way.
+
+On an M2, a whole Sentinel-2 tile takes 0.8 to 1.1 seconds with the GPU
+and 3.5 to 4.6 seconds on one CPU core. At eight rows at once, 70 whole
+and quarter tiles take 7.0 seconds against 10.2 seconds on the CPU alone,
+and 518 small sites take 4.8 seconds either way. In the browser, the
+network sets the time for sites.
 
 ## Functions
 
@@ -91,7 +112,9 @@ known before any of them is made, and then a set of decodes. The worker
 makes the reads of a stage at the same time with `fetch()` and does not
 wait on them, so one worker can run several detections at once: one
 decodes while the others wait for their reads. The worker answers each
-call with its id, in the order the calls finish.
+call with its id, in the order the calls finish. It decodes with WebGPU;
+in a browser without WebGPU it decodes on the CPU and logs a warning
+once.
 
 The Aerial map (`data-desk-eco/aerial`) uses it for a live layer.
 

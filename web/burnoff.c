@@ -91,7 +91,8 @@ typedef struct {
   int zn, so, part, parts;
   j2k_cbs cb;                     // the stage's batch for the gpu
   int32_t *tl;
-  uintptr_t b[6];
+  uint32_t *cq;
+  uintptr_t b[10];
 } web;
 
 // the zone a hotspot is reported in is the box within the tile's own 100 km
@@ -148,15 +149,21 @@ EMSCRIPTEN_KEEPALIVE job *detect(const char *url, double w, double s,
 EMSCRIPTEN_KEEPALIVE int next(job *j) { return step(j); }
 
 // the stage's queued decodes as one batch for web/gpu.js, the job's until
-// its next batch: [rec, n, seg, ns, tl, nt], heap offsets and counts (5
-// uint32 a record, a byte, 8 int32 a tile), or NULL on a malformed packet
+// its next: [rec, n, seg, ns, tl, nt, levels, prec, cq, nq], heap offsets
+// and counts (5 uint32 a record, a byte, 8 int32 a tile, a uint32). cq,
+// b12's alone, is what its screen on the gpu reads (table()). NULL for the
+// cpu to make them: a malformed packet, or b12_min past the gpu's histogram
 EMSCRIPTEN_KEEPALIVE uintptr_t *records(job *j) {
   web *x = (web *)j;
+  j2k *h = &j->bd[j->dq->b].j;
+  size_t n = 0;
   x->cb.n = x->cb.nd = 0;
   x->tl = realloc(x->tl, (size_t)32 * j->nq + 1);
-  if (batch(j, &x->cb, x->tl)) return NULL;
-  uintptr_t b[6] = {(uintptr_t)x->cb.cb, x->cb.n, (uintptr_t)x->cb.d,
-                    x->cb.nd, (uintptr_t)x->tl, j->nq};
+  free(x->cq), x->cq = j->dq->b ? NULL : table(j, &n);
+  if (batch(j, &x->cb, x->tl) || !(j->dq->b || x->cq)) return NULL;
+  uintptr_t b[] = {(uintptr_t)x->cb.cb, x->cb.n, (uintptr_t)x->cb.d,
+                   x->cb.nd, (uintptr_t)x->tl, j->nq, h->nl, h->prec,
+                   (uintptr_t)x->cq, n};
   return memcpy(x->b, b, sizeof b);
 }
 
@@ -231,6 +238,6 @@ EMSCRIPTEN_KEEPALIVE char *result(job *j, const double *pt, int np) {
     fprintf(out, "%s%.3g", i ? "," : "", er ? -1 : cloud(r, p, q));
   for (int i = 0; i < r->nd; i++) free(r->d[i].pp);
   fputs("]}", out), fclose(out), free(r->d), free(r->q), end(j);
-  free(x->cb.cb), free(x->cb.d), free(x->tl), free(x);
+  free(x->cb.cb), free(x->cb.d), free(x->tl), free(x->cq), free(x);
   return o;
 }

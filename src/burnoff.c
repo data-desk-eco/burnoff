@@ -29,7 +29,8 @@
 //   the guess right first time, and its tile-part is read whole.
 // - decoding is nearly all the cost, so b12 is decoded only over clear
 //   background cells, and b11 and b8a only over windows around candidate
-//   hotspots.
+//   hotspots. a large stage's tier-1, dwt and b12's screen run on the gpu
+//   (src/gpu.c, web/j2k.wgsl), small ones on the cpu alongside.
 // - the 60 m cloud mask (a few KB) is read first: jp2 tiles under cloud are
 //   never fetched. headers and masks are cached across rows, so many sites
 //   on one scene read them once.
@@ -234,7 +235,7 @@ typedef struct {
   int px, sat, *pp;
 } det;
 typedef struct { double x, y, cloud; } sq;   // an obscured square's centre
-typedef struct { double clear; det *d; sq *q; int nd, cap, nq, qcap; } res;
+typedef struct { double clear; det *d; sq *q; int nd, cap, nq; } res;
 typedef struct { int k, x0, y0, x1, y1; } win;   // [x0,x1)×[y0,y1) of tile k
 
 // a decode, and the seam for another decoder: band b's tile k over its
@@ -268,6 +269,7 @@ typedef struct job {
   int X0, Y0, X1, Y1, W, H, mc, cx0, cy0, cw, ch, gx0, gy0, ncx, nc;
   unsigned short *b12, *m, *v12, *v11, *v8a, *g12, *g8a;
   int *cnt, *cld, *idx, *par;
+  uint32_t *gb;                   // b12's screen, from a gpu (took())
   double *ct, *bgm;
   char *ok, *sel;
 } job;
@@ -752,6 +754,19 @@ static const char *b12(job *j) {
   return e ? e : decs(j, j->u[0], 0, j->wn, j->nw, j->b12);
 }
 
+// the 640 m squares of the box, row by row, from each one's pixels and
+// obscured ones, s[2q] and s[2q + 1]
+static void squares(job *j, const uint32_t *s) {
+  band *f = j->bd;
+  res *r = &j->r;
+  int qx0 = j->X0 / SUB, qy0 = j->Y0 / SUB, nx = (j->X1 - 1) / SUB - qx0 + 1;
+  r->q = malloc((r->nq = nx * ((j->Y1 - 1) / SUB - qy0 + 1)) * sizeof *r->q);
+  for (int q = 0; q < r->nq; q++)
+    r->q[q] = (sq){f->ox + ((qx0 + q % nx) * SUB + SUB / 2.) * f->res,
+                   f->oy - ((qy0 + q / nx) * SUB + SUB / 2.) * f->res,
+                   (double)s[2 * q + 1] / s[2 * q]};
+}
+
 // over the b12 raster alone: per cell the background (no data counts as
 // obscured; the median of the dim pixels, below b12_min, from a histogram
 // of their counts) and its contrast threshold, the clear share, the
@@ -791,25 +806,16 @@ static int screen(job *j) {
   free(hist);
   if (seen > 0) j->r.clear = (double)clear / seen;
   int qx0 = X0 / SUB, qy0 = Y0 / SUB, nqx = (X1 - 1) / SUB - qx0 + 1;
-  int nq = nqx * ((Y1 - 1) / SUB - qy0 + 1);
-  int *qn = calloc(nq, sizeof *qn), *qo = calloc(nq, sizeof *qo);
+  uint32_t *s = calloc(2 * nqx * ((Y1 - 1) / SUB - qy0 + 1), 4);
   for (int r0 = 0; r0 < H; r0++)
     for (int c0 = 0; c0 < W; c0++) {
       int gx = X0 + c0, gy = Y0 + r0;
       int c = (gy / CELL - gy0) * ncx + gx / CELL - gx0;
-      int q = (gy / SUB - qy0) * nqx + gx / SUB - qx0;
-      qn[q]++, qo[q] += cld[c] > t[MAXCLOUD] * cnt[c] || cloudy(j, r0, c0) ||
-                        !b12[(size_t)r0 * W + c0];
+      uint32_t *q = s + 2 * ((gy / SUB - qy0) * nqx + gx / SUB - qx0);
+      q[0]++, q[1] += cld[c] > t[MAXCLOUD] * cnt[c] || cloudy(j, r0, c0) ||
+                      !b12[(size_t)r0 * W + c0];
     }
-  res *r = &j->r;
-  for (int q = 0; q < nq; q++) {
-    if (r->nq == r->qcap)
-      r->q = realloc(r->q, (r->qcap = 2 * r->qcap + 64) * sizeof *r->q);
-    r->q[r->nq++] = (sq){j->bd->ox + ((qx0 + q % nqx) * SUB + SUB / 2.) *
-                         j->bd->res, j->bd->oy - ((qy0 + q / nqx) * SUB +
-                         SUB / 2.) * j->bd->res, (double)qo[q] / qn[q]};
-  }
-  free(qn), free(qo);
+  squares(j, s), free(s);
   for (int r0 = 0; r0 < H; r0++)
     for (int c0 = 0; c0 < W; c0++) {
       double v = cal(b12[(size_t)r0 * W + c0]);
@@ -820,6 +826,74 @@ static int screen(job *j) {
       j->idx[j->mc++] = r0 * W + c0, hot |= v >= t[PEAKMIN];
     }
   return hot;
+}
+
+// the same from a gpu (j2k.wgsl's cells, ring and squares, as gpu_cells()
+// and web/gpu.js read them back): 8 uint32 a cell, the candidates' number
+// k, 2 a square, each candidate's box index and dn, in no order, and its
+// ring. their dn go into the raster, for back(), and their rings to g12
+static int gscreen(job *j) {
+  uint32_t *c = j->gb, *s = c + 8 * j->nc + 1, k = s[-1], *p, *g;
+  int seen = j->W * j->H, clear = 0, hot = 0;
+  long long *o = malloc(8 * k + 8);
+  j->bgm = malloc(j->nc * sizeof *j->bgm);
+  for (int i = 0; i < j->nc; i++, c += 8)
+    seen -= c[2], clear += c[0] - c[1] - c[3], j->bgm[i] = cal(c[5]);
+  if (seen > 0) j->r.clear = (double)clear / seen;
+  squares(j, s), p = s + 2 * j->r.nq, g = p + 2 * k;
+  for (uint32_t i = 0; i < k; i++)
+    o[i] = (long long)p[2 * i] << 32 | p[2 * i + 1] << 16 | g[i];
+  qsort(o, j->mc = k, 8, cmp);
+  j->idx = malloc(4 * k + 4), j->g12 = malloc(2 * k + 2);
+  for (uint32_t i = 0; i < k; i++)
+    j->b12[j->idx[i] = o[i] >> 32] = o[i] >> 16, j->g12[i] = o[i],
+    hot |= cal(o[i] >> 16 & 65535) >= j->t[PEAKMIN];
+  return free(o), hot;
+}
+
+// what the gpu's screen reads (cq in j2k.wgsl): the box, the jp2 tiles and
+// each one's row of the stage's decodes, the mask, and screen()'s
+// comparisons of doubles made cuts in dn, so it is exact. NULL when
+// b12_min is past the gpu's histogram
+uint32_t *table(job *j, size_t *n) {
+  band *f = j->bd;
+  const double *t = j->t;
+  int m = 1, a = 1, nt = f->nt, nm = j->cw * j->ch, o;
+  while (m < ceil(1000 + t[B12MIN] * 10000) && cal(m) < t[B12MIN]) m++;
+  while (a < 65536 && cal(a) <= t[B12MIN]) a++;
+  if (m > 4064) return NULL;
+  *n = (o = 19 + nt + 102401 + m) + (nm + 3) / 4;
+  uint32_t *q = calloc(*n, 4), h[] = {j->X0, j->Y0, j->X1, j->Y1, f->tw,
+    f->th, f->nx, j->gx0, j->gy0, j->ncx, j->cw, m, 19, 19 + nt,
+    19 + nt + 102401, o, MIN(j->W * j->H, 1 << 22), j->cx0, j->cy0};
+  memcpy(q, h, sizeof h), memset(q + 19, 255, 4 * nt);
+  for (int i = 0; i < j->nq; i++) q[19 + j->dq[i].k] = i;
+  for (int i = 0; i <= 102400; i++) q[19 + nt + i] = floor(t[MAXCLOUD] * i);
+  for (int i = 0; i < m; i++) {
+    double v = cal(i), c = (v > t[BGFLOOR] ? v : t[BGFLOOR]) * t[CONTRAST];
+    int d = MAX(1, (int)floor(c * 1e4) + 990);
+    while (d < 65536 && cal(d) <= c) d++;
+    q[o - m + i] = MAX(a, d);
+  }
+  for (int i = 0; i < nm; i++)
+    ((uint8_t *)(q + o))[i] = j->m[i] || j->m[nm + i];
+  return q;
+}
+
+// a stage's decodes made by a gpu, p malloc'd and now the job's: b12's
+// screen (gscreen()), or the windows' samples, each from an even offset,
+// put where dodec() puts them
+void took(job *j, void *p) {
+  uint16_t *s = p;
+  for (int i = 0; i < j->nq; i++) {
+    dj *d = j->dq + i;
+    int w = d->x1 - d->x0, h = d->y1 - d->y0;
+    for (int y = d->y0; j->dq->b && y < d->y1; y++, s += w)
+      memcpy(d->o + (size_t)(y - d->oy) * d->ow + d->x0 - d->ox, s, 2 * w);
+    s += j->dq->b && w * h & 1, d->done = 1;
+  }
+  if (j->dq->b) free(p);
+  else j->gb = p;
 }
 
 // the windows around the selected candidates: each component's box of them
@@ -873,11 +947,11 @@ static void wins(job *j) {
 // and how hot its peak is
 static const char *back(job *j) {
   forget(j, j->u[0]);
-  if (!screen(j)) return FIN;
+  if (!(j->gb ? gscreen(j) : screen(j))) return FIN;
   int mc = j->mc, *idx = j->idx, W = j->W, *par;
   par = j->par = malloc(mc * 4), j->ok = calloc(mc, 1), j->sel = malloc(mc);
   j->v12 = malloc(mc * 2), j->v11 = calloc(mc, 2), j->v8a = calloc(mc, 2);
-  j->g12 = calloc(mc, 2), j->g8a = calloc(mc, 2);
+  j->g8a = calloc(mc, 2), j->g12 = j->gb ? j->g12 : calloc(mc, 2);
   for (int k = 0; k < mc; k++) j->v12[k] = j->b12[idx[k]];
   for (int k = 0; k < mc; k++) {
     int i = idx[k], n;
@@ -889,7 +963,7 @@ static const char *back(job *j) {
   for (int k = 0; k < mc; k++)
     if (V(k) >= j->t[PEAKMIN]) j->ok[find(par, k)] = 1;
   for (int k = 0; k < mc; k++)
-    if ((j->sel[k] = j->ok[find(par, k)]))
+    if ((j->sel[k] = j->ok[find(par, k)]) && !j->gb)
       j->g12[k] = ring(j->b12, idx, mc, k, W, j->H);
   return wins(j), NULL;
 }
@@ -1071,7 +1145,7 @@ static void end(job *j) {
   for (int i = 0; i < 4; i++) free(j->u[i]);
   void *p[] = {j->rq, j->dq, j->wn, j->b12, j->m, j->v12, j->v11, j->v8a,
                j->g12, j->g8a, j->cnt, j->cld, j->idx, j->par, j->ct,
-               j->bgm, j->ok, j->sel};
+               j->bgm, j->ok, j->sel, j->gb};
   for (size_t i = 0; i < sizeof p / sizeof *p; i++) free(p[i]);
   drop(&j->s), drop(&j->mk);
 }
@@ -1084,6 +1158,46 @@ static void end(job *j) {
 #include "duckdb_extension.h"
 #include <curl/curl.h>
 DUCKDB_EXTENSION_EXTERN
+
+#ifdef GPU
+// src/gpu.c: j2k.wgsl over wgpu-native, which gives an error, for the cpu
+// to do the work, without a gpu; gpu_off once it is off for good
+extern const char *gpu_off;
+const char *gpu_decode(const uint32_t *, size_t, const uint8_t *, size_t,
+                       const int32_t *, int, int, int, uint16_t *, void **);
+const char *gpu_cells(void *, const uint32_t *, size_t, uint32_t **);
+
+// a stage's decodes on the gpu as one batch, b12's screened there too; on
+// a failure step() makes them on the cpu. one gpu thread decodes a whole
+// code-block, so a stage of fewer than 4096 is as quick on one core (b11's
+// windows nearly always; a 10 km site's b12), and the cpu takes a stage
+// while 4 are on the gpu: measured on an m2 over 70 quarter and whole
+// tiles at 8 rows at once, 6.6 s against 9.2 with every stage on the gpu
+// and 10.1 with none
+static int fly;
+static void gpu(job *j) {
+  int b = j->dq->b, f = 0;
+  j2k *h = &j->bd[b].j;
+  j2k_cbs c = {0};
+  int32_t *tl = malloc(32 * j->nq);
+  uint32_t *cq = NULL;
+  void *o = NULL, *k;
+  size_t n = 0;
+  for (dj *d = j->dq; b && d < j->dq + j->nq; d++)
+    n += (size_t)(d->x1 - d->x0) * (d->y1 - d->y0) + 1 & ~(size_t)1;
+  if (!gpu_off && (f = __atomic_add_fetch(&fly, 1, __ATOMIC_RELAXED)) <= 4 &&
+      !batch(j, &c, tl) && c.n >= 4096 &&
+      (b || (cq = table(j, &n))) &&
+      !gpu_decode((uint32_t *)c.cb, c.n, c.d, c.nd, tl, j->nq, h->nl,
+                  h->prec, b ? o = malloc(2 * n) : NULL, &k) &&
+      (b || !gpu_cells(k, cq, n, (uint32_t **)&o)))
+    took(j, o), o = NULL;
+  if (f) __atomic_sub_fetch(&fly, 1, __ATOMIC_RELAXED);
+  free(o), free(cq), free(tl), free(c.cb), free(c.d);
+}
+#else
+#define gpu(j)
+#endif
 
 // a worker's connections: a handle that holds the key and options, which
 // each read's is copied from, and a multi handle over which a stage's
@@ -1192,6 +1306,7 @@ static void *worker(void *_) {
       start(&j, w->url, w->box, w->th);
       for (int s; (s = step(&j));)
         if (s == READ) fetch(&x, j.rq, j.nr);
+        else gpu(&j);
       w->e = j.e, w->r = j.r, end(&j);
     }
     __atomic_sub_fetch(&busy, 1, __ATOMIC_RELAXED);
