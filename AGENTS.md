@@ -38,6 +38,24 @@ finds the tile-parts, read whole. Against eodata (5000 requests a minute a
 key) tile-parts are read whole, joined within 1 MB, at most 20 requests a
 band.
 
+Rounds. A stage's reads are a round, and a stage asks for all that the
+answers it waits on do not decide. With a TLM a site is 3 rounds: the mask
+and the three headers; b12's tile-parts with b11's and b8a's PLTs in its
+tiles; then, once b12's candidates are known, b11's and b8a's packets.
+B12's tile-parts are read whole, without a round for their PLTs, while
+those lacking a PLT come to 1 MB or less (`WHOLE`: a site's, whose b12
+needs 52% of their bytes); a larger box first reads the PLTs of the tiles
+it covers in part, 4 rounds. Reading b11's and b8a's tile-parts whole as
+well (a site in 2 rounds) cost 10-60% more bytes and no time that 10 runs
+over 4 sets of jobs in Chrome could show. Without a TLM the tile-parts any
+job has found in a file are kept for the next (`share()`), and a TLM's
+offsets teach the learned layouts, so an older date of a tile is read
+where a newer one put its tile-parts: a 10 km box of N0511 after one of
+N0512 is 3 rounds and 2.4 MB where it was 5 and 5.8 MB. Under the eodata
+budget b11's and b8a's headers come with b12's reads and b8a's tile-parts
+with b11's: 3 rounds where there were 6 to 8 (of the 588 boxes, the 154
+that read b11 all read b8a).
+
 Decodes. `j2k.c` parses the packets (tier-2) into code-block records in
 `j2k.wgsl`'s 5-word layout (`batch()`: a stage's records over one byte
 buffer and an 8-int32 tile table). The GPU then runs tier-1, the DWT and,
@@ -71,7 +89,11 @@ the CPU's: check every sample of whole band-scenes, 8x8 blocks (to N0512)
 and 32x32 (from N0513). `j2k.c` decodes only the codestream shape every
 L1C baseline from N0400 uses (one layer, LRCP, reversible 5/3, no SOP/EPH,
 a PLT in each tile-part, blocks up to 32x32, the mask's RCT) and refuses
-any other. The cells' table (`table()`) turns `screen()`'s comparisons of
+any other. Over file:// no read gives a file's size but its header's,
+and a header from the cache of another date gives that date's: boxes of
+several dates in one process can then fail with `tile-part not found` (23
+of the 588, at 2417981 and since), so run a date's boxes in a process of
+its own. The cells' table (`table()`) turns `screen()`'s comparisons of
 doubles into cuts in DN, so the GPU's screen is exact; a change to either
 side goes into both. Check the GPU under load too: several processes at
 once, repeated.
@@ -85,8 +107,12 @@ reads with `fetch()`, a stage's decodes through `records()`, `gpu.js` and
 `took()`, so one worker holds several detections. Without a WebGPU
 adapter it decodes on the CPU and says so once. `gs://` urls go through
 Google's JSON API, which sends CORS headers; `check()` retries a 206 body
-shorter than its Content-Range, as a browser's cache can give. The Aerial
-map (`~/Tools/aerial`, branch `burnoff-live`) runs it.
+shorter than its Content-Range, as a browser's cache can give. A worker
+makes a read that two of its detections ask for at once one fetch, and
+keeps its last 64 MB of answers, cutting a read that falls within one
+from it: detections of one scene share its headers, masks and
+tile-parts. The Aerial map (`~/Tools/aerial`, branch `burnoff-live`) runs
+it; it does best to give a scene's detections to one worker.
 
 ## Hotspots, not sunlight
 
@@ -120,8 +146,23 @@ a serialised GPU 15.3, 11.5, 9.6, 9.4 s); 518 sites in 6.6, 5.0, 5.1 and
 4.8 s (CPU 7.9, 5.3, 5.3, 4.9 s; serialised GPU 10.8 to 11.0 s). At 8
 rows the 588 boxes take 32 s of CPU time against 71 s.
 
-In Chrome over gs://, 4 workers of 8 detections: 112 sites in 10.7 to
-11.2 s and 72 sweeps in 6.6 to 7.1 s, as in eae703c (10.7 and 6.8 s):
-the network sets the time. The CPU decode takes as long there (10.5 to
-12.1 s, 6.0 to 7.2 s); over a local server the 136 jobs take 1.8 s on
-WebGPU and 5.9 s without.
+Over gs:// natively, a box at a time with empty caches (medians of 3):
+with a TLM a 2 km site took 242 ms against 396 (3 rounds against 4) and
+a 10 km box 299 against 457; an N0511 box after N0512's, 2 km 381 ms
+against 601 and 10 km 527 against 573 (3 rounds against 4 and 5). Under
+the eodata budget the same boxes took 3 rounds against 6 to 8, 2 and 10
+km in 342 to 379 ms against 586 to 1032.
+
+In headless Chrome over gs://, 4 workers of 8 detections, medians of 7
+runs taken in turn with 2417981 (the line drifts: 3 to 25 s for one set),
+two scenes with a TLM and two without: 112 sites in 5.4 s against 7.3
+(847 reads against 1268, 214 MB against 336) and 72 sweeps in 3.7 s
+against 7.0 (421 reads against 1116, 108 MB against 290); a detection
+waits on 3 rounds where it waited on 4. The scenes without a TLM were 88%
+of the bytes and held the line near its ~290 Mbit/s. With a TLM alone,
+56 sites took 3.8 s either way (661 reads against 979, 39 MB) and 36
+sweeps 3.0 s against 3.5: a site's 1.3 s there is about 0.8 s of reads,
+0.1 to 0.3 s waiting on the GPU and the rest the worker's queue, so a
+round less is not seen. Exactness: 136 jobs local and 136 over gs://,
+112 sites and 72 sweeps, WebGPU on and off, identical to the
+OpenJPEG-era results.

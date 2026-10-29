@@ -17,23 +17,28 @@
 //   reads, all known before any is made, and then a batch of decodes. the
 //   host makes a stage's reads at once and resumes the job: curl's multi
 //   interface here, fetch() in the browser (web/). a row waits one round
-//   trip a stage, not one a read, and nothing blocks while it waits.
-// - from baseline 05.11 a jp2's main header carries a TLM, the offset of
+//   trip a stage, not one a read, and nothing blocks while it waits. a
+//   round asks for all that its answers do not decide: a site waits on
+//   three, the headers and mask, b12's tile-parts with b11's and b8a's
+//   PLTs, and then, its candidates known, b11's and b8a's packets.
+// - from baseline 05.12 a jp2's main header carries a TLM, the offset of
 //   every tile-part, and each tile-part header a PLT, the length of each of
 //   its packets. with one quality layer a packet (one precinct of one
 //   resolution) stands alone, so only the packets a decode window needs are
 //   read, and j2k.c, burnoff's own decoder, reads no others. older files
 //   carry no TLM: a guess at
 //   tile k's offset plus a scan for its SOT marker (0xff90 never occurs
-//   inside entropy-coded data) finds it, a learned per-MGRS layout makes
-//   the guess right first time, and its tile-part is read whole.
+//   inside entropy-coded data) finds it, a learned per-MGRS layout (from
+//   a search, or a newer date's TLM) makes the guess right first time, and
+//   its tile-part is read whole.
 // - decoding is nearly all the cost, so b12 is decoded only over clear
 //   background cells, and b11 and b8a only over windows around candidate
 //   hotspots. a large stage's tier-1, dwt and b12's screen run on the gpu
 //   (src/gpu.c, web/j2k.wgsl), small ones on the cpu alongside.
 // - the 60 m cloud mask (a few KB) is read first: jp2 tiles under cloud are
-//   never fetched. headers and masks are cached across rows, so many sites
-//   on one scene read them once.
+//   never fetched. headers, masks and the tile-parts found in a file
+//   without a TLM are cached across rows, so many sites on one scene read
+//   them once.
 //
 // a compact-source hotspot detector, run over the box in one pass:
 // a background median per 320 px cell, the spectral mask, its 4-connected
@@ -72,6 +77,10 @@ enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
 #define NP 64      // packets a tile-part may hold: 40 in a 640 px tile
 // reads closer than this are one: a request costs about as much
 #define GAP (32 << 10)
+// a band's tile-parts are read whole, not their PLTs and then the packets
+// wanted, while they come to this or less: a round saved for more bytes (a
+// site's b12 needs 52% of a tile-part, b11's and b8a's 19%)
+#define WHOLE (1 << 20)
 
 // "name=value,name=value" over t
 static const char *params(const char *s, double *t) {
@@ -410,9 +419,26 @@ static int pk(job *j, const char *url, band *f, int k, long long *o,
   return n;
 }
 
+// without a TLM: the tile-parts of url found by any job, merged into f and
+// f's into them (in the cache), so the next job reads them as exactly as
+// a TLM allows
+static void share(const char *url, band *f) {
+  char key[4200];
+  long long c[512] = {0}, s;
+  buf b = {0};
+  int d = 0;
+  snprintf(key, sizeof key, "%s#t", url);
+  if (recall(key, &b, &s) && b.n == sizeof c) memcpy(c, b.p, sizeof c);
+  for (int k = 0; k < f->nt; k++)
+    if (!f->at[k]) f->at[k] = c[k], f->len[k] = c[256 + k];
+    else if (f->at[k] != c[k]) c[k] = f->at[k], c[256 + k] = f->len[k], d = 1;
+  if (d) keep(key, &(buf){.p = (unsigned char *)c, .n = sizeof c}, 0);
+  drop(&b);
+}
+
 // without a TLM: the tile-parts in each read of url not yet scanned, by
-// their SOT markers. a read past the end of the file, whose size was
-// another date's, asks for its size
+// their SOT markers, and those other jobs found. a read past the end of the
+// file, whose size was another date's, asks for its size
 static const char *scan(job *j, const char *url, band *f) {
   for (rd *r = j->rq; r < j->rq + j->nr; r++) {
     if (r->sc || strcmp(r->url, url) || !(r->ok || r->e == PAST)) continue;
@@ -426,23 +452,25 @@ static const char *scan(job *j, const char *url, band *f) {
         f->at[k] = at, f->len[k] = len;
     }
   }
-  return NULL;
+  return share(url, f), NULL;
 }
 
 // learned layouts: where each tile-part sat, as fractions of file size, per
-// MGRS tile and band. the land/sea/cloud mix that sizes a tile changes little
-// between dates, so after one file the next is read in one request per tile
-typedef struct { char key[16]; float at[256], len[256]; } layout;
+// MGRS tile, band and tile grid, from a search or a TLM. the land/sea/cloud
+// mix that sizes a tile changes little between dates, so after one file the
+// next is read in one request per tile
+typedef struct { char key[24]; float at[256], len[256]; } layout;
 static layout lay[4096];
 static int nlay;
 static pthread_mutex_t lk = PTHREAD_MUTEX_INITIALIZER;
 
-// T13SFR_20250519T172859_B11.jp2 → T13SFR_B11.jp2, or with band, _B12.jp2
-static layout *learned(const char *url, const char *band) {
+// T13SFR_20250519T172859_B11.jp2 of 81 tiles → T13SFR_B11.jp281, or with
+// band, _B12.jp281
+static layout *learned(const char *url, const char *band, int nt) {
   const char *f = strrchr(url, '/') ? strrchr(url, '/') + 1 : url;
   const char *b = strrchr(f, '_');
-  char key[16];
-  snprintf(key, sizeof key, "%.6s%.10s", f, band ? band : b ? b : "");
+  char key[24];
+  snprintf(key, sizeof key, "%.6s%.10s%d", f, band ? band : b ? b : "", nt);
   for (int i = 0; i < nlay; i++)
     if (!strcmp(lay[i].key, key)) return &lay[i];
   if (nlay == 4096) return NULL;
@@ -500,13 +528,15 @@ static int merge(long long *q, int n, long long g, int m) {
 }
 
 // band f's reads for decode windows w[0..n), as runs: each tile-part whole
-// where it is wanted whole, as without a TLM or under a request budget,
-// else the PLT in its header and then the packets the windows need. LACK
-// until all are in hand
+// where it is wanted whole, as without a TLM or under a request budget, or
+// while those whose PLT is not in hand come to WHOLE or less (a round
+// sooner than the PLT allows, for about twice a site's bytes), else the PLT
+// in its header and then the packets the windows need. LACK until all are
+// in hand
 static const char *parts(job *j, const char *url, band *f, const win *w,
                          int n) {
   uint64_t m[256] = {0};
-  long long o[NP], *q, a, b;
+  long long o[NP], *q, a, b, z = 0;
   uint32_t l[NP];
   int c, nq = 0, miss = 0, look = 0;
   const char *e = f->tlm ? NULL : scan(j, url, f);
@@ -517,10 +547,14 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
   // a band not yet seen on this MGRS tile borrows b12's layout, which the
   // same date's b12 read has just taught
   pthread_mutex_lock(&lk);
-  if (!f->tlm && (g = learned(url, NULL))) L = *g;
-  for (int k = 0; !f->tlm && (g = learned(url, "_B12.jp2")) && k < 256; k++)
+  if (!f->tlm && (g = learned(url, NULL, f->nt))) L = *g;
+  g = f->tlm ? NULL : learned(url, "_B12.jp2", f->nt);
+  for (int k = 0; g && k < 256; k++)
     if (!L.at[k]) L.at[k] = g->at[k], L.len[k] = g->len[k];
   pthread_mutex_unlock(&lk);
+  // z: the bytes of the tile-parts wanted whose PLT is not in hand
+  for (int k = 0; k < f->nt; k++)
+    z += m[k] && f->tlm && f->at[k] && !pk(j, url, f, k, o, l) ? f->len[k] : 0;
   q = malloc((size_t)16 * NP * f->nt);
   for (int k = 0; k < f->nt; k++) {
     if (!m[k] || ((a = f->at[k]) && got(j, url, a, b = a + f->len[k])))
@@ -531,6 +565,7 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
            ? -2 : pk(j, url, f, k, o, l);
     if (np == -1 || np > 0 ? np != c : 0)
       return free(q), "malformed tile-part header";
+    if (!np && z <= WHOLE) np = -2;
     if (np < 0) q[2 * nq] = a, q[2 * nq++ + 1] = b;
     else if (!np) q[2 * nq] = a, q[2 * nq++ + 1] = a + MIN(f->len[k], 512);
     else for (int i = 0; i < np; i++)
@@ -545,9 +580,9 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
   for (int i = 0; i < nq && (!e || e == LACK); i++)
     e = want(j, url, q[2 * i], q[2 * i + 1]);
   free(q);
-  if (e || f->tlm) return e;
+  if (e) return e;
   pthread_mutex_lock(&lk);
-  if ((g = learned(url, NULL)))
+  if ((g = learned(url, NULL, f->nt)))
     for (int k = 0; k < f->nt; k++)
       if (f->at[k])
         g->at[k] = (double)f->at[k] / f->size,
@@ -676,7 +711,8 @@ static int grid(const band *g, const band *f) {
 // stage 0, the headers and the mask: the box in pixels, its background
 // cells, cloud first, and b12's windows: each jp2 tile is decoded over the
 // bounding box of its clear cells, and one with none is never fetched. b11's
-// and b8a's headers are asked for too, to come with b12's reads
+// and b8a's headers are asked for too, so that b12's round can bring their
+// PLTs or tile-parts (under a request budget, b12's round brings them)
 static const char *heads(job *j) {
   band *f = j->bd;
   const char *nb = strstr(j->u[0], "_N"), *e, *m;
@@ -743,13 +779,18 @@ static const char *heads(job *j) {
 // stage 1: b12's tile-parts or packets, and its decodes. while b12 lacks
 // reads, the PLTs of b11 and b8a in its tiles come with them, so that the
 // packets around candidates are a round trip away once b12 is decoded
+// (under a request budget, their headers, for their tile-parts). their
+// tile-parts whole would spare a site that round, for 10-60% more bytes and
+// no time that 10 runs over 4 sets of jobs could show
 static const char *b12(job *j) {
   const char *e = parts(j, j->u[0], j->bd, j->wn, j->nw);
-  for (int i = 0; e == LACK && !j->budget && i < 2 * j->nw; i++) {
+  for (int i = 0; e == LACK && i < 2 * j->nw; i++) {
     band *g = j->bd + 1 + i % 2;
+    char *u = j->u[1 + i % 2];
     int k = j->wn[i / 2].k;
     long long a = g->ok && g->tlm ? g->at[k] : 0, b = a + MIN(g->len[k], 512);
-    if (a && !got(j, j->u[1 + i % 2], a, b)) want(j, j->u[1 + i % 2], a, b);
+    if (j->budget) header(j, u, g);
+    else if (a && !got(j, u, a, b)) want(j, u, a, b);
   }
   return e ? e : decs(j, j->u[0], 0, j->wn, j->nw, j->b12);
 }
@@ -977,7 +1018,7 @@ static const char *b11(job *j) {
   const char *e = j->nw ? header(j, j->u[1], g) : NULL;
   if (!e && j->nw && !grid(g, f)) e = "bands on different grids";
   if (!e && j->nw) e = parts(j, j->u[1], g, j->wn, j->nw);
-  if (j->nw && !j->budget && !header(j, j->u[2], h) && grid(h, f))
+  if (j->nw && !header(j, j->u[2], h) && grid(h, f))
     parts(j, j->u[2], h, j->wn, j->nw);
   return e ? e : decs(j, j->u[1], 1, j->wn, j->nw, j->b12);
 }

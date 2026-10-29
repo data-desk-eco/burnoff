@@ -22,21 +22,34 @@ const heap = (T, p, n) => new T(m.HEAPU8.buffer, p, n)
 // one read, which burnoff.c judges and asks for again after a failure that
 // may pass, wait seconds later. it skips the http cache, which takes one
 // read of a url at a time: 112 site reads of one scene took 14.0 s through
-// it and 7.4 s past it (4 workers of 8, gs://)
-async function get(j, i, u, lo, hi, wait) {
-  let s = -1, size = -1, w = 0, b = new Uint8Array(0)
-  if (wait) await new Promise(ok => setTimeout(ok, wait * 1e3))
+// it and 7.4 s past it (4 workers of 8, gs://). a read that another of the
+// worker's jobs has in flight is shared, and the last 64 MB of answers are
+// kept, a read within one cut from it: [status, size, wait, body]
+const fly = new Map(), kept = []
+let held = 0
+async function read(u, lo, hi) {
   try {
     const r = await fetch(u, { method: hi == -2 ? 'HEAD' : 'GET',
       headers: lo || hi >= 0 ? { Range: `bytes=${lo}-${hi < 0 ? '' : hi - 1}` }
         : {}, cache: 'no-store',
       signal: AbortSignal.timeout(6e4) })   // a stalled read fails
-    b = new Uint8Array(await r.arrayBuffer()), s = r.status
-    size = +r.headers.get('content-range')?.split('/')[1]
+    const b = new Uint8Array(await r.arrayBuffer())
+    const n = +r.headers.get('content-range')?.split('/')[1]
       || (hi == -2 ? +r.headers.get('content-length') : -1)
-    w = +r.headers.get('retry-after') || 0
-  } catch {}
-  const p = m._malloc(b.length || 1)
+    if (r.status == 206 && b.length == Math.min(hi, n) - lo)
+      for (kept.push([u, lo, b, n]), held += b.length; held > 64e6;)
+        held -= kept.shift()[2].length
+    return [r.status, n, +r.headers.get('retry-after') || 0, b]
+  } catch { return [-1, -1, 0, new Uint8Array(0)] }
+}
+async function get(j, i, u, lo, hi, wait) {
+  const k = [u, lo, hi] + ''
+  if (wait) await new Promise(ok => setTimeout(ok, wait * 1e3))
+  const c = hi >= 0 && kept.find(([v, a, b]) => v == u && a <= lo &&
+                                               hi <= a + b.length)
+  c || fly.has(k) || fly.set(k, read(u, lo, hi).finally(() => fly.delete(k)))
+  const [s, size, w, b] = c ? [206, c[3], 0, c[2].subarray(lo - c[1],
+    hi - c[1])] : await fly.get(k), p = m._malloc(b.length || 1)
   m.HEAPU8.set(b, p), m._answer(j, i, s, size, p, b.length, w)
 }
 // a stage's decodes on the gpu, b12's screened there too, given to the

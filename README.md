@@ -61,6 +61,14 @@ candidates, run on the CPU, which is as fast for them. Without a GPU,
 everything runs on the CPU. The results are the same, value for value,
 either way.
 
+Over the network, a detection waits for its rounds of reads, one after
+the other. A small box in a newer file (N0512 on) takes three rounds: the
+headers and the cloud mask; B12 with the indexes of B11 and B8A; then B11
+and B8A around the candidates. Older files have no index, so burnoff
+searches for their tiles. It keeps what it finds for the next detection
+on the same file, and it uses the layout of a newer date to look in the
+right place in an older one.
+
 On an M2, a whole Sentinel-2 tile takes 0.8 to 1.1 seconds with the GPU
 and 3.5 to 4.6 seconds on one CPU core. At eight rows at once, 70 whole
 and quarter tiles take 7.0 seconds against 10.2 seconds on the CPU alone,
@@ -114,10 +122,14 @@ A detection runs in stages. Each stage is a set of byte-range reads, all
 known before any of them is made, and then a set of decodes. The worker
 makes the reads of a stage at the same time with `fetch()` and does not
 wait on them, so one worker can run several detections at once: one
-decodes while the others wait for their reads. The worker answers each
-call with its id, in the order the calls finish. It decodes with WebGPU;
-in a browser without WebGPU it decodes on the CPU and logs a warning
-once.
+decodes while the others wait for their reads. When two detections ask
+for the same read at once, the worker makes it one time. It also keeps
+its last 64 MB of reads and answers a read inside one of them from
+memory, so detections of one scene read its headers and tile-parts once.
+Give a scene's detections to one worker to use this. The worker answers
+each call with its id, in the order the calls finish. It decodes with
+WebGPU; in a browser without WebGPU it decodes on the CPU and logs a
+warning once.
 
 The Aerial map (`data-desk-eco/aerial`) uses it for a live layer.
 
