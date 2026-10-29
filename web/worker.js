@@ -20,14 +20,17 @@ const json = p => {
 const drop = new Set()
 const heap = (T, p, n) => new T(m.HEAPU8.buffer, p, n)
 // one read, which burnoff.c judges and asks for again after a failure that
-// may pass, wait seconds later
+// may pass, wait seconds later. it skips the http cache, which takes one
+// read of a url at a time: 112 site reads of one scene took 14.0 s through
+// it and 7.4 s past it (4 workers of 8, gs://)
 async function get(j, i, u, lo, hi, wait) {
   let s = -1, size = -1, w = 0, b = new Uint8Array(0)
   if (wait) await new Promise(ok => setTimeout(ok, wait * 1e3))
   try {
     const r = await fetch(u, { method: hi == -2 ? 'HEAD' : 'GET',
       headers: lo || hi >= 0 ? { Range: `bytes=${lo}-${hi < 0 ? '' : hi - 1}` }
-        : {}, signal: AbortSignal.timeout(6e4) })   // a stalled read fails
+        : {}, cache: 'no-store',
+      signal: AbortSignal.timeout(6e4) })   // a stalled read fails
     b = new Uint8Array(await r.arrayBuffer()), s = r.status
     size = +r.headers.get('content-range')?.split('/')[1]
       || (hi == -2 ? +r.headers.get('content-length') : -1)
