@@ -173,6 +173,7 @@ fn find() -> bool {
     if (k == 3u) { k = 0u; bit--; B = A; A = S; }
     if (np == 0u || bit < 1) { return false; }
   }
+  return false;   // unreachable, but naga (wgpu-native) wants a last return
 }
 
 fn ce(a: u32, s: u32) -> u32 { return (a + (1u << s) - 1u) >> s; }

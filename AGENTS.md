@@ -26,7 +26,11 @@ module for any host; `web/gpu.js` runs it in webgpu from the cpu's tier-2
 code-block records (their layout and the bindings are in `j2k.wgsl`'s head).
 It must stay bit-exact with openjpeg: check every coefficient and sample of
 whole band-scenes, 8x8 blocks (to N0512) and 32x32 (from N0513), against
-openjpeg's own.
+openjpeg's own. `src/gpu.c` runs the same `j2k.wgsl` natively, over
+wgpu-native (`GPU=1`, the default, fetches it into `ext/`): `gpu_decode()`
+and `gpu_cells()`, which give an error, for the cpu path to take over, when
+there is no adapter. It builds the cells' cut tables as `gpu.js` does; a
+change to either kernel host's tables or bindings goes into both.
 
 Keep it a detector. Archive shapes, sites and publishing are the data-desk
 ETL's (`etl/providers/data-desk/burnoff/`), in SQL over `s2_detect`'s rows.
