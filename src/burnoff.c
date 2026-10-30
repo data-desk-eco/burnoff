@@ -4,7 +4,8 @@
 //             [, thresholds VARCHAR])
 //   → STRUCT(clear DOUBLE, error VARCHAR, hotspots STRUCT(x, y, max_b12,
 //            avg_b12, peak_b11, ratio, peakedness, pixels, radiance,
-//            saturated)[], cells STRUCT(x, y, cloud)[])
+//            saturated, px STRUCT(x, y, b12)[])[], cells STRUCT(x, y,
+//            cloud)[])
 // the box is in metres of the tile's own UTM zone; b11, b8a and the
 // MSK_CLASSI cloud mask are found beside b12 by the SAFE naming convention.
 // urls are s3:// (signed with AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY against
@@ -1346,7 +1347,7 @@ static void gpu(job *j) {
 // a worker's connections: a handle that holds the key and options, which
 // each read's is copied from, and a multi handle over which a stage's
 // reads go at once and which keeps their connections
-typedef struct { CURL *c; CURLM *m; } ctx;
+typedef struct { CURL *c; CURLM *m; char *cred, sig[64]; } ctx;
 
 // the reads of q[0..n) neither ok nor failed, made at once, after the
 // longest wait one was asked for
@@ -1364,6 +1365,9 @@ static void fetch(ctx *x, rd *q, int n) {
     snprintf(range, sizeof range, r->hi < 0 ? "%lld-" : "%lld-%lld", r->lo,
              r->hi - 1);
     curl_easy_setopt(c, CURLOPT_URL, u);
+    if (x->cred && !strncmp(r->url, "s3://", 5))   // eodata's reads alone
+      curl_easy_setopt(c, CURLOPT_AWS_SIGV4, x->sig),
+      curl_easy_setopt(c, CURLOPT_USERPWD, x->cred);
     curl_easy_setopt(c, CURLOPT_RANGE, r->hi > -2 && (r->lo || r->hi >= 0)
                                        ? range : NULL);
     curl_easy_setopt(c, CURLOPT_NOBODY, (long)(r->hi == -2));
@@ -1395,18 +1399,34 @@ static void fetch(ctx *x, rd *q, int n) {
   }
 }
 
+// a worker's connections, with eodata's key when one is in the environment
 static void open_(ctx *x) {
-  *x = (ctx){curl_easy_init(), curl_multi_init()};
+  const char *id = getenv("AWS_ACCESS_KEY_ID"),
+             *secret = getenv("AWS_SECRET_ACCESS_KEY"),
+             *region = getenv("AWS_REGION");
+  *x = (ctx){curl_easy_init(), curl_multi_init(), NULL, ""};
   curl_easy_setopt(x->c, CURLOPT_WRITEFUNCTION, wr);
   curl_easy_setopt(x->c, CURLOPT_HEADERFUNCTION, hd);
   curl_multi_setopt(x->m, CURLMOPT_MAX_HOST_CONNECTIONS, 6L);
+  snprintf(x->sig, sizeof x->sig, "aws:amz:%s:s3",
+           region ? region : "us-east-1");
+  if (id && secret && asprintf(&x->cred, "%s:%s", id, secret) < 0)
+    x->cred = NULL;
+  // openssl 3 parses a whole CA bundle per connection, ~30 ms of a core;
+  // debian's hashed directory is read lazily, one certificate per chain
+  if (!access("/etc/ssl/certs/ca-certificates.crt", R_OK))
+    curl_easy_setopt(x->c, CURLOPT_CAINFO, NULL),
+    curl_easy_setopt(x->c, CURLOPT_CAPATH, "/etc/ssl/certs");
+  curl_easy_setopt(x->c, CURLOPT_CONNECTTIMEOUT, 15L);
+  curl_easy_setopt(x->c, CURLOPT_LOW_SPEED_LIMIT, 1024L);   // a stalled
+  curl_easy_setopt(x->c, CURLOPT_LOW_SPEED_TIME, 30L);      // read retries
 }
 
 // a pool of workers, each with its own connections, running queued rows
 typedef struct row {
   struct row *next;
   char *url;
-  double box[4], th[NT];
+  double box[4], th[NT], org[3];   // org: b12's origin and pixel
   res r;
   const char *e;
   int *left;
@@ -1419,25 +1439,8 @@ static pthread_cond_t qc = PTHREAD_COND_INITIALIZER;
 
 static void *worker(void *_) {
   ctx x;
-  const char *id = getenv("AWS_ACCESS_KEY_ID"),
-             *secret = getenv("AWS_SECRET_ACCESS_KEY"),
-             *region = getenv("AWS_REGION");
-  char sig[64], *cred = NULL;
   (void)_;
   open_(&x);
-  snprintf(sig, sizeof sig, "aws:amz:%s:s3", region ? region : "us-east-1");
-  if (id && secret && asprintf(&cred, "%s:%s", id, secret) > 0) {
-    curl_easy_setopt(x.c, CURLOPT_AWS_SIGV4, sig);
-    curl_easy_setopt(x.c, CURLOPT_USERPWD, cred);
-  }
-  // openssl 3 parses a whole CA bundle per connection, ~30 ms of a core;
-  // debian's hashed directory is read lazily, one certificate per chain
-  if (!access("/etc/ssl/certs/ca-certificates.crt", R_OK))
-    curl_easy_setopt(x.c, CURLOPT_CAINFO, NULL),
-    curl_easy_setopt(x.c, CURLOPT_CAPATH, "/etc/ssl/certs");
-  curl_easy_setopt(x.c, CURLOPT_CONNECTTIMEOUT, 15L);
-  curl_easy_setopt(x.c, CURLOPT_LOW_SPEED_LIMIT, 1024L);   // a stalled
-  curl_easy_setopt(x.c, CURLOPT_LOW_SPEED_TIME, 30L);      // read retries
   for (;;) {
     pthread_mutex_lock(&qm);
     while (!qh) pthread_cond_wait(&qc, &qm);
@@ -1451,7 +1454,9 @@ static void *worker(void *_) {
       for (int s; (s = step(&j));)
         if (s == READ) fetch(&x, j.rq, j.nr);
         else gpu(&j);
-      w->e = j.e, w->r = j.r, end(&j);
+      w->e = j.e, w->r = j.r;
+      w->org[0] = j.bd->ox, w->org[1] = j.bd->oy, w->org[2] = j.bd->res;
+      end(&j);
     }
     __atomic_sub_fetch(&busy, 1, __ATOMIC_RELAXED);
     pthread_mutex_lock(w->m);
@@ -1572,8 +1577,19 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
   for (idx_t i = 0; i < n; i++) total += rs[i].e ? 0 : rs[i].r.nd;
   duckdb_list_vector_reserve(vl, total);
   duckdb_list_vector_set_size(vl, total);
-  duckdb_vector f = duckdb_list_vector_get_child(vl), fc[10];
-  for (int k = 0; k < 10; k++) fc[k] = duckdb_struct_vector_get_child(f, k);
+  duckdb_vector f = duckdb_list_vector_get_child(vl), fc[11];
+  for (int k = 0; k < 11; k++) fc[k] = duckdb_struct_vector_get_child(f, k);
+  // each hotspot's pixels: their centres, in the box's metres, and b12
+  idx_t tp = 0, op = 0;
+  for (idx_t i = 0; i < n; i++)
+    for (int j = 0; !rs[i].e && j < rs[i].r.nd; j++) tp += rs[i].r.d[j].px;
+  duckdb_list_vector_reserve(fc[10], tp);
+  duckdb_list_vector_set_size(fc[10], tp);
+  duckdb_list_entry *lp = duckdb_vector_get_data(fc[10]);
+  double *dp[3];
+  for (int k = 0; k < 3; k++)
+    dp[k] = duckdb_vector_get_data(duckdb_struct_vector_get_child(
+      duckdb_list_vector_get_child(fc[10]), k));
   duckdb_list_entry *le = duckdb_vector_get_data(vl);
   double *clear = duckdb_vector_get_data(vc), *d[8];
   int *px = duckdb_vector_get_data(fc[7]);
@@ -1604,7 +1620,11 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
       double vals[8] = {x->x, x->y, x->max, x->avg, x->b11, x->ratio, x->pk,
                         x->rad};
       for (int k = 0; k < 8; k++) d[k][o] = vals[k];
-      px[o] = x->px, sat[o] = x->sat;
+      px[o] = x->px, sat[o] = x->sat, lp[o] = (duckdb_list_entry){op, x->px};
+      for (int k = 0; k < x->px; k++, op++)
+        dp[0][op] = w->org[0] + ((x->pp[2 * k] & 65535) + .5) * w->org[2],
+        dp[1][op] = w->org[1] - ((x->pp[2 * k] >> 16) + .5) * w->org[2],
+        dp[2][op] = cal(x->pp[2 * k + 1]);
     }
     le[i].length = o - le[i].offset;
     for (int j = 0; j < w->r.nd; j++) free(w->r.d[j].pp);
@@ -1641,7 +1661,7 @@ static void s2_get(duckdb_function_info info, duckdb_data_chunk in,
       (const char *)q[i].b.p, q[i].b.n);
     free(q[i].url), drop(&q[i].b);
   }
-  free(q), curl_easy_cleanup(x.c), curl_multi_cleanup(x.m);
+  free(q), free(x.cred), curl_easy_cleanup(x.c), curl_multi_cleanup(x.m);
 }
 
 // the default source: eodata when its key is set, else google's mirror
@@ -1664,17 +1684,19 @@ static const char *macros =
 DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
                             struct duckdb_extension_access *access) {
   const char *fn[] = {"x", "y", "max_b12", "avg_b12", "peak_b11", "ratio",
-                      "peakedness", "pixels", "radiance", "saturated"};
+                      "peakedness", "pixels", "radiance", "saturated", "px"};
   const char *sn[] = {"clear", "error", "hotspots", "cells"},
-             *qn[] = {"x", "y", "cloud"};
-  duckdb_logical_type ft[10], st[4], qt[3], dbl = type(DUCKDB_TYPE_DOUBLE),
+             *qn[] = {"x", "y", "cloud"}, *pn[] = {"x", "y", "b12"};
+  duckdb_logical_type ft[11], st[4], qt[3], dbl = type(DUCKDB_TYPE_DOUBLE),
                       vc = type(DUCKDB_TYPE_VARCHAR);
   for (int k = 0; k < 10; k++)
     ft[k] = type(k == 7 ? DUCKDB_TYPE_INTEGER
                  : k == 9 ? DUCKDB_TYPE_BOOLEAN : DUCKDB_TYPE_DOUBLE);
-  duckdb_logical_type fs = duckdb_create_struct_type(ft, fn, 10);
   for (int k = 0; k < 3; k++) qt[k] = dbl;
-  duckdb_logical_type qs = duckdb_create_struct_type(qt, qn, 3);
+  duckdb_logical_type qs = duckdb_create_struct_type(qt, qn, 3),
+                      ps = duckdb_create_struct_type(qt, pn, 3);
+  ft[10] = duckdb_create_list_type(ps);
+  duckdb_logical_type fs = duckdb_create_struct_type(ft, fn, 11);
   st[0] = dbl, st[1] = vc, st[2] = duckdb_create_list_type(fs);
   st[3] = duckdb_create_list_type(qs);
   duckdb_logical_type ret = duckdb_create_struct_type(st, sn, 4);
@@ -1695,9 +1717,10 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   }
   duckdb_state ok = duckdb_register_scalar_function_set(con, set);
   duckdb_destroy_scalar_function_set(&set);
-  for (int k = 0; k < 10; k++) duckdb_destroy_logical_type(&ft[k]);
+  for (int k = 0; k < 11; k++) duckdb_destroy_logical_type(&ft[k]);
   duckdb_destroy_logical_type(&fs), duckdb_destroy_logical_type(&st[2]);
   duckdb_destroy_logical_type(&qs), duckdb_destroy_logical_type(&st[3]);
+  duckdb_destroy_logical_type(&ps);
   duckdb_destroy_logical_type(&ret), duckdb_destroy_logical_type(&dbl);
   duckdb_scalar_function f = duckdb_create_scalar_function();
   duckdb_scalar_function_set_name(f, "s2_source");

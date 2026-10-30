@@ -15,6 +15,28 @@ extension loads, offline.
   keeps one item for each tile and datetime (the newest baseline, then the
   newest processing), and gives them newest first.
 - `web/burnoff.c`, `web/worker.js`: the browser build and its worker.
+- `serve/`: the service on the jump host (`serve/deploy.sh`), sqlite for
+  its store and duckdb with this extension for the work, run by systemd.
+  `GET
+  https://dev.datadesk.eco/burnoff/hotspots?bbox=w,s,e,n[&datetime=a/b]`
+  (`hotspots.cgi`, fcgiwrap behind caddy, `args.sql`; at most 0.44° by
+  0.25°) gives geojson: each scene's look (its obscured share over the
+  bbox) and hotspots (their pixels, a multipolygon). `query` runs
+  `hotspots.sql`: the bbox's tiles (`s2_tile`), their scenes from the
+  store's index of eodata (`index.sh`, daily), each scene's 6.4 km cells
+  from the store where held, else one `s2_detect` of those lacking with a
+  cell's margin (a hotspot is the same whichever read made it, so the
+  store's are the browser's), the cells read written to a scratch sqlite
+  file that sqlite3 merges into the store in one transaction, under the
+  detector's digest (`v`). The store is `/data/burnoff/store.db`
+  (`schema.sql`, wal; a cell's 640 m squares packed by `cells.sql`, on the
+  tile's own origin). `bulk.sh` (nice 19) reads every cell of each scene
+  of the tiles about the archive's sites (`seeds.sql`), 30 days at a time
+  back to 2022, the newest 30 again before each; `export.sh` hourly puts
+  the newest processing of each scene in the archive's
+  `data-desk/burnoff/{observations,detections}`, a file a partition, once
+  its checks pass. Units fail to `data-desk-failed@` and log as
+  `burnoff-<unit>`. All of it is copernicus data on cloudferro, in the eu.
 
 `s2_detect()` gives one scene's clear share, `hotspots` and `cells` (the
 obscured share of each 640 m square) over a UTM box. Keep it a detector:

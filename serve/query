@@ -1,0 +1,35 @@
+#!/bin/sh
+# query [geojson]: hotspots.sql over the variables on stdin (args.sql's, or
+# set by bulk.sh), against the store $DB as detector $V (deploy.sh), its
+# new cells merged in after;
+# with geojson, the box's feature collection on stdout
+. /etc/profile.d/eodata.sh
+d=$(dirname "$0") t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
+{ echo ".output /dev/null"
+  echo "LOAD spatial; LOAD h3; LOAD sqlite;"
+  echo "LOAD '$d/burnoff.duckdb_extension';"
+  echo "ATTACH '$DB' AS db (TYPE sqlite, READ_ONLY);"
+  echo "ATTACH '$t/n.db' AS n (TYPE sqlite);"
+  echo "SET VARIABLE v = '$V';"
+  cat; cat "$d/cells.sql" "$d/hotspots.sql"
+  [ -z "${1:-}" ] || cat "$d/geojson.sql"
+} | duckdb -unsigned -bail -noheader -list > "$t/o" 2>&1 || {
+  cat "$t/o"; exit 1; }
+sqlite3 "$DB" <<S
+.timeout 60000
+ATTACH '$t/n.db' AS n;
+BEGIN;
+INSERT OR IGNORE INTO cells (scene, i, j, v, sx, sy, ox, oy, crs, clear,
+  cloud, squares, cell, lon, lat) SELECT scene, i, j, v, sx, sy, ox, oy, crs,
+  clear, cloud, squares, cell, lon, lat FROM n.cells;
+INSERT OR IGNORE INTO hotspots (scene, i, j, x, y, lon, lat, max_b12,
+  avg_b12, peak_b11, ratio, peakedness, pixels, radiance, saturated, px,
+  cell, v) SELECT scene, i, j, x, y, lon, lat, max_b12, avg_b12, peak_b11,
+  ratio, peakedness, pixels, radiance, saturated, px, cell, v
+  FROM n.hotspots;
+UPDATE scenes SET granule = g.granule FROM n.granules g
+  WHERE scenes.tile = g.tile AND scenes.t = g.t AND scenes.scene = g.scene;
+COMMIT;
+S
+cat "$t/o"
