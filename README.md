@@ -31,11 +31,22 @@ Without `f`, you get a feature collection, newest first:
 - One `hotspot` feature for each detection. The geometry is its pixels
   as a multipolygon. `pixel_b12` gives the B12 value of each pixel.
 
-With `f=sites`, you get one point feature for each site. A site is the
-detections within 100 m of its first detection. Its properties are
-`id`, `tile`, `looks` (`[[date, cloud], …]` for the 640 m square under
-the site) and `detections` (the brightest detection of each date, with
-its pixels).
+With `f=sites`, you get one point feature for each site. The service
+finds sites from all the detections it holds, on all dates:
+
+1. Each detection puts a count on the 20 m pixel of its peak, at most one
+   for each date.
+2. Each count spreads to the pixels within 40 m, less with distance.
+3. Each pixel points to its highest neighbour. A pixel with no higher
+   neighbour is the top of a site.
+
+The same detections always give the same sites, for any `bbox` or
+`datetime`. Two flares stay separate when the counts between them are
+lower. The `id` is the top's place (`live:<lat>,<lon>`). `datetime`
+selects only the dates in each site. Its properties are `id`,
+`looks` (`[[date, cloud], …]` for the 640 m square under the site),
+`detections` (the brightest detection of each date, with its pixels)
+and `detection_count`.
 
 ```sh
 curl 'https://dev.datadesk.eco/burnoff/hotspots?bbox=-103.6,31.9,-103.5,32&datetime=2026-08-01/2026-10-30&f=sites'

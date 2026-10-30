@@ -8,7 +8,7 @@
 -- read made them, with a cell's margin read around it; v, the detector's
 -- digest, keys what it made. whole asks for
 -- every cell of each scene's square, not only the box's. leaves the box's
--- looks and hotspots in tables looks and spots (geojson.sql)
+-- looks and hotspots, and those within m of it, in tables looks and spots
 
 -- the sentinel-2 tile over lon/lat in its utm zone moved by dz: its 100 km
 -- mgrs square, whose latitude band is the one its centre is in, its crs and
@@ -163,6 +163,9 @@ LEFT JOIN (SELECT scene, coalesce(r.error, 'no granule') AS error FROM rd
   USING (scene)
 WHERE sc.scene IN (SELECT scene FROM need)
 GROUP BY ALL;
+-- m: how far past the box spots reach, in degrees of latitude (about
+-- 550 m), so sites.sql sees every slope to the box's tops
+SET VARIABLE m = .005;
 SET VARIABLE sq = 'SELECT * FROM hotspots WHERE scene IN ('
   || coalesce((SELECT q(scene) FROM held), '''''') || ') AND v = '''
   || getvariable('v') || '''';
@@ -178,5 +181,7 @@ FROM (SELECT scene, i::INT AS i, j::INT AS j, x::DOUBLE AS x, y::DOUBLE AS y,
       FROM sqlite_query('db', getvariable('sq')) SEMI JOIN held
         USING (scene, i, j)
       UNION ALL BY NAME FROM det) s JOIN sc USING (scene)
-WHERE s.lon BETWEEN getvariable('w') AND getvariable('e')
-  AND s.lat BETWEEN getvariable('s') AND getvariable('n');
+WHERE s.lat BETWEEN getvariable('s') - getvariable('m')
+  AND getvariable('n') + getvariable('m')
+  AND s.lon BETWEEN getvariable('w') - getvariable('m') / cos(radians(s.lat))
+  AND getvariable('e') + getvariable('m') / cos(radians(s.lat));

@@ -76,6 +76,9 @@ On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
   `f=sites`). Cells come from the store, else one `s2_detect` of those
   missing; new cells are merged into the store in one transaction, keyed
   by the detector's digest `v`. Requests run in parallel, one a core.
+  `sites.sql` climbs a heap of every date's detections within 550 m of
+  the box (`m`), so a site and its id depend on the store alone, not on
+  the request. Keep its sums integer: float sums can tie differently.
   Answers carry `Cache-Control`: a day for a window ended before today,
   else an hour.
 - The store is `/data/burnoff/store.db` (`schema.sql`, SQLite, WAL). It

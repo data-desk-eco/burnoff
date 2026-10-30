@@ -1,37 +1,65 @@
--- hotspots.sql's spots as sites, one geojson feature a site, as aerial keeps
--- them: the detections within 100 m of the first (oldest first, greedy), id
--- live:<lat>,<lon>@<tile>_<date> after it; looks, [[date, cloud], …], the
--- obscured share of the 640 m square under the site, its clearest scene a
--- date; and each date's brightest detection, its pixels as [b12, lon, lat
--- × 4 corners]
+-- hotspots.sql's spots as sites, one geojson feature a site. a site is a
+-- top of the heap the detections build over every date: each the store
+-- holds within m of the box drops a pebble on its peak's 20 m pixel (in
+-- its longitude's utm zone), a date's at most one; a pebble heaps 5 - d²
+-- on the pixels within 2 (d in pixels, integers, so sums are exact); each
+-- pixel points at its tallest neighbour, itself if none is taller (ties to
+-- the greater x, y), and a pebble climbs to a top. so the same pebbles give
+-- the same sites, named by place (live:<lat>,<lon>), whatever box or
+-- window asks, while every slope to a box's tops lies within m. the box's
+-- tops with a detection in the window are its sites: looks, [[date,
+-- cloud], …], the obscured share of the 640 m square under the top, its
+-- clearest scene a date; and each date's brightest detection, its pixels
+-- as [b12, lon, lat × 4 corners]
 .output
 .mode list
 .headers off
-CREATE MACRO metres(a, b, c, d) AS
-  111320 * sqrt(((c - a) * cos(radians(b))) ** 2 + (d - b) ** 2);
+CREATE MACRO pix(lon, lat) AS (SELECT {z: z, x: floor(ST_X(p) / 20)::INT,
+  y: floor(ST_Y(p) / 20)::INT} FROM (SELECT z, ST_Transform(ST_Point(lon,
+    lat), 'EPSG:4326', z, always_xy := true) AS p
+  FROM (SELECT 'EPSG:' || (if(lat < 0, 32700, 32600)
+          + floor((lon + 180) / 6)::INT % 60 + 1) AS z)));
+CREATE MACRO near(lon, lat) AS lat BETWEEN getvariable('s') - getvariable('m')
+  AND getvariable('n') + getvariable('m') AND lon BETWEEN getvariable('w')
+  - getvariable('m') / cos(radians(lat)) AND getvariable('e')
+  + getvariable('m') / cos(radians(lat));
 CREATE MACRO ll(q, c, crs) AS ST_Transform(ST_Point(q.x + c[1], q.y + c[2]),
   crs, 'EPSG:4326', always_xy := true);
-CREATE TEMP TABLE h AS
-SELECT row_number() OVER (ORDER BY datetime, lat, lon) AS k, * FROM spots;
-CREATE TEMP TABLE seeds AS
-WITH RECURSIVE r(k, ss) AS (
-  SELECT 0, []::STRUCT(lon DOUBLE, lat DOUBLE, k BIGINT)[]
-  UNION ALL
-  SELECT h.k, if(list_bool_or(list_transform(r.ss, lambda z:
-           metres(z.lon, z.lat, h.lon, h.lat) <= 100)), r.ss,
-           list_append(r.ss, {lon: h.lon, lat: h.lat, k: h.k}))
-  FROM r JOIN h ON h.k = r.k + 1)
-SELECT unnest(ss, recursive := true) FROM r
-WHERE k = (SELECT coalesce(max(k), 0) FROM h);
-CREATE TEMP TABLE hs AS
-SELECT h.*, (SELECT min(z.k) FROM seeds z
-                   WHERE metres(z.lon, z.lat, h.lon, h.lat) <= 100) AS site
-FROM h;
+SET VARIABLE sq = 'SELECT scene, lon, lat FROM hotspots WHERE v = '''
+  || getvariable('v') || ''' AND lat BETWEEN '
+  || (getvariable('s') - 1.5 * getvariable('m')) || ' AND '
+  || (getvariable('n') + 1.5 * getvariable('m'));
+CREATE TEMP TABLE pb AS
+SELECT pix(lon, lat) AS p, count(DISTINCT split_part(scene, '_', 3)[:8]) AS n
+FROM (SELECT scene, lon::DOUBLE AS lon, lat::DOUBLE AS lat
+      FROM sqlite_query('db', getvariable('sq'))
+      UNION SELECT scene, lon, lat FROM det)
+WHERE near(lon, lat) GROUP BY p;
+CREATE TEMP TABLE hp AS
+SELECT {z: p.z, x: p.x + dx, y: p.y + dy} AS p,
+       sum(n * (5 - dx * dx - dy * dy)) AS h
+FROM pb, range(-2, 3) a(dx), range(-2, 3) b(dy)
+WHERE dx * dx + dy * dy <= 4 GROUP BY 1;
+CREATE TEMP TABLE up AS
+SELECT a.p, arg_max(b.p, (b.h, b.p.x, b.p.y)) AS u
+FROM hp a JOIN hp b ON b.p.z = a.p.z AND abs(b.p.x - a.p.x) <= 1
+  AND abs(b.p.y - a.p.y) <= 1
+GROUP BY a.p;
+CREATE TEMP TABLE top AS
+WITH RECURSIVE c(p, u) AS (FROM up SEMI JOIN pb USING (p)
+  UNION ALL SELECT c.p, up.u FROM c JOIN up ON up.p = c.u AND up.u <> up.p)
+SELECT c.p, c.u AS t FROM c JOIN up ON up.p = c.u AND up.u = up.p;
 CREATE TEMP TABLE st AS
-SELECT h.k AS site, h.lon, h.lat, 'live:' || printf('%.5f', h.lat) || ','
-         || printf('%.5f', h.lon) || '@' || split_part(h.scene, '_', 6)[2:]
-         || '_' || h.date AS id
-FROM seeds JOIN h USING (k);
+SELECT t, ST_X(q) AS lon, ST_Y(q) AS lat,
+       'live:' || printf('%.5f', ST_Y(q)) || ',' || printf('%.5f', ST_X(q))
+         AS id
+FROM (SELECT DISTINCT t, ST_Transform(ST_Point(t.x * 20 + 10, t.y * 20 + 10),
+        t.z, 'EPSG:4326', always_xy := true) AS q FROM top)
+WHERE ST_X(q) BETWEEN getvariable('w') AND getvariable('e')
+  AND ST_Y(q) BETWEEN getvariable('s') AND getvariable('n');
+CREATE TEMP TABLE hs AS
+SELECT h.*, st.t FROM spots h JOIN top ON top.p = pix(h.lon, h.lat)
+JOIN st USING (t);
 -- every scene's squares, in its crs, and the one under each site
 CREATE TEMP TABLE sq AS
 SELECT scene, v.x, v.y, v.cloud
@@ -39,8 +67,8 @@ FROM (SELECT scene, unnest(unpacked(squares, ox, oy, sx, sy, i, j, cloud))
         AS v FROM held
       UNION ALL SELECT scene, unnest(q) FROM obs);
 CREATE TEMP TABLE lk AS
-SELECT site, date, min(cloud) AS cloud
-FROM (SELECT st.site, sc.datetime::DATE AS date, arg_min(sq.cloud,
+SELECT t, date, min(cloud) AS cloud
+FROM (SELECT st.t, sc.datetime::DATE AS date, arg_min(sq.cloud,
         (sq.x - ST_X(p)) ** 2 + (sq.y - ST_Y(p)) ** 2) AS cloud
       FROM st JOIN sc ON true, LATERAL (SELECT ST_Transform(ST_Point(st.lon,
         st.lat), 'EPSG:4326', sc.crs, always_xy := true) AS p)
@@ -49,14 +77,14 @@ FROM (SELECT st.site, sc.datetime::DATE AS date, arg_min(sq.cloud,
       GROUP BY ALL)
 GROUP BY ALL;
 SELECT '{"type":"FeatureCollection","features":['
-       || coalesce(string_agg(f, ','), '') || ']}'
+       || coalesce(string_agg(f, ',' ORDER BY f), '') || ']}'
 FROM (SELECT json_object('type', 'Feature', 'geometry', json_object('type',
         'Point', 'coordinates', [st.lon, st.lat]), 'properties', json_object(
-        'id', st.id, 'tile', split_part(st.id, '@', 2)[:5],
+        'id', st.id,
         'looks', (SELECT coalesce(list(json_array(date, cloud) ORDER BY date),
-                   []) FROM lk WHERE lk.site = st.site),
+                   []) FROM lk WHERE lk.t = st.t),
         'detections', d.ds, 'detection_count', len(d.ds)))::VARCHAR AS f
-      FROM st JOIN (SELECT site, list(json_object('date', date, 'scene',
+      FROM st JOIN (SELECT t, list(json_object('date', date, 'scene',
               scene, 'lon', lon, 'lat', lat, 'max_b12', max_b12, 'avg_b12',
               avg_b12, 'peak_b11', peak_b11, 'ratio', if(isinf(ratio), 1e308,
               ratio), 'peakedness', peakedness, 'pixels', pixels,
@@ -66,6 +94,6 @@ FROM (SELECT json_object('type', 'Feature', 'geometry', json_object('type',
                   [-10, 10]], lambda c: [ST_X(ll(q, c, crs)),
                                 ST_Y(ll(q, c, crs))])))))
               ORDER BY date) AS ds
-            FROM (FROM hs QUALIFY row_number() OVER (PARTITION BY site, date
-                                ORDER BY max_b12 DESC) = 1)
-            GROUP BY site) d USING (site));
+            FROM (FROM hs QUALIFY row_number() OVER (PARTITION BY t, date
+                                ORDER BY max_b12 DESC, scene) = 1)
+            GROUP BY t) d USING (t));

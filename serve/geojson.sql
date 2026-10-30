@@ -17,7 +17,8 @@ FROM (SELECT datetime AS t, 1 AS k, json_object('type', 'Feature',
         'peakedness', peakedness, 'pixels', pixels, 'radiance', radiance,
         'saturated', saturated,
         'pixel_b12', list_transform(px, lambda q: q.b12)))::VARCHAR AS f
-      FROM spots
+      FROM spots WHERE lon BETWEEN getvariable('w') AND getvariable('e')
+        AND lat BETWEEN getvariable('s') AND getvariable('n')
       UNION ALL
       SELECT datetime, 0, json_object('type', 'Feature', 'geometry', NULL,
         'properties', json_object('kind', if(error IS NULL, 'look', 'error'),
