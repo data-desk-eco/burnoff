@@ -39,8 +39,11 @@ extension loads, offline.
   `data-desk/burnoff/{observations,detections}`, a file a partition (an h3
   res-1 cell), once its checks pass: the archive is the record, each
   scene's cell the store holds replacing the archive's (rows carry `v`),
-  so a run is idempotent and never drops a row; an empty store is seeded
-  from the archive's current-`v` rows. ~95 s at 3 GB and 2 threads, spilling to
+  so a run is idempotent and never drops a row; only the partitions
+  where the store holds a cell the archive lacks (by scene, i, j, v; a
+  key scan of the archive, ~8 s) are read and rewritten; an empty store is seeded
+  from the archive's current-`v` rows. ~8-30 s an hour (~95 s for all 76
+  partitions), at 3 GB and 2 threads, spilling to
   `/data/burnoff/tmp` (unlimited it was OOM-killed on the 7.5 GB box; at
   2 GB and 4 threads its s3 writes ran out). Units fail to `data-desk-failed@` and log as
   `burnoff-<unit>`. All of it is copernicus data on cloudferro, in the eu.

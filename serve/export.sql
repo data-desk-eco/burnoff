@@ -31,11 +31,16 @@ HAVING count(*) > 0;
 CREATE MACRO sensed(scene) AS strptime(split_part(scene, '_', 3),
                                      '%Y%m%dT%H%M%S');
 CREATE MACRO arc(t) AS TABLE FROM read_parquet(getvariable('arc') || '/' || t
-  || '/*/*.parquet', union_by_name := true, hive_partitioning := false);
--- the archive's rows of the store's partitions, bar the scenes' cells it
--- holds afresh
+  || '/*/*.parquet', union_by_name := true, hive_partitioning := true);
+-- the partitions (d) where the store holds a scene's cell the archive lacks
+-- for its detector, the rest left unread and unwritten
+SET VARIABLE d = (SELECT coalesce(list(DISTINCT cell), []) FROM c
+  ANTI JOIN (SELECT scene, i, j, v FROM arc('observations'))
+  USING (scene, i, j, v));
+DELETE FROM c WHERE NOT list_contains(getvariable('d'), cell);
+-- the archive's rows of those, bar the scenes' cells the store holds
 CREATE MACRO kept(t) AS TABLE FROM arc(t) ANTI JOIN c USING (scene, i, j)
-  WHERE cell IN (SELECT cell FROM c);
+  WHERE list_contains(getvariable('d'), cell);
 CREATE TEMP TABLE o AS
 FROM (SELECT scene, sensed(scene) AS datetime, sensed(scene)::DATE AS date,
              split_part(scene, '_', 6)[2:] AS tile, i, j, sx, sy, ox, oy, crs,
