@@ -106,3 +106,10 @@ core. Through DuckDB at 8 rows: 70 tiles in 7.0 s (CPU 10.2 s), 518 sites
 in 4.8 s. Headless Chrome over gs://, 4 workers: 112 sites in 4.3 s and
 175 MB; a repeat session reads nothing. In the browser, the network sets
 the time.
+
+Sites, 2026-10-30, on the archive's 53,905 detections (Feb-Oct 2026) at
+Ras Laffan: 66 sites (the greedy seeding gave 63), none closer than 63 m;
+the same 66, ids and counts, from 0.1° blocks offset by 0.05°; a
+June-August window's a subset. Built from detections to June alone, 41
+of 47 ids survive the rest of the year, holding 91% of their detections.
+A block takes 0.6 s.
