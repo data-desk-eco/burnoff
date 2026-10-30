@@ -15,7 +15,8 @@ O=/opt/burnoff DB=/data/burnoff/store.db
 ARC=s3://data-desk-archive/data-desk/burnoff
 make -s -C ~/burnoff GPU=0 ext/burnoff.duckdb_extension
 sudo install -d -o eouser $O /data/burnoff
-cp ~/burnoff/ext/burnoff.duckdb_extension ~/burnoff/serve/* $O/
+# install replaces a file whole, so a request running keeps its old one
+install -C -m 755 ~/burnoff/ext/burnoff.duckdb_extension ~/burnoff/serve/* $O/
 # the detector's digest: what a cell is kept under (schema.sql's v)
 V=$(sha1sum < $O/burnoff.duckdb_extension | cut -c1-12)
 sqlite3 -cmd '.timeout 60000' $DB < $O/schema.sql >/dev/null
@@ -31,8 +32,14 @@ SCOPE \\047s3://data-desk-archive\\047);\\n" \
 cd
 dpkg -s fcgiwrap >/dev/null 2>&1 || sudo apt-get install -y -qq fcgiwrap
 sudo mkdir -p /etc/systemd/system/fcgiwrap.service.d
-printf '[Service]\nUser=eouser\nGroup=eouser\nEnvironment=DB=%s V=%s\n' $DB $V |
-  sudo tee /etc/systemd/system/fcgiwrap.service.d/burnoff.conf >/dev/null
+F=/etc/systemd/system/fcgiwrap.service.d/burnoff.conf
+old=$(cat $F 2>/dev/null || :)
+# fcgiwrap is one process a request at a time unless -c; hotspots.cgi
+# keeps those running to a core each
+printf '[Service]\nUser=eouser\nGroup=eouser\nEnvironment=DB=%s V=%s\n%s\n' \
+  $DB $V "ExecStart=
+ExecStart=/usr/sbin/fcgiwrap -f -c $(($(nproc) * 4))" |
+  sudo tee $F >/dev/null
 # a unit as the box's own jobs are: a failure reported (data-desk-failed@),
 # its log under its name (journalctl -t burnoff-<name>)
 unit() {   # name, description, command, then [Service] and [Install] lines
@@ -65,5 +72,8 @@ sudo usermod -aG www-data caddy
 sudo systemctl daemon-reload
 sudo systemctl enable -q --now fcgiwrap.socket burnoff-bulk \
   burnoff-index.timer burnoff-export.timer
-sudo systemctl restart fcgiwrap burnoff-bulk caddy
+sudo systemctl reload caddy
+# a request runs the files anew, so the service restarts (and drops the
+# requests in flight) only for a new detector, whose digest is in F
+[ "$(cat $F)" = "$old" ] || sudo systemctl restart fcgiwrap burnoff-bulk
 S

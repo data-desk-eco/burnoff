@@ -12,6 +12,11 @@ bulk() {
   do [ "$(cat /proc/"$p"/comm)" = duckdb ] && kill -"$1" "$p"; done 2>/dev/null
 }
 trap 'exec 9>&-; flock -n "$L" true && bulk CONT' EXIT
+# at most a request a core at once; the rest wait for a slot (L.<i>)
+n=$(nproc) i=0
+until exec 8>>"$L.$i" && flock -n 8; do
+  i=$(((i + 1) % n)); [ $i -gt 0 ] || sleep .2
+done
 exec 9>>"$L"; flock -s 9; bulk STOP
 o=$({ echo "SET VARIABLE q = '$q';"; cat "$d/args.sql"; } | "$d/query" $f) &&
   printf 'Content-Type: application/geo+json\r\n' ||
