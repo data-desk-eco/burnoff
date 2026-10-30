@@ -21,7 +21,9 @@ extension loads, offline.
   https://dev.datadesk.eco/burnoff/hotspots?bbox=w,s,e,n[&datetime=a/b]`
   (`hotspots.cgi`, fcgiwrap behind caddy, `args.sql`; at most 0.44° by
   0.25°) gives geojson: each scene's look (its obscured share over the
-  bbox) and hotspots (their pixels, a multipolygon). `query` runs
+  bbox) and hotspots (their pixels, a multipolygon); `&f=sites` gives
+  them as sites (`sites.sql`): a feature a site, the detections within
+  100 m of its first, with its looks (the cloud of the square under it). `query` runs
   `hotspots.sql`: the bbox's tiles (`s2_tile`), their scenes from the
   store's index of eodata (`index.sh`, daily), each scene's 6.4 km cells
   from the store where held, else one `s2_detect` of those lacking with a

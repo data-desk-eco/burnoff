@@ -18,7 +18,7 @@ sudo install -d -o eouser $O /data/burnoff
 cp ~/burnoff/ext/burnoff.duckdb_extension ~/burnoff/serve/* $O/
 # the detector's digest: what a cell is kept under (schema.sql's v)
 V=$(sha1sum < $O/burnoff.duckdb_extension | cut -c1-12)
-sqlite3 $DB < $O/schema.sql >/dev/null
+sqlite3 -cmd '.timeout 60000' $DB < $O/schema.sql >/dev/null
 [ -s $O/seeds.txt ] || duckdb < $O/seeds.sql > $O/seeds.txt
 # the archive's key, minted for the box and read by the export alone
 install -d -m 700 ~/.config/burnoff
