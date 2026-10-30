@@ -10,9 +10,10 @@
 -- every cell of each scene's square, not only the box's. leaves the box's
 -- looks and hotspots in tables looks and spots (geojson.sql)
 
--- the sentinel-2 tile over lon/lat: its 100 km mgrs square, whose latitude
--- band is the one its centre is in, its crs and its north-west corner
-CREATE MACRO s2_tile(lon, lat) AS (
+-- the sentinel-2 tile over lon/lat in its utm zone moved by dz: its 100 km
+-- mgrs square, whose latitude band is the one its centre is in, its crs and
+-- its north-west corner
+CREATE MACRO s2_tile(lon, lat, dz) AS (
   SELECT {id: printf('%02d', z) || 'CDEFGHJKLMNPQRSTUVWX'[least(greatest(
             floor((ST_Y(ST_Transform(ST_Point(c * 1e5 + 5e4, r * 1e5 + 5e4),
             crs, 'EPSG:4326', always_xy := true)) + 80) / 8), 0), 19)::INT + 1]
@@ -24,7 +25,8 @@ CREATE MACRO s2_tile(lon, lat) AS (
         FROM (SELECT *, ST_Transform(ST_Point(lon, lat), 'EPSG:4326', crs,
                                      always_xy := true) AS p
               FROM (SELECT z, 'EPSG:' || (if(lat < 0, 32700, 32600) + z) AS crs
-                    FROM (SELECT floor((lon + 180) / 6)::INT % 60 + 1 AS z)))));
+                    FROM (SELECT (floor((lon + 180) / 6)::INT + dz + 60)
+                                 % 60 + 1 AS z)))));
 -- a point of the box, k of 9 × 9
 CREATE MACRO pt(k) AS ST_Point(
   getvariable('w') + (getvariable('e') - getvariable('w')) * (k % 9) / 8,
@@ -34,11 +36,19 @@ CREATE MACRO q(s) AS '''' || string_agg(DISTINCT s, ''',''') || '''';
 
 -- the tiles under the box's points, and their scenes from t0 to t1, one a
 -- sensing time, the newest processing; u, the box in the tile's metres
--- (the envelope of its points, as the browser's fit() takes it)
+-- (the envelope of its points, as the browser's fit() takes it). a point's
+-- tile is its own zone's where eodata lists it, else a neighbouring
+-- zone's: sentinel-2 has none of some, as 43WCV, at yamal lng
+CREATE TEMP TABLE cand AS
+SELECT k, dz, s2_tile(ST_X(pt(k)), ST_Y(pt(k)), dz) AS t
+FROM range(81) r(k), range(-1, 2) d(dz);
+SET VARIABLE sq = 'SELECT tile FROM scenes WHERE tile IN ('
+  || (SELECT q(t.id) FROM cand) || ') GROUP BY tile';
 CREATE TEMP TABLE tiles AS
-SELECT t.id, t.crs, t.sx, t.sy
-FROM (SELECT DISTINCT s2_tile(ST_X(pt(k)), ST_Y(pt(k))) AS t
-      FROM range(81) r(k));
+SELECT DISTINCT t.id, t.crs, t.sx, t.sy
+FROM (SELECT arg_min(t, abs(dz)) AS t FROM cand
+      WHERE t.id IN (SELECT tile FROM sqlite_query('db', getvariable('sq')))
+      GROUP BY k);
 SET VARIABLE sq = 'SELECT scene, tile, t, granule FROM scenes WHERE tile IN ('
   || (SELECT q(id) FROM tiles) || ') AND t BETWEEN '''
   || strftime(getvariable('t0'), '%Y%m%d') || ''' AND '''
