@@ -35,14 +35,17 @@ With `f=sites`, you get one point feature for each site. The service
 finds sites from all the detections it holds, on all dates:
 
 1. Each detection puts a count on the 20 m pixel of its peak, at most one
-   for each date.
-2. Each count spreads to the pixels within 40 m, less with distance.
-3. Each pixel points to its highest neighbour. A pixel with no higher
-   neighbour is the top of a site.
+   for each date, and half a count on the four pixels next to it.
+2. Each pixel points to its highest neighbour. The pixels that climb to
+   the same top make a hill.
+3. A hill joins the largest larger hill within 60 m that never had a
+   detection on the same date. Two flares that burn on the same date stay
+   two sites.
 
 The same detections always give the same sites, for any `bbox` or
-`datetime`. Two flares stay separate when the counts between them are
-lower. The `id` is the top's place (`live:<lat>,<lon>`). `datetime`
+`datetime`. The `id` is the mean place of the site's detections, rounded
+to 40 m (`live:<lat>,<lon>`). The mean changes little as detections are
+added, so the `id` usually stays the same. `datetime`
 selects only the dates in each site. Its properties are `id`,
 `looks` (`[[date, cloud], …]` for the 640 m square under the site),
 `detections` (the brightest detection of each date, with its pixels)

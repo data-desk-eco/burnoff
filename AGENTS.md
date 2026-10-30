@@ -77,10 +77,10 @@ On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
   missing; new cells are merged into the store in one transaction, keyed
   by the detector's digest `v`. Requests run in parallel, one a core.
   `sites.sql` climbs a heap of every date's detections within 550 m of
-  the box (`m`), so a site and its id depend on the store alone, not on
-  the request. Keep its sums integer: float sums can tie differently.
-  Answers carry `Cache-Control`: a day for a window ended before today,
-  else an hour.
+  the box (`m`), joins hills that never share a date, and names a site
+  by its mean place rounded to 40 m, so a site and its id depend on the
+  store alone, not on the request. Keep its sums integer (whole cm): float
+  sums can round differently.
 - The store is `/data/burnoff/store.db` (`schema.sql`, SQLite, WAL). It
   is a cache: everything in it can be read again from eodata.
 - `index.sh` (daily) indexes eodata's scenes. `bulk.sh` (nice 19) fills
@@ -107,9 +107,13 @@ in 4.8 s. Headless Chrome over gs://, 4 workers: 112 sites in 4.3 s and
 175 MB; a repeat session reads nothing. In the browser, the network sets
 the time.
 
-Sites, 2026-10-30, on the archive's 53,905 detections (Feb-Oct 2026) at
-Ras Laffan: 66 sites (the greedy seeding gave 63), none closer than 63 m;
-the same 66, ids and counts, from 0.1° blocks offset by 0.05°; a
-June-August window's a subset. Built from detections to June alone, 41
-of 47 ids survive the rest of the year, holding 91% of their detections.
-A block takes 0.6 s.
+Sites, 2026-10-30, on the archive's 53,905 detections (Feb-Oct 2026),
+date halves against the whole: an id from the hill's top kept 77% of
+detections; the mean rounded to 40 m, 86-88% with no two sites of 5
+dates on one id (60 m: 89-91%, 4 such; 100 m: 94%, dozens). A wider heap
+(5 - d² over 2 pixels) put two detections over 30 m apart on one date in
+one site 968 times, the 2-1 heap 318; joining hills within 60 m that
+share no date adds 57 sites of 5 dates for 3 more. At Ras Laffan: 70
+sites, the same from 0.1° blocks offset by 0.05° and in a June-August
+window; from detections to June alone, 45 of 48 ids survive the rest of
+the year, holding 97% of their detections. A block takes 0.7 s.
