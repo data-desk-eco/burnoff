@@ -164,7 +164,7 @@ LEFT JOIN (SELECT scene, coalesce(r.error, 'no granule') AS error FROM rd
 WHERE sc.scene IN (SELECT scene FROM need)
 GROUP BY ALL;
 -- m: how far past the box spots reach, in degrees of latitude (about
--- 550 m), so sites.sql sees every slope to the box's tops
+-- 550 m), so sites.sql sees every link to the box's sites
 SET VARIABLE m = .005;
 SET VARIABLE sq = 'SELECT * FROM hotspots WHERE scene IN ('
   || coalesce((SELECT q(scene) FROM held), '''''') || ') AND v = '''
