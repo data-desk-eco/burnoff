@@ -24,10 +24,12 @@ const drop = new Set()
 const heap = (T, p, n) => new T(m.HEAPU8.buffer, p, n)
 
 // finished detections in indexeddb, keyed by the call and the wasm's
-// digest: a view opened again reads nothing. its keys are read once
+// digest: a view opened again reads nothing. its keys are read once.
+// none with ?fresh: a fallback's finds would outlive the service's
+const fresh = new URL(import.meta.url).searchParams.has('fresh')
 const build = crypto.subtle?.digest('SHA-256', wasm).then(d =>
   String.fromCharCode(...new Uint8Array(d)), no)
-const db = new Promise((ok, err) => {
+const db = fresh ? Promise.resolve() : new Promise((ok, err) => {
   const q = indexedDB.open('burnoff', 1)
   q.onupgradeneeded = () => q.result.createObjectStore('r')
   q.onsuccess = () => ok(q.result), q.onerror = err
