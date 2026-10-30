@@ -187,12 +187,13 @@ int j2k_need(const j2k *j, int k, int x0, int y0, int x1, int y1,
   return n;
 }
 
-// packet headers: bits with a 0 after each 0xff byte, zeros past the end
+// packet headers: bits with a 0 after each 0xff byte, zeros past the end,
+// which p counts on through, so that a header past e is seen
 typedef struct { const uint8_t *p, *e; unsigned buf, ct; } bio;
 
 static void bin(bio *b) {
   b->buf = b->buf << 8 & 0xffff, b->ct = b->buf == 0xff00 ? 7 : 8;
-  if (b->p < b->e) b->buf |= *b->p++;
+  if (b->p++ < b->e) b->buf |= b->p[-1];
 }
 
 static unsigned bit(bio *b) {
@@ -245,10 +246,11 @@ static void *grow(void *p, size_t *cap, size_t need, size_t sz) {
 }
 
 // packet p of resolution r, component c of tile k, from s[0, n): its
-// length, and with o, its code-blocks that meet the needed rects L
+// length, and with o, its code-blocks that meet the needed rects L; with
+// hd, s may hold only its header, and their offsets are in the packet
 static const char *packet(const j2k *j, int k, int r, int c, int p,
                           const uint8_t *s, size_t n, const lev *L, int row,
-                          j2k_cbs *o, size_t *len) {
+                          j2k_cbs *o, size_t *len, int hd) {
   j2k_box t = tbox(j, k), R = rbox(t, j->nl - r);
   int nx = pw(j, t, r, 0), px = j->ppx[r] - !!r, py = j->ppy[r] - !!r;
   int ix = (R.x0 >> j->ppx[r]) + p % nx, iy = (R.y0 >> j->ppy[r]) + p / nx;
@@ -292,10 +294,11 @@ static const char *packet(const j2k *j, int k, int r, int c, int p,
   }
   if ((b.buf & 0xff) == 0xff) bin(&b);   // byte-align, past any 0xff
   size_t h = b.p - s;
-  if (h + body > n) return "truncated packet";
+  if (h + (hd ? 0 : body) > n) return "truncated packet";
   *len = h + body;
   for (size_t i = first; o && i < o->n; i++) {
     j2k_cb *q = &o->cb[i];
+    if (hd) { q->off += h; continue; }
     o->d = grow(o->d, &o->capd, o->nd + q->len + 2, 1);
     memcpy(o->d + o->nd, s + h + q->off, q->len);
     q->off = o->nd, o->nd += q->len;
@@ -339,8 +342,8 @@ const char *j2k_part(const j2k *j, const uint8_t *p, size_t n, int *k,
   if (np && (int)np != npk(j, tbox(j, *k))) return "PLT does not match tile";
   PACKETS(j, *k, i, r, c, pr) {
     size_t l = np ? pn[i] : 0;
-    const char *err =
-      np ? NULL : packet(j, *k, r, c, pr, p + at, L - at, NULL, 0, NULL, &l);
+    const char *err = np ? NULL : packet(j, *k, r, c, pr, p + at, L - at,
+                                         NULL, 0, NULL, &l, 0);
     if (err) return err;
     if (at + l > L) return "packets overrun the tile-part";
     off[i] = at, pn[i] = l, at += l;
@@ -364,10 +367,26 @@ const char *j2k_t2(const j2k *j, int k, const uint8_t *const *pk,
   PACKETS(j, k, i, r, c, p) {
     const char *e = !need[i] ? NULL
                   : !pk[i] ? "a needed packet is missing"
-                  : packet(j, k, r, c, p, pk[i], pn[i], L, row, o, &len);
+                  : packet(j, k, r, c, p, pk[i], pn[i], L, row, o, &len, 0);
     if (e) return e;
   }
   return NULL;
+}
+
+// the code-blocks of packet i of tile k that window [x0,x1)×[y0,y1) needs,
+// from s[0, n), which need hold only its header: appended to o, each off
+// its offset in the packet and row i
+const char *j2k_blocks(const j2k *j, int k, int i, const uint8_t *s,
+                       size_t n, int x0, int y0, int x1, int y1,
+                       j2k_cbs *o) {
+  j2k_box t = tbox(j, k);
+  lev L[33];
+  size_t len;
+  reach(j, t, (j2k_box){JMAX(x0, t.x0), JMAX(y0, t.y0), JMIN(x1, t.x1),
+                        JMIN(y1, t.y1)}, L);
+  PACKETS(j, k, a, r, c, p)
+    if (a == i) return packet(j, k, r, c, p, s, n, L, i, o, &len, 1);
+  return "no such packet";
 }
 
 // tier-1. the MQ decoder's 47 states as qe, then for each state and mps

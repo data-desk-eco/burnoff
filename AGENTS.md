@@ -48,6 +48,24 @@ puts it to 1 KB past its first SOT, so tile 0's PLT is in it, and the jp2
 boxes ahead of it are the tile's: about 1.7 KB in place of 16 KB. A cached
 header with a TLM is put in the job's reads, for tile 0's PLT.
 
+On request (`j->cb`), b11's and b8a's packets are read by code-block,
+for one round more: each needed packet's first 512 bytes (`HEAD`, its
+header nearly always; else the whole packet), then only the code-blocks
+the windows need (`blocks()`, `j2k_blocks()`), joined within 1 KB and to
+at most 16 reads a tile a round (`CBMAX`); `put()` lays them out as the
+packet for the decoder. The worker asks for it on `saveData`, a 2g/3g
+`effectiveType` or `worker.js?cb=1`; natively it is never on. A measured
+link is not used: under Aerial's load (4 workers of 8 jobs) a fast line's
+share per worker looked slow, the path switched on, and its reads overran
+Chrome (`ERR_INSUFFICIENT_RESOURCES`, then retries with backoff). A
+worker now keeps at most 128 reads in flight (`FLY`) on either path. On
+file:// with a TLM, a 2 km site's b11 and b8a are 112 KB in 5.5 reads
+against 16 KB in 32, a 10 km box's 387 KB against 245, 0.8 to 1 round
+more. In Aerial's z12 Permian view, forced on: 21k requests against 5.3k,
+291 MB against ~340, no failed request, and the view full in 27 s against
+10 on a fast line; off, 10.1 s against 10.2 (medians of 4). Detections
+are identical either way.
+
 Rounds. A stage's reads are a round, and a stage asks for all that the
 answers it waits on do not decide. With a TLM a site is 3 rounds: the mask
 and the three headers; b12's tile-parts with b11's and b8a's PLTs in its

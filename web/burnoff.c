@@ -126,10 +126,11 @@ static int fit(job *j) {
 }
 
 // a job: one scene's hotspots over a lon/lat box, its cells split part of
-// parts, for next() to advance
+// parts, for next() to advance; cb reads b11 and b8a by code-block, for a
+// slow link (blocks())
 EMSCRIPTEN_KEEPALIVE job *detect(const char *url, double w, double s,
                                  double e, double n, int part, int parts,
-                                 const char *th) {
+                                 const char *th, int cb) {
   web *x = calloc(1, sizeof *x);
   const char *fn = strrchr(url, '/') ? strrchr(url, '/') + 1 : url;
   double t[NT];
@@ -138,7 +139,7 @@ EMSCRIPTEN_KEEPALIVE job *detect(const char *url, double w, double s,
   start(&x->j, url, NULL, t);
   *x = (web){x->j, {w, s, e, n}, {INFINITY, INFINITY, -INFINITY, -INFINITY},
              atoi(fn + 1), fn[3] < 'N', part, parts};
-  x->j.e = er, x->j.fit = fit;
+  x->j.e = er, x->j.fit = fit, x->j.cb = cb;
   return &x->j;
 }
 

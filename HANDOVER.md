@@ -29,8 +29,6 @@ detections exact. The figures are estimates unless they say "measured".
   less data than packet-level reads (0.78–0.89 GB against 1.03–1.09 GB for
   one view's year), because sweeps and site reads share them through the
   worker's answer cache. Precinct-level refinement should keep that sharing.
-- **Only on slow links.** Use the bandwidth path when `navigator.connection`
-  reports a slow link or data-saving. Fast links keep today's path.
 - **Shrink the margins.** Each sweep decodes whole 6.4 km background cells
   plus a margin of `max_pixels + 1` pixels, about 1.6 km. Measured: one
   sweep part per scene in place of up to four cut a view's year from 981
@@ -46,15 +44,7 @@ detections exact. The figures are estimates unless they say "measured".
   reads, so count bytes in `worker.js`, or through CDP's
   `Network.loadingFinished` on the auto-attached worker targets.
 
-## More ideas (from a code read, not yet measured)
-
-These keep detections exact. The line numbers were correct at 4d3e30c.
-
-- **Read code-blocks, not precincts, for b11 and b8a (slow links only).**
-  A 7×7 window needs only one or two code-blocks of each precinct. This
-  needs one more round to read the packet headers.
-
-Checked and not done (2026-10-29):
+## Checked and not done (2026-10-29)
 
 - **Read only the mask tiles that the box touches.** The mask is 64 tiles
   of 256 px with no TLM, 7.7 to 155 KB on 13SFR. The tiles that a box

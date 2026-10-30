@@ -77,6 +77,8 @@ enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
 #define NP 64      // packets a tile-part may hold: 40 in a 640 px tile
 // reads closer than this are one: a request costs about as much
 #define GAP (32 << 10)
+#define CBGAP 1024   // by code-block: about an answer's headers
+#define CBMAX 16     // and at most this many reads a tile a round
 // a band's tile-parts are read whole, not their PLTs and then the packets
 // wanted, while they come to this or less: a round saved for more bytes (a
 // site's b12 needs 52% of a tile-part, b11's and b8a's 19%)
@@ -270,7 +272,7 @@ typedef struct job {
   res r;
   const char *e;
   int (*fit)(struct job *);
-  int st, budget, nr, rcap, nq, qcap, nw;
+  int st, budget, nr, rcap, nq, qcap, nw, cb;   // cb: by code-block (slow)
   long long gap;
   band bd[3];
   rd *rq;                         // the reads made and to make
@@ -581,6 +583,38 @@ static int merge(long long *q, int n, long long g, int m) {
   return c;
 }
 
+// on a slow link (cb, the host's to set), b11's and b8a's packets of tile
+// k in m by code-block, for a round more and more reads: a 7x7 window
+// needs one or two of a precinct's code-blocks. each packet's first HEAD
+// bytes, its header nearly always (else then the whole packet), and then
+// the code-blocks windows w[0..n) need, which decs() puts in place, into q
+// (of *qc pairs) after nq
+#define HEAD 512
+static int blocks(job *j, const char *url, band *f, int k, const win *w,
+                  int n, uint64_t m, const long long *o, const uint32_t *l,
+                  long long **q, int nq, size_t *qc) {
+  j2k_cbs c = {0};
+  for (int i = 0; i < NP; i++) {
+    if (!(m >> i & 1) || got(j, url, o[i], o[i] + l[i])) continue;
+    long long a = o[i], h = MIN(l[i], HEAD);
+    rd *r = got(j, url, a, a + h);
+    size_t c0 = c.n, s = r ? MIN(l[i], r->lo + (long long)r->b.n - a) : 0;
+    for (int v = 0; r && v < n; v++)
+      if (w[v].k == k && j2k_blocks(&f->j, k, i, r->b.p + (a - r->lo), s,
+                                    w[v].x0, w[v].y0, w[v].x1, w[v].y1, &c))
+        c.n = c0, r = NULL, h = l[i];
+    if (!r) c.cb = grow(c.cb, &c.cap, c.n + 1, sizeof *c.cb),
+            c.cb[c.n++] = (j2k_cb){0, h, .row = i};   // the header, or all
+  }
+  for (size_t i = 0; i < c.n; i++) {
+    long long a = o[c.cb[i].row] + c.cb[i].off, b = a + c.cb[i].len;
+    if (a < b && !got(j, url, a, b))
+      *q = grow(*q, qc, nq + 1 + NP * f->nt, 16),
+      (*q)[2 * nq] = a, (*q)[2 * nq++ + 1] = b;
+  }
+  return free(c.cb), free(c.d), nq;
+}
+
 // band f's reads for decode windows w[0..n), as runs: each tile-part whole
 // where it is wanted whole, as without a TLM or under a request budget, or
 // while those whose PLT is not in hand come to WHOLE or less (a round
@@ -592,7 +626,8 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
   uint64_t m[256] = {0};
   long long o[NP], *q, a, b, z = 0;
   uint32_t l[NP];
-  int c, nq = 0, miss = 0, look = 0;
+  int c, nq = 0, miss = 0, look = 0, nk = 0, cb = j->cb && f > j->bd;
+  size_t qc = (size_t)NP * f->nt;
   const char *e = f->tlm ? NULL : scan(j, url, f);
   layout L = {0}, *g;
   if (e) return e;
@@ -607,9 +642,9 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
     if (!L.at[k]) L.at[k] = g->at[k], L.len[k] = g->len[k];
   pthread_mutex_unlock(&lk);
   // z: the bytes of the tile-parts wanted whose PLT is not in hand
-  for (int k = 0; k < f->nt; k++)
+  for (int k = 0; k < f->nt; nk += !!m[k++])
     z += m[k] && f->tlm && f->at[k] && !pk(j, url, f, k, o, l) ? f->len[k] : 0;
-  q = malloc((size_t)16 * NP * f->nt);
+  q = malloc(16 * qc);
   for (int k = 0; k < f->nt; k++) {
     if (!m[k] || ((a = f->at[k]) && got(j, url, a, b = a + f->len[k])))
       continue;
@@ -622,6 +657,7 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
     if (!np && z <= WHOLE) np = -2;
     if (np < 0) q[2 * nq] = a, q[2 * nq++ + 1] = b;
     else if (!np) q[2 * nq] = a, q[2 * nq++ + 1] = a + MIN(f->len[k], 512);
+    else if (cb) nq = blocks(j, url, f, k, w, n, m[k], o, l, &q, nq, &qc);
     else for (int i = 0; i < np; i++)
       if (m[k] >> i & 1 && !got(j, url, o[i], o[i] + l[i]))
         q[2 * nq] = o[i], q[2 * nq++ + 1] = o[i] + l[i];
@@ -629,7 +665,7 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
   // without a TLM and much of the band wanted: the whole codestream
   if (!f->tlm && j->budget && miss > f->nt / 4)
     q[0] = f->first, q[1] = -1, nq = 1;
-  else nq = merge(q, nq, j->gap, j->budget);
+  else nq = merge(q, nq, cb ? CBGAP : j->gap, cb ? CBMAX * nk : j->budget);
   if (look && ++f->round > 12) e = "tile-part not found";
   for (int i = 0; i < nq && (!e || e == LACK); i++)
     e = want(j, url, q[2 * i], q[2 * i + 1]);
@@ -675,6 +711,14 @@ const char *batch(job *j, j2k_cbs *o, int32_t *tl) {
   return e;
 }
 
+// packet [lo, lo + n) of url from the bytes of it in hand (fill()), its
+// unread code-blocks unset, as a read of it: by code-block (blocks()),
+// once all of a stage's reads are in
+static rd *put(job *j, const char *url, long long lo, long long n) {
+  rd *r = add(j, url, lo, lo + n);
+  return r->ok = 1, fill(j, r), r;
+}
+
 // the decodes of windows w[0..n) of band b, into o: each window with the
 // packets of its tile in hand
 static const char *decs(job *j, const char *url, int b, const win *w, int n,
@@ -690,8 +734,11 @@ static const char *decs(job *j, const char *url, int b, const win *w, int n,
     need(f, d->k, 0, 0, f->w, f->h_, &c);
     if ((d->np = pk(j, url, f, d->k, q, d->n)) != c)
       return "malformed tile-part header";
+    uint64_t m = j->cb && b ? need(f, d->k, d->x0, d->y0, d->x1, d->y1, &c)
+                            : 0;
     for (int p = 0; p < c; p++) {
       rd *r = got(j, url, q[p], q[p] + d->n[p]);
+      if (!r && m >> p & 1) r = put(j, url, q[p], d->n[p]);
       d->p[p] = r ? r->b.p + (q[p] - r->lo) : NULL;
     }
   }

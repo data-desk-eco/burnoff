@@ -81,7 +81,20 @@ function save(c, b) {
 // may pass, wait seconds later: [status, size, wait, body]. it skips the
 // http cache, which takes one read of a url at a time: 112 site reads of
 // one scene took 14.0 s through it and 7.4 s past it (4 workers of 8, gs://)
+// b11 and b8a by code-block, a sixth of a site's bytes in 6 to 9 times
+// the reads and a round more, only when asked to spare data: saveData, a
+// 2g or 3g effectiveType, or worker.js?cb=1. a measured link is not used:
+// under aerial's load a fast line's share looked slow
+const nc = navigator.connection
+const cb = +(new URL(import.meta.url).searchParams.get('cb') ??
+  (nc?.saveData || /2g|3g/.test(nc?.effectiveType)))
+// at most FLY reads in flight, the rest queued: by code-block aerial's 4
+// workers asked chrome for thousands at once, which it refused
+// (ERR_INSUFFICIENT_RESOURCES)
+const FLY = 128, line = []
+let on = 0
 async function read(u, lo, hi) {
+  if (on++ >= FLY) await new Promise(ok => line.push(ok))
   try {
     const r = await fetch(u, { method: hi == -2 ? 'HEAD' : 'GET',
       headers: lo || hi >= 0 ? { Range: `bytes=${lo}-${hi < 0 ? '' : hi - 1}` }
@@ -92,6 +105,7 @@ async function read(u, lo, hi) {
       || (hi == -2 ? +r.headers.get('content-length') : -1)
     return [r.status, n, +r.headers.get('retry-after') || 0, b]
   } catch { return [-1, -1, 0, new Uint8Array(0)] }
+  finally { on--, line.shift()?.() }
 }
 
 // [lo, hi) of u (hi -1: to its end) from the pieces that hold its ends and
@@ -157,7 +171,7 @@ const call = {
     const c = (await keys)?.has(key) && await kept(key)
     if (c) return c
     const j = m.ccall('detect', 'number', ['string', ...Array(6).fill(
-      'number'), 'string'], [u, w, s, e, n, i, k, th])
+      'number'), 'string', 'number'], [u, w, s, e, n, i, k, th, cb])
     // 1: reads lacking; 2: decodes queued, made by the next step if not here
     for (let t; !drop.has(id) && (t = m._next(j));)
       await (t == 1 ? Promise.all(json(m._reads(j)).map(r => get(j, ...r)))
