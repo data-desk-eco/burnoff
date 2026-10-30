@@ -8,17 +8,17 @@
 SET VARIABLE seed = (SELECT count(scene) = 0 FROM db.cells);
 -- the current detector's (v) alone, of each tile and sensing time its
 -- newest processing (a reprocessing read after the first is kept, as a
--- request reads the newest), and nothing written unless every hotspot has
--- its cell and every cell is one of its square's 16 × 16
+-- request reads the newest), and nothing written unless every cell is one
+-- of its square's 16 × 16. the hotspots are those of the cells read: a
+-- merge (query) commits a cell with its hotspots, so a hotspot read after
+-- c whose cell is not in it came with a newer cell, left to the next run
 CREATE TEMP TABLE c AS
 SELECT * FROM db.cells WHERE v = getvariable('v')
 QUALIFY scene = max(scene) OVER (PARTITION BY split_part(scene, '_', 6),
                                               split_part(scene, '_', 3));
 CREATE TEMP TABLE h AS
-SELECT * FROM db.hotspots WHERE v = getvariable('v')
-  AND scene IN (SELECT scene FROM c);
-SELECT error('export: ' || count(*) || ' hotspots without their cell')
-FROM (FROM h ANTI JOIN c USING (scene, i, j)) HAVING count(*) > 0;
+SELECT * FROM db.hotspots SEMI JOIN c USING (scene, i, j)
+WHERE v = getvariable('v');
 SELECT error('export: ' || count(*) || ' cells off their square')
 FROM c WHERE i NOT BETWEEN 0 AND 15 OR j NOT BETWEEN 0 AND 15
 HAVING count(*) > 0;
