@@ -4,7 +4,7 @@
 # seeded from it
 d=$(dirname "$0")
 { echo ".output /dev/null"; cat ~/.config/burnoff/secret.sql
-  echo "LOAD spatial; LOAD sqlite; SET memory_limit = '2GB';"
+  echo "LOAD spatial; LOAD sqlite; SET memory_limit = '3GB'; SET threads = 2;"
   echo "SET temp_directory = '${DB%/*}/tmp';"
   echo "ATTACH '$DB' AS db (TYPE sqlite);"
   echo "SET VARIABLE arc = '$ARC';"
