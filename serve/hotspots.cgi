@@ -23,8 +23,14 @@ exec 9>>"$L"; flock -s 9; bulk STOP
 case "&$q" in *'&datetime='*/????-??-??*) b=${q##*datetime=*/}
   [ "$(echo "$b" | cut -c1-10 | tr -d -)" -lt "$(date -u +%Y%m%d)" ] &&
     c=86400 ;; esac
-o=$({ echo "SET VARIABLE q = '$q';"; cat "$d/args.sql"; } | "$d/query" $f) &&
-  printf 'Content-Type: application/geo+json\r\nCache-Control: max-age=%s\r\n' \
-    "${c:-3600}" ||
+# past max-age a browser revalidates: the body's hash as its ETag, and a
+# 304 with no body when it holds that already (caddy's gzip may suffix it)
+o=$({ echo "SET VARIABLE q = '$q';"; cat "$d/args.sql"; } | "$d/query" $f) || {
   printf 'Status: 400\r\nContent-Type: text/plain\r\n'
-printf 'Access-Control-Allow-Origin: *\r\n\r\n%s\n' "$o"
+  printf 'Access-Control-Allow-Origin: *\r\n\r\n%s\n' "$o"; exit; }
+e=$(printf %s "$o" | sha1sum | cut -c1-16)
+case "${HTTP_IF_NONE_MATCH:-}" in *"$e"*) printf 'Status: 304\r\n'; o= ;; esac
+printf 'Content-Type: application/geo+json\r\nCache-Control: max-age=%s\r\n' \
+  "${c:-3600}"
+printf 'ETag: "%s"\r\nAccess-Control-Allow-Origin: *\r\n\r\n' "$e"
+[ -z "$o" ] || printf '%s\n' "$o"

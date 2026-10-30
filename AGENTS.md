@@ -82,6 +82,9 @@ On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
   40 m, so a site and its id depend on the store alone, not on the
   request. Keep its sums integer (whole cm): float sums can round
   differently.
+- A response is kept a day (a closed window) or an hour, with the body's
+  hash as its ETag; a matching `If-None-Match` gets a 304 and no body.
+  Caddy's gzip suffixes the tag (`-gzip`), so the match is a substring.
 - The store is `/data/burnoff/store.db` (`schema.sql`, SQLite, WAL). It
   is a cache: everything in it can be read again from eodata.
 - `index.sh` (daily) indexes eodata's scenes. `bulk.sh` (nice 19) fills
