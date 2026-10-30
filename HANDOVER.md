@@ -1,59 +1,98 @@
-# Handover: bandwidth savings
+# Handover: the live map on the service
 
-Ideas for reading fewer bytes off the JPEG2000 archive. Each one must keep
-detections exact. The figures are estimates unless they say "measured".
+The next job is to power aerial's live S2 search with burnoff's service,
+so that `web/flaring/live.js` becomes a thin client and the browser's own
+detector is a lazy fallback.
 
-- **Bounds before exact reads.** A pixel can only be a candidate if its B12
-  is over the cell's contrast cut, and that cut is never below 0.45
-  (background floor 0.15 × contrast ratio 3). Most ground only has to be
-  proven under 0.45, not read exactly.
-- **Coarse-to-fine resolution reads.** In LRCP order the lowest resolution
-  levels are a prefix of each tile-part: about 7% of its bytes for levels
-  0–2 and about 30% for levels 0–3. Bound every pixel from these and read
-  the full-resolution packets only where the bound reaches 0.45.
-- **Code-block maxima from packet headers.** Each full-resolution packet's
-  header gives the number of bit-planes of each 8×8 code-block, which
-  bounds its coefficients without decoding them. The headers are a few
-  bytes at the start of each packet; the PLT gives their offsets.
-- **Bit-plane prefixes.** A code-block's bytes run from its most significant
-  pass to its least, so the first passes give tight bounds for few bytes.
-  This needs millions of small ranges, so it is practical only natively, or
-  against a store with cheap small reads.
-- **The same test for B11 and B8A.** Rule out candidates (B11 under
-  `b11_min`) from low-resolution bounds before reading their windows at
-  full resolution.
-- **Expected gain.** About 5–10x less B12 data on dark ground and about
-  2–3x on bright desert, where the bare ground is 0.3–0.4. The cost is 2–4
-  more read rounds per detection and about 2–3x the requests.
-- **Keep cache-friendly reads.** Measured: in Aerial, whole tile-parts used
-  less data than packet-level reads (0.78–0.89 GB against 1.03–1.09 GB for
-  one view's year), because sweeps and site reads share them through the
-  worker's answer cache. Precinct-level refinement should keep that sharing.
-- **Shrink the margins.** Each sweep decodes whole 6.4 km background cells
-  plus a margin of `max_pixels + 1` pixels, about 1.6 km. Measured: one
-  sweep part per scene in place of up to four cut a view's year from 981
-  to 886 MB.
-- **Never read twice.** A fact store shared across users, filled by a
-  server that detects whole tiles in-region on CloudFerro, gives every
-  user after the first a few KB of facts instead of the bytes.
-- **Fix the header cache.** The cache keys a scene's header by tile, band
-  and baseline, so a read can take another date's file size. In one
-  process over many dates this fails some reads ("tile-part not found"),
-  and the retries cost requests.
-- **Measure in the worker.** The browser hides the sizes of cross-origin
-  reads, so count bytes in `worker.js`, or through CDP's
-  `Network.loadingFinished` on the auto-attached worker targets.
+## Where things stand
 
-## Checked and not done (2026-10-29)
+- **burnoff** (`web-map`, `eba95b1`): `serve/` is the service on the jump
+  host. Read `AGENTS.md` for its parts. `src/burnoff.c` gives each
+  hotspot's pixels (`px`) and signs only `s3://` reads with eodata's key.
+- **aerial** (`burnoff-live`, `0195014`): live sites of 100 m named by
+  their first detection, a card's history read by the service 90 days at a
+  time (`history()` in `live.js`), and the view search still in the
+  browser (the worker pool, the sweeps and the site reads).
+- Neither branch is pushed. Both are ready to merge into main.
+- The API stays at `https://dev.datadesk.eco/burnoff/hotspots`.
 
-- **Read only the mask tiles that the box touches.** The mask is 64 tiles
-  of 256 px with no TLM, 7.7 to 155 KB on 13SFR. The tiles that a box
-  meets can only be found by a search for their SOT markers (one more
-  round), and the whole mask is read once for each scene and shared by all
-  of its boxes.
-- **Resume short reads.** Neither host gives a short 206 body now: `fetch()`
-  with `cache: 'no-store'` rejects a cut body, and curl reports a cut
-  connection as an error. Only a failed read would save bytes.
-- **Stop early on cloudy dates.** This is already so: with the mask and
-  b12's header in hand, `heads()` ends before any read is made. Over a
-  cloudy scene's 42 boxes, only the first job read the b11 and b8a headers.
+On the jump host:
+
+- `/data/burnoff/store.db`: the sqlite store (`serve/schema.sql`).
+- `burnoff-index` (daily) was backfilling eodata's listings to 2022 at
+  about 3 s a day. Requests find no scenes before the backfill's reach:
+  `sqlite3 /data/burnoff/store.db "SELECT min(day) FROM days"`.
+- `burnoff-bulk` (nice 19) reads whole tiles about the archive's sites, 30
+  days at a time back to 2022.
+- `burnoff-export` (hourly) writes `data-desk/burnoff/{observations,
+  detections}` to the public archive, a file a partition. The tables are
+  not yet in the archive's `index.json`.
+- Logs: `journalctl -t burnoff-<unit>`. Failures go to
+  `data-desk-failed@`. Deploy with `serve/deploy.sh`. It is idempotent.
+
+Measured on the shared 4-core jump host, with bulk running: a 10 km box
+over 90 days takes 2–8 s new and about 0.4 s held. The store costs about
+40 KB a scene, and the full scene index about 2.5 GB.
+
+## The plan
+
+1. **A sites mode in `serve/`** (`&f=sites`). After `hotspots.sql`, a SQL
+   step groups the bbox's hotspots into sites, the detections within 100 m
+   of the first, keyed `live:<lat>,<lon>@<tile>_<date>` as aerial keys
+   them. It gives each site its looks: for every scene over the site, the
+   cloud of the 640 m square under it (`unpacked()` in `cells.sql`, the
+   square whose centre is nearest). The output is one feature a site: its
+   point, `looks` as `[[date, cloud], …]`, its detections with their
+   pixels, and counts. Check it against `live.js`'s own sites for one view
+   before aerial uses it.
+2. **Block requests in aerial.** Request fixed 0.1° blocks over the view at
+   `LIVE_ZOOM` and closer: the last 30 days first, then the rest of the
+   window. Keep blocks in memory and IndexedDB. Merge sites within 100 m
+   across block edges (`near()`). Keep the drawing rules in the browser:
+   lit on `LIT` dates, the b12 floor, the summer rule and persistence.
+3. **Remove the old search.** The sweeps, the ground squares, the site
+   reads, the ranking and the scene listing go. `live.js` should drop from
+   about 680 lines to about 150.
+4. **Lazy fallback.** Start the burnoff workers only when the service
+   fails. A normal page load then loads none of the detector (about 78 KB
+   gzipped, and four wasm compiles and WebGPU devices).
+5. **Cards** use the sites request for the site's small bbox, which
+   replaces `history()`.
+
+One decision is open: the live layer searches 180 days (`DAYS`). Keeping
+90 days, the card's first window, would halve the cost of a new area. A
+full z12 view over 180 days that the store does not hold is thousands of
+scene-cells, about 30–90 s on 4 cores. The recent 30 days come back in a
+few seconds.
+
+## Constraints
+
+- Keep it minimal: SQL over the extension, sqlite for the store, shell
+  for orchestration, systemd for scheduling. Do not add a daemon, a
+  database server or DuckLake.
+- Keep it in the EU: Copernicus data on CloudFerro, and no Google
+  listing in the service.
+- Keep it exact and idempotent. A cell is stored only from a read that
+  succeeded, in one transaction with its hotspots, under the detector's
+  digest. A read takes a cell's margin, so a cell's hotspots do not depend
+  on the box that read it. Do not trade these away for speed.
+
+## Lessons from this session
+
+- `sqlite_query` (through sqlite's own indexes) answers in milliseconds.
+  DuckDB's scan of an attached sqlite table reads the whole table.
+  `sqlite_query` types an empty answer's columns as text, so cast them.
+- DuckDB's sqlite extension fails at once on a locked database. Write to a
+  scratch sqlite file and merge it with the `sqlite3` CLI and `.timeout`.
+- The 640 m squares sit on the tile's own origin, which is often tens of
+  metres off the 100 km grid. Hotspots do not depend on it, because a read
+  keeps a whole cell's margin, but the squares do (`origin()` in
+  `cells.sql`).
+- CDSE's STAC search takes 4–6 s. An eodata day listing takes 3 s and is
+  indexed once.
+- `when`, `unpack` and `pack` are reserved words in DuckDB 1.5. A lambda
+  variable named like a column (`v`) resolves to the column.
+- The extension's macros need `LOAD spatial` first. Its error is "could
+  not register".
+- `pkill -f <path>` over ssh can match the ssh command itself. Use
+  `pkill -x`.
