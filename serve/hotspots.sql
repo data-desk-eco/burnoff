@@ -112,18 +112,24 @@ FROM (SELECT scene, any_value(dir) AS dir, any_value(f) AS f, sx, sy,
 JOIN gr USING (scene) WHERE granule <> '';
 
 -- the cells read: their squares (cells.sql) and their hotspots, each in
--- its own 100 km square, as s2_hotspots keeps them
+-- its own 100 km square, as s2_hotspots keeps them. a read's squares are
+-- split by cell in one pass, in its order, and its origin taken once
+CREATE TEMP TABLE rq AS
+SELECT scene, floor((z.x - sx) / 6400) AS i, ceil((sy - z.y) / 6400) - 1 AS j,
+       list(z ORDER BY k) AS q
+FROM (SELECT scene, sx, sy, unnest(r.cells) AS z,
+             generate_subscripts(r.cells, 1) AS k FROM rd WHERE r.error IS NULL)
+GROUP BY ALL;
+CREATE TEMP TABLE ro AS
+SELECT scene, origin(r.cells[1].x, sx) AS ox, -origin(-r.cells[1].y, -sy) AS oy,
+       r.clear AS clear FROM rd WHERE r.error IS NULL;
 CREATE TEMP TABLE obs AS
 SELECT *, coalesce(list_avg(list_transform(q, lambda z: z.cloud)), -1)
             AS cloud
-FROM (SELECT m.scene, m.i, m.j, s.sx, s.sy,
-             origin(r.r.cells[1].x, s.sx) AS ox,
-             -origin(-r.r.cells[1].y, -s.sy) AS oy, s.crs, r.r.clear AS clear,
-             list_filter(r.r.cells, lambda z: floor((z.x - s.sx) / 6400) = m.i
-               AND ceil((s.sy - z.y) / 6400) - 1 = m.j) AS q, m.cell, m.lon,
-             m.lat
-      FROM miss m JOIN rd r USING (scene) JOIN sc s USING (scene)
-      WHERE r.r.error IS NULL);
+FROM (SELECT m.scene, m.i, m.j, s.sx, s.sy, r.ox, r.oy, s.crs, r.clear,
+             coalesce(q.q, []) AS q, m.cell, m.lon, m.lat
+      FROM miss m JOIN ro r USING (scene) JOIN sc s USING (scene)
+      LEFT JOIN rq q ON q.scene = m.scene AND q.i = m.i AND q.j = m.j);
 CREATE TEMP TABLE det AS
 SELECT x.scene, o.i, o.j, h.x, h.y, ST_X(p) AS lon, ST_Y(p) AS lat,
        h.max_b12, h.avg_b12, h.peak_b11, h.ratio, h.peakedness, h.pixels,
