@@ -34,13 +34,11 @@ Without `f`, you get a feature collection, newest first:
 With `f=sites`, you get one point feature for each site. The service
 finds sites from all the detections it holds, on all dates:
 
-1. Each detection puts a count on the 20 m pixel of its peak, at most one
-   for each date, and half a count on the four pixels next to it.
-2. Each pixel points to its highest neighbour. The pixels that climb to
-   the same top make a hill.
-3. A hill joins the largest larger hill within 60 m that never had a
-   detection on the same date. Two flares that burn on the same date stay
-   two sites.
+1. Each detection is put on the 20 m pixel of its peak.
+2. Pixels within 40 m of each other are joined, the nearest first. A join
+   is not made if it would put two detections of the same date, more than
+   30 m apart, in one site: those are two flares that burned at the same
+   time.
 
 The same detections always give the same sites, for any `bbox` or
 `datetime`. The `id` is the mean place of the site's detections, rounded

@@ -1,15 +1,13 @@
 -- hotspots.sql's spots as sites, one geojson feature a site, from every
 -- date's detections the store holds within m of the box (pebbles), so the
 -- same pebbles give the same sites whatever box or window asks. a pebble
--- sits on its peak's 20 m pixel, in its longitude's utm zone, in whole cm
--- (sums exact, so ties fall the same way). each pixel heaps 2 for each date
--- a pebble on it, 1 on its four neighbours; a pixel points at its tallest
--- neighbour (ties to the greater x, y) and a pebble climbs to a top, a
--- hill. a hill joins the largest larger one within 60 m whose dates it
--- does not share (two flares lit on one date are two sites), and so on to
--- a site, named by its pebbles' mean place rounded to 40 m
--- (live:<lat>,<lon>): the mean settles as dates come, where a top can flip
--- between pixels. the box's sites with a detection in the window: looks,
+-- sits on its peak's 20 m pixel, in its longitude's utm zone, in whole cm.
+-- sites are constrained single linkage: pixels within 40 m are linked,
+-- shortest first (ties by place), each link joining two sites unless they
+-- hold pebbles of one date over 30 m apart, two flares lit at once (one
+-- flare seen from two tiles' overlap is nearer). a site is named by its
+-- pebbles' mean place rounded to 40 m (live:<lat>,<lon>), which settles as
+-- dates come. the box's sites with a detection in the window: looks,
 -- [[date, cloud], …], the obscured share of the 640 m square under the
 -- site, its clearest scene a date; and each date's brightest detection,
 -- its pixels as [b12, lon, lat × 4 corners]. measured on the archive's
@@ -40,54 +38,51 @@ FROM (SELECT scene, lon::DOUBLE AS lon, lat::DOUBLE AS lat
       FROM sqlite_query('db', getvariable('sq'))
       UNION SELECT scene, lon, lat FROM det)
 WHERE near(lon, lat);
-CREATE TEMP TABLE hp AS
-SELECT {z: p.z, x: p.x + d[1], y: p.y + d[2]} AS p,
-       sum(2 - abs(d[1]) - abs(d[2])) AS h
-FROM (SELECT DISTINCT p, date FROM pb),
-     unnest([[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) a(d)
-GROUP BY 1;
-CREATE TEMP TABLE up AS
-SELECT a.p, arg_max(b.p, (b.h, b.p.x, b.p.y)) AS u
-FROM hp a JOIN hp b ON b.p.z = a.p.z AND abs(b.p.x - a.p.x) <= 1
-  AND abs(b.p.y - a.p.y) <= 1
-GROUP BY a.p;
-CREATE TEMP TABLE top AS
-WITH RECURSIVE c(p, u) AS (FROM up SEMI JOIN (SELECT DISTINCT p FROM pb)
-    USING (p)
-  UNION ALL SELECT c.p, up.u FROM c JOIN up ON up.p = c.u AND up.u <> up.p)
-SELECT c.p, c.u AS t FROM c JOIN up ON up.p = c.u AND up.u = up.p;
--- hills: their pebbles' sums and dates; each joins the largest larger
--- within 60 m whose dates it lacks, and on to a site (s)
-CREATE TEMP TABLE hl AS
-SELECT t, sum(c.x) AS sx, sum(c.y) AS sy, count(*) AS k,
-       list(DISTINCT date) AS ds, len(list(DISTINCT date)) AS n
-FROM pb JOIN top USING (p) GROUP BY t;
-CREATE TEMP TABLE jn AS
-WITH RECURSIVE l AS (
-  SELECT a.t, coalesce(arg_max(b.t, (b.n, b.t.x, b.t.y)), a.t) AS u
-  FROM hl a LEFT JOIN hl b ON b.t.z = a.t.z
-    AND (b.n, b.t.x, b.t.y) > (a.n, a.t.x, a.t.y)
-    AND (b.sx // b.k - a.sx // a.k) ** 2 + (b.sy // b.k - a.sy // a.k) ** 2
-        <= 6000 ** 2
-    AND NOT list_has_any(a.ds, b.ds)
-  GROUP BY a.t),
-c(t, u) AS (FROM l UNION ALL SELECT c.t, l.u FROM c JOIN l ON l.t = c.u
-            AND l.u <> l.t)
-SELECT c.t, c.u AS s FROM c JOIN l ON l.t = c.u AND l.u = l.t;
+-- nodes: the pebbles' pixels in order (n), each with its pebbles (date,
+-- x, y); links: two within 40 m, shortest first (r)
+CREATE TEMP TABLE nd AS
+SELECT row_number() OVER (ORDER BY p.z, p.x, p.y) AS n, p,
+       list({d: date, x: c.x, y: c.y}) AS q
+FROM pb GROUP BY p;
+SET VARIABLE q = (SELECT coalesce(list(q ORDER BY n), []) FROM nd);
+CREATE TEMP TABLE ln AS
+SELECT row_number() OVER (ORDER BY l, a.n, b.n) AS r, a.n AS a, b.n AS b
+FROM nd a JOIN nd b ON b.p.z = a.p.z AND b.n > a.n
+  AND abs(b.p.x - a.p.x) <= 2 AND abs(b.p.y - a.p.y) <= 2,
+LATERAL (SELECT (b.p.x - a.p.x) ** 2 + (b.p.y - a.p.y) ** 2 AS l)
+WHERE l <= 4;
+-- each node's site (g[n], its least node): a link joins two sites unless
+-- they hold pebbles of one date over 30 m apart
+CREATE MACRO grp(g, i) AS flatten(list_filter(getvariable('q'),
+  lambda x, j: g[j] = i));
+CREATE MACRO clash(u, v) AS list_bool_or(list_transform(u, lambda a:
+  list_bool_or(list_transform(v, lambda b: a.d = b.d
+    AND (a.x - b.x) ** 2 + (a.y - b.y) ** 2 > 3000 ** 2))));
+CREATE TEMP TABLE gs AS
+WITH RECURSIVE k(o, r, g) USING KEY (o) AS (
+  SELECT 0, 0, range(1, len(getvariable('q')) + 1)
+  UNION ALL
+  SELECT 0, k.r + 1, if(i <> j AND NOT coalesce(clash(grp(k.g, i),
+           grp(k.g, j)), false), list_transform(k.g, lambda x:
+           if(x = j, i, x)), k.g)
+  FROM k JOIN ln ON ln.r = k.r + 1,
+  LATERAL (SELECT least(k.g[a], k.g[b]) AS i, greatest(k.g[a], k.g[b]) AS j))
+SELECT n, g[n] AS s FROM k, range(1, len(g) + 1) t(n);
+CREATE TEMP TABLE nds AS SELECT nd.p, gs.s FROM nd JOIN gs USING (n);
 -- a site's place: its pebbles' mean, rounded to 40 m, in lon/lat
 CREATE TEMP TABLE st AS
 SELECT s, ST_X(q) AS lon, ST_Y(q) AS lat,
        'live:' || printf('%.5f', ST_Y(q)) || ',' || printf('%.5f', ST_X(q))
          AS id
-FROM (SELECT s, ST_Transform(ST_Point(round(sum(sx) / sum(k) / 4000) * 40,
-        round(sum(sy) / sum(k) / 4000) * 40), s.z, 'EPSG:4326',
+FROM (SELECT s, ST_Transform(ST_Point(round(sum(c.x) / count(*) / 4000) * 40,
+        round(sum(c.y) / count(*) / 4000) * 40), any_value(c.z), 'EPSG:4326',
         always_xy := true) AS q
-      FROM hl JOIN jn USING (t) GROUP BY s)
+      FROM pb JOIN nds USING (p) GROUP BY s)
 WHERE ST_X(q) BETWEEN getvariable('w') AND getvariable('e')
   AND ST_Y(q) BETWEEN getvariable('s') AND getvariable('n');
 CREATE TEMP TABLE hs AS
-SELECT h.*, st.s AS t FROM spots h JOIN top ON top.p = pix(cm(h.lon, h.lat))
-JOIN jn USING (t) JOIN st USING (s);
+SELECT h.*, nds.s AS t FROM spots h JOIN nds ON nds.p = pix(cm(h.lon, h.lat))
+SEMI JOIN st ON st.s = nds.s;
 -- every scene's squares, in its crs, and the one under each site
 CREATE TEMP TABLE sq AS
 SELECT scene, v.x, v.y, v.cloud
