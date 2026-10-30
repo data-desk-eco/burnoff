@@ -34,10 +34,14 @@ extension loads, offline.
   (`schema.sql`, wal; a cell's 640 m squares packed by `cells.sql`, on the
   tile's own origin). `bulk.sh` (nice 19) reads every cell of each scene
   of the tiles about the archive's sites (`seeds.sql`), 30 days at a time
-  back to 2022, the newest 30 again before each; `export.sh` hourly puts
-  the newest processing of each scene in the archive's
-  `data-desk/burnoff/{observations,detections}`, a file a partition, once
-  its checks pass. Units fail to `data-desk-failed@` and log as
+  back to 2022, the newest 30 again before each; `export.sh` hourly merges
+  the newest processing of each scene into the archive's
+  `data-desk/burnoff/{observations,detections}`, a file a partition (an h3
+  res-1 cell), once its checks pass: the archive is the record, each
+  scene's cell the store holds replacing the archive's (rows carry `v`),
+  so a run is idempotent and never drops a row; an empty store is seeded
+  from the archive's current-`v` rows. ~55 s, under a 2 GB memory limit
+  (unlimited, a second run was OOM-killed on the 7.5 GB box). Units fail to `data-desk-failed@` and log as
   `burnoff-<unit>`. All of it is copernicus data on cloudferro, in the eu.
 
 `s2_detect()` gives one scene's clear share, `hotspots` and `cells` (the

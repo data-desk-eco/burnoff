@@ -60,8 +60,11 @@ and `serve/deploy.sh` installs them.
 - The store is one SQLite file. The service writes new cells and their
   hotspots in one transaction, under a digest of the extension that made
   them. A new detector therefore reads the cells again.
-- systemd timers update the scene index each day (`index.sh`) and copy
-  the store to the Data Desk archive each hour (`export.sh`). A
+- systemd timers update the scene index each day (`index.sh`) and merge
+  the store into the Data Desk archive each hour (`export.sh`). The
+  archive is the record. The export replaces only the cells that the
+  store holds, so it never removes rows, and a second run changes
+  nothing. If the store is empty, the export fills it from the archive. A
   background job (`bulk.sh`) fills the store around known sites. It
   stops while a request runs.
 
