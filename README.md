@@ -1,12 +1,71 @@
 # burnoff
 
-Burnoff is a DuckDB extension for detecting hotspots, such as gas
-flares, in Sentinel-2 L1C imagery. It reads the JPEG2000 archive directly, so one query searches the
-CDSE catalogue and detects the hotspots in a region. Each hotspot comes with its
-position, brightness and radiance, and each scene with how clearly it saw
-the region.
+Burnoff detects hotspots, such as gas flares, in Sentinel-2 L1C imagery.
+It reads the JPEG 2000 files directly and decodes only the parts it needs.
+Each hotspot has a position, brightness, radiance and pixels. Each scene
+has a value that tells how clearly it saw the area.
 
-## Quick start
+You can use burnoff in two ways:
+
+- **The hosted API.** Send a bounding box and a date range and get
+  GeoJSON. The service keeps every result, so a repeated area is fast.
+- **The DuckDB extension.** Download it and run the detector on your own
+  computer, over any area, in SQL.
+
+## The API
+
+```
+GET https://dev.datadesk.eco/burnoff/hotspots?bbox=w,s,e,n[&datetime=a/b][&f=sites]
+```
+
+- `bbox`: longitude and latitude, at most 0.44° by 0.25°.
+- `datetime`: `a/b` as ISO dates. Use `..` for an open end. The default
+  is the last 90 days.
+- `f=sites`: optional. Groups the hotspots into sites (see below).
+
+Without `f`, you get a feature collection, newest first:
+
+- One `look` feature for each scene, with no geometry. `cloud` is the
+  obscured share of the box (`-1` if the scene does not cover it). A
+  scene that could not be read is an `error` feature.
+- One `hotspot` feature for each detection. The geometry is its pixels
+  as a multipolygon. `pixel_b12` gives the B12 value of each pixel.
+
+With `f=sites`, you get one point feature for each site. A site is the
+detections within 100 m of its first detection. Its properties are
+`id`, `tile`, `looks` (`[[date, cloud], …]` for the 640 m square under
+the site) and `detections` (the brightest detection of each date, with
+its pixels).
+
+```sh
+curl 'https://dev.datadesk.eco/burnoff/hotspots?bbox=-103.6,31.9,-103.5,32&datetime=2026-08-01/2026-10-30&f=sites'
+```
+
+A new area takes some seconds, because the service reads each scene.
+An area that the service has already read comes back in less than a
+second.
+
+### How the service works
+
+The service runs on one machine in CloudFerro's WAW3-2 region, next to
+the Copernicus `eodata` archive. All of its data stays in the EU. It
+uses only this extension, SQLite and systemd. The files are in `serve/`,
+and `serve/deploy.sh` installs them.
+
+- A request runs `hotspots.sql` in DuckDB with the extension. The SQL
+  finds the box's tiles and scenes from an index of `eodata`. It reads
+  each 6.4 km cell from the store if the store has it. Otherwise, it
+  runs `s2_detect` on the cells that are missing. `sites.sql` groups the
+  result into sites.
+- The store is one SQLite file. The service writes new cells and their
+  hotspots in one transaction, under a digest of the extension that made
+  them. A new detector therefore reads the cells again.
+- systemd timers update the scene index each day (`index.sh`) and copy
+  the store to the Data Desk archive each hour (`export.sh`). A
+  background job (`bulk.sh`) fills the store around known sites. It
+  stops while a request runs.
+
+## The extension
 
 Download `burnoff-osx_arm64.duckdb_extension` (macOS) or
 `burnoff-linux_amd64.duckdb_extension` (Linux) from the
@@ -14,27 +73,47 @@ Download `burnoff-osx_arm64.duckdb_extension` (macOS) or
 and install it under the name `burnoff`:
 
 ```sh
-# macOS:
 curl -fL https://github.com/data-desk-eco/burnoff/releases/latest/download/burnoff-osx_arm64.duckdb_extension -o burnoff.duckdb_extension
-# Linux: use burnoff-linux_amd64 in place of burnoff-osx_arm64 above.
 duckdb -unsigned -c "force install './burnoff.duckdb_extension'"
 ```
 
 The extension loads in DuckDB 1.2 or later. It is not signed, so start
-DuckDB with `-unsigned`, and load spatial first:
+DuckDB with `-unsigned`. Load spatial first:
 
 ```sql
 load spatial;
 load burnoff;
 from s2_hotspots(ST_MakeEnvelope(-104.2, 31.6, -103.2, 32.6), '2025-05-01',
                t1 := '2025-05-31', max_cloud := 50);
--- around a point, from a date to today
-from s2_hotspots(ST_Buffer(ST_Point(-103.9, 32.1), 0.05), '2025-01-01');
 -- for each row of a table of areas
 from aois, lateral s2_hotspots(aois.geom, '2025-01-01');
 ```
 
-## Build
+### Functions
+
+- `s2_hotspots(g, t0, t1 := today, max_cloud := 100,
+  thresholds := '')` gives one row for each hotspot in a lon/lat geometry
+  from t0 to t1. A point has no area, so buffer it.
+- `s2_scenes(g, t0, t1 := today)` gives the scenes that
+  the search finds, with the box to read in each.
+- `s2_detect(b12, xmin, ymin, xmax, ymax [, thresholds])` detects in one
+  scene, over a box in the metres of its UTM zone. It gives the box's
+  `clear` share, an `error` (a failed row does not stop the query), the
+  `hotspots`, and `cells`: the centre and obscured share (`cloud`: cloud, no
+  data, or a background cell too cloudy to read) of each 640 m square of
+  the box. A look at a site is clear when its square's `cloud` is low.
+
+An optional `source` is `'eodata'` (CDSE's S3, which needs `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_S3_ENDPOINT`, as on CloudFerro machines)
+or `'gcp'` (Google's public mirror, with no credentials). The default, `'auto'`, uses
+eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
+`thresholds` is `'name=value,...'` over the defaults in `src/burnoff.c`.
+One of them, `nir_excess` (0.1), drops a peak whose rise in B8A over its
+surroundings is a tenth or more of its rise in B12: sunlight reflected
+off roofs, glass and tanks, which a fire does not give. A large value
+turns the test off.
+
+### Build
 
 Requires a C compiler, `pkg-config` and libcurl (`libcurl4-openssl-dev` on
 Ubuntu). The JPEG 2000 decoder is burnoff's own, `src/j2k.c`. The build
@@ -75,30 +154,6 @@ and quarter tiles take 7.0 seconds against 10.2 seconds on the CPU alone,
 and 518 small sites take 4.8 seconds either way. In the browser, the
 network sets the time for sites.
 
-## Functions
-
-- `s2_hotspots(g, t0, t1 := today, max_cloud := 100,
-  thresholds := '')` gives one row for each hotspot in a lon/lat geometry
-  from t0 to t1. A point has no area, so buffer it.
-- `s2_scenes(g, t0, t1 := today)` gives the scenes that
-  the search finds, with the box to read in each.
-- `s2_detect(b12, xmin, ymin, xmax, ymax [, thresholds])` detects in one
-  scene, over a box in the metres of its UTM zone. It gives the box's
-  `clear` share, an `error` (a failed row does not stop the query), the
-  `hotspots`, and `cells`: the centre and obscured share (`cloud`: cloud, no
-  data, or a background cell too cloudy to read) of each 640 m square of
-  the box. A look at a site is clear when its square's `cloud` is low.
-
-An optional `source` is `'eodata'` (CDSE's S3, which needs `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY` and `AWS_S3_ENDPOINT`, as on CloudFerro machines)
-or `'gcp'` (Google's public mirror, with no credentials). The default, `'auto'`, uses
-eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
-`thresholds` is `'name=value,...'` over the defaults in `src/burnoff.c`.
-One of them, `nir_excess` (0.1), drops a peak whose rise in B8A over its
-surroundings is a tenth or more of its rise in B12: sunlight reflected
-off roofs, glass and tanks, which a fire does not give. A large value
-turns the test off.
-
 ## In the browser
 
 `make wasm` builds the same detector for a web worker. `web/worker.js`
@@ -118,20 +173,8 @@ API, which answers cross-origin range requests. The page needs no proxy and
 no catalogue: a tile's scenes come from one listing of the bucket for each
 satellite and year.
 
-A detection runs in stages. Each stage is a set of byte-range reads, all
-known before any of them is made, and then a set of decodes. The worker
-makes the reads of a stage at the same time with `fetch()` and does not
-wait on them, so one worker can run several detections at once: one
-decodes while the others wait for their reads. When two detections ask
-for the same read at once, the worker makes it one time. It also keeps
-its last 64 MB of reads and answers a read inside one of them from
-memory, so detections of one scene read its headers and tile-parts once.
-Give a scene's detections to one worker to use this. The worker answers
-each call with its id, in the order the calls finish. It decodes with
-WebGPU; in a browser without WebGPU it decodes on the CPU and logs a
-warning once.
-
-The Aerial map (`data-desk-eco/aerial`) uses it for a live layer.
+The Aerial map (`data-desk-eco/aerial`) uses the API for its live layer,
+and this build only when the API fails.
 
 ## Limits
 
