@@ -1,4 +1,4 @@
--- hotspots.sql's looks and hotspots as one geojson feature collection,
+-- box.sql's looks and hotspots as one geojson feature collection,
 -- newest first: a hotspot is its pixels, a multipolygon, with its peak's
 -- place and each pixel's b12 (pixel_b12, in the polygons' order); a look
 -- has no geometry

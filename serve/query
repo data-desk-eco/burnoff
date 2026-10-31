@@ -2,7 +2,7 @@
 # query [geojson|sites]: hotspots.sql over the variables on stdin (args.sql's
 # or bulk.sh's), against the store $DB as detector $V (deploy.sh), its
 # new cells merged in after;
-# with either, the box's feature collection on stdout
+# with either, box.sql and the box's feature collection on stdout
 . /etc/profile.d/eodata.sh
 d=$(dirname "$0") t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
@@ -13,7 +13,7 @@ trap 'rm -rf "$t"' EXIT
   echo "ATTACH '$t/n.db' AS n (TYPE sqlite);"
   echo "SET VARIABLE v = '$V';"
   cat; cat "$d/cells.sql" "$d/hotspots.sql"
-  [ -z "${1:-}" ] || cat "$d/$1.sql"
+  [ -z "${1:-}" ] || cat "$d/box.sql" "$d/$1.sql"
 } | duckdb -unsigned -bail -noheader -list > "$t/o" 2>&1 || {
   cat "$t/o"; exit 1; }
 sqlite3 "$DB" <<S

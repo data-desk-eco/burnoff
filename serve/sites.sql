@@ -1,4 +1,4 @@
--- hotspots.sql's spots as sites, one geojson feature a site, from every
+-- box.sql's spots as sites, one geojson feature a site, from every
 -- date's detections the store holds within m of the box (pebbles), so the
 -- same pebbles give the same sites whatever box or window asks. a pebble
 -- sits on its peak's 20 m pixel, in its longitude's utm zone, in whole cm.
@@ -81,7 +81,8 @@ FROM (SELECT s, ST_Transform(ST_Point(round(sum(c.x) / count(*) / 4000) * 40,
 WHERE ST_X(q) BETWEEN getvariable('w') AND getvariable('e')
   AND ST_Y(q) BETWEEN getvariable('s') AND getvariable('n');
 CREATE TEMP TABLE hs AS
-SELECT h.*, nds.s AS t FROM spots h JOIN nds ON nds.p = pix(cm(h.lon, h.lat))
+SELECT h.* EXCLUDE (p), nds.s AS t
+FROM (SELECT *, pix(cm(lon, lat)) AS p FROM spots) h JOIN nds USING (p)
 SEMI JOIN st ON st.s = nds.s;
 -- every scene's squares, in its crs, and the one under each site
 CREATE TEMP TABLE sq AS
@@ -91,12 +92,13 @@ FROM (SELECT scene, unnest(unpacked(squares, ox, oy, sx, sy, i, j, cloud))
       UNION ALL SELECT scene, unnest(q) FROM obs);
 CREATE TEMP TABLE lk AS
 SELECT t, date, min(cloud) AS cloud
-FROM (SELECT st.s AS t, sc.datetime::DATE AS date, arg_min(sq.cloud,
-        (sq.x - ST_X(p)) ** 2 + (sq.y - ST_Y(p)) ** 2) AS cloud
-      FROM st JOIN sc ON true, LATERAL (SELECT ST_Transform(ST_Point(st.lon,
-        st.lat), 'EPSG:4326', sc.crs, always_xy := true) AS p)
-      JOIN sq ON sq.scene = sc.scene AND abs(sq.x - ST_X(p)) <= 320
-        AND abs(sq.y - ST_Y(p)) <= 320
+FROM (SELECT st.s AS t, sc.scene, sc.datetime::DATE AS date,
+             arg_min(sq.cloud, (sq.x - px) ** 2 + (sq.y - py) ** 2) AS cloud
+      FROM st JOIN sc ON true, LATERAL (SELECT ST_X(p) AS px, ST_Y(p) AS py
+        FROM (SELECT ST_Transform(ST_Point(st.lon, st.lat), 'EPSG:4326',
+                                  sc.crs, always_xy := true) AS p))
+      JOIN sq ON sq.scene = sc.scene AND abs(sq.x - px) <= 320
+        AND abs(sq.y - py) <= 320
       GROUP BY ALL)
 GROUP BY ALL;
 SELECT '{"type":"FeatureCollection","features":['
@@ -113,9 +115,9 @@ FROM (SELECT json_object('type', 'Feature', 'geometry', json_object('type',
               ratio), 'peakedness', peakedness, 'pixels', pixels,
               'radiance', radiance, 'saturated', saturated, 'px',
               list_transform(px, lambda q: list_prepend(q.b12,
-                flatten(list_transform([[-10, -10], [10, -10], [10, 10],
-                  [-10, 10]], lambda c: [ST_X(ll(q, c, crs)),
-                                ST_Y(ll(q, c, crs))])))))
+                flatten(list_transform(list_transform([[-10, -10],
+                  [10, -10], [10, 10], [-10, 10]], lambda c: ll(q, c, crs)),
+                  lambda g: [ST_X(g), ST_Y(g)])))))
               ORDER BY date) AS ds
             FROM (FROM hs QUALIFY row_number() OVER (PARTITION BY t, date
                                 ORDER BY max_b12 DESC, scene) = 1)
