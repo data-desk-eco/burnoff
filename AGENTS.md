@@ -72,9 +72,9 @@ fails.
 On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
 `serve/deploy.sh`, run by systemd behind caddy and fcgiwrap.
 
-- `hotspots.cgi` → `query` → `hotspots.sql`, then for an answer `box.sql` and
-  `geojson.sql` or `sites.sql`. Cells come from the store, else one `s2_detect` of those
-  missing; new cells are merged into the store in one transaction, keyed
+- `hotspots.cgi` → `query` → `hotspots.sql`, then for an answer `box.sql`
+  and `geojson.sql` or `sites.sql`. Cells come from the store, else one
+  `s2_detect` of those missing; new cells are merged into the store in one transaction, keyed
   by the detector's digest `v`. Requests run in parallel, one a core.
   `sites.sql` links every date's detections within 550 m of the box
   (`m`) by constrained single linkage (40 m, never two of one date over
