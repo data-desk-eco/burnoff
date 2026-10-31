@@ -2,11 +2,9 @@
 -- newest first: a hotspot is its pixels, a multipolygon, with its peak's
 -- place and each pixel's b12 (pixel_b12, in the polygons' order); a look
 -- has no geometry
-.output
-.mode list
-.headers off
 SELECT '{"type":"FeatureCollection","features":['
-       || coalesce(string_agg(f, ',' ORDER BY t DESC, k, f), '') || ']}'
+       || coalesce(string_agg(f, ',' ORDER BY t DESC, k, f), '')
+       || ']}' AS geojson
 FROM (SELECT datetime AS t, 1 AS k, json_object('type', 'Feature',
         'geometry', ST_AsGeoJSON(ST_Transform(ST_Collect(list_transform(px,
           lambda q: ST_MakeEnvelope(q.x - 10, q.y - 10, q.x + 10, q.y + 10))),

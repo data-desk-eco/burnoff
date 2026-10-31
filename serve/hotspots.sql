@@ -1,7 +1,7 @@
 -- the hotspots of each scene over a lon/lat box (w, s, e, n) from t0 to t1,
 -- from the store (db, schema.sql) where it holds the scene's cells and off
--- eodata's jp2s where it does not, the cells read written to n, a new
--- sqlite file that query merges into the store. a cell is one of a tile's
+-- eodata's jp2s where it does not, the cells read added to the store in
+-- one transaction. a cell is one of a tile's
 -- 6.4 km background cells, counted from its 100 km square's north-west
 -- corner (sx, sy), 16 a side; a hotspot is what a read of the whole tile
 -- finds wherever a read's edges fall, so a cell's are the same whichever
@@ -10,62 +10,36 @@
 -- every cell of each scene's square, not only the box's. box.sql makes the
 -- answer's tables from these
 
--- the sentinel-2 tile over lon/lat in its utm zone moved by dz: its 100 km
--- mgrs square, whose latitude band is the one its centre is in, its crs and
--- its north-west corner
-CREATE MACRO s2_tile(lon, lat, dz) AS (
-  SELECT {id: printf('%02d', z) || 'CDEFGHJKLMNPQRSTUVWX'[least(greatest(
-            floor((ST_Y(ST_Transform(ST_Point(c * 1e5 + 5e4, r * 1e5 + 5e4),
-            crs, 'EPSG:4326', always_xy := true)) + 80) / 8), 0), 19)::INT + 1]
-          || 'ABCDEFGHJKLMNPQRSTUVWXYZ'[(z - 1) % 3 * 8 + greatest(c, 1)]
-          || 'ABCDEFGHJKLMNPQRSTUV'[(r + if(z % 2 = 1, 0, 5)) % 20 + 1],
-          crs: crs, sx: c * 1e5, sy: (r + 1) * 1e5}
-  FROM (SELECT *, floor(ST_X(p) / 1e5)::INT AS c,
-               floor(ST_Y(p) / 1e5)::INT AS r
-        FROM (SELECT *, ST_Transform(ST_Point(lon, lat), 'EPSG:4326', crs,
-                                     always_xy := true) AS p
-              FROM (SELECT z, 'EPSG:' || (if(lat < 0, 32700, 32600) + z) AS crs
-                    FROM (SELECT (floor((lon + 180) / 6)::INT + dz + 60)
-                                 % 60 + 1 AS z)))));
--- a point of the box, k of 9 × 9
-CREATE MACRO pt(k) AS ST_Point(
-  getvariable('w') + (getvariable('e') - getvariable('w')) * (k % 9) / 8,
-  getvariable('s') + (getvariable('n') - getvariable('s')) * (k // 9) / 8);
--- the store's rows for a query, through sqlite's own indexes
-CREATE MACRO q(s) AS '''' || string_agg(DISTINCT s, ''',''') || '''';
-
 -- the tiles under the box's points, and their scenes from t0 to t1, one a
 -- sensing time, the newest processing; u, the box in the tile's metres
 -- (the envelope of its points, as the browser's fit() takes it). a point's
 -- tile is its own zone's where eodata lists it, else a neighbouring
 -- zone's: sentinel-2 has none of some, as 43WCV, at yamal lng
-CREATE TEMP TABLE cand AS
+CREATE OR REPLACE TEMP TABLE cand AS
 SELECT k, dz, s2_tile(ST_X(pt(k)), ST_Y(pt(k)), dz) AS t
 FROM range(81) r(k), range(-1, 2) d(dz);
-SET VARIABLE sq = 'SELECT tile FROM scenes WHERE tile IN ('
-  || (SELECT q(t.id) FROM cand) || ') GROUP BY tile';
-CREATE TEMP TABLE tiles AS
+CREATE OR REPLACE TEMP TABLE tiles AS
 SELECT DISTINCT t.id, t.crs, t.sx, t.sy
 FROM (SELECT arg_min(t, abs(dz)) AS t FROM cand
-      WHERE t.id IN (SELECT tile FROM sqlite_query('db', getvariable('sq')))
+      WHERE t.id IN (SELECT tile FROM db.scenes WHERE tile IN (SELECT t.id
+                                                         FROM cand))
       GROUP BY k);
-SET VARIABLE sq = 'SELECT scene, tile, t, granule FROM scenes WHERE tile IN ('
-  || (SELECT q(id) FROM tiles) || ') AND t BETWEEN '''
-  || strftime(getvariable('t0'), '%Y%m%d') || ''' AND '''
-  || strftime(getvariable('t1'), '%Y%m%d') || 'Z''';
-CREATE TEMP TABLE sc AS
-SELECT s.scene, s.granule, strptime(s.t, '%Y%m%dT%H%M%S') AS datetime,
+CREATE OR REPLACE TEMP TABLE sc AS
+SELECT s.scene, g.granule, strptime(s.t, '%Y%m%dT%H%M%S') AS datetime,
        'Sentinel-2/MSI/L1C/' || s.t[1:4] || '/' || s.t[5:6] || '/'
          || s.t[7:8] || '/' || s.scene || '.SAFE/GRANULE/' AS dir,
        'T' || s.tile || '_' || s.t || '_B12.jp2' AS f, t.crs, t.sx, t.sy,
        ST_Envelope(ST_Collect(list_transform(range(81), lambda k:
          ST_Transform(pt(k), 'EPSG:4326', t.crs, always_xy := true)))) AS u
-FROM sqlite_query('db', getvariable('sq')) s JOIN tiles t ON t.id = s.tile
+FROM db.scenes s JOIN tiles t ON t.id = s.tile
+LEFT JOIN (SELECT DISTINCT scene, granule FROM db.granules) g USING (scene)
+WHERE s.t BETWEEN strftime(getvariable('t0'), '%Y%m%d')
+              AND strftime(getvariable('t1'), '%Y%m%d') || 'Z'
 QUALIFY row_number() OVER (PARTITION BY s.tile, s.t ORDER BY s.scene DESC) = 1;
 
 -- the cells asked for, their centres and their H3 cell (the archive's
 -- partition), and those the store holds
-CREATE TEMP TABLE need AS
+CREATE OR REPLACE TEMP TABLE need AS
 SELECT scene, i, j, ST_X(p) AS lon, ST_Y(p) AS lat,
        h3_latlng_to_cell_string(ST_Y(p), ST_X(p), 1) AS cell
 FROM (SELECT *, ST_Transform(ST_Point(sx + 6400 * i + 3200,
@@ -81,28 +55,24 @@ FROM (SELECT *, ST_Transform(ST_Point(sx + 6400 * i + 3200,
                      (sy - ST_YMin(u)) / 6400) - 1))::INT AS j1
             FROM sc),
            LATERAL range(i0, i1 + 1) a(i), LATERAL range(j0, j1 + 1) b(j));
-SET VARIABLE sq = 'SELECT * FROM cells WHERE scene IN ('
-  || coalesce((SELECT q(scene) FROM need), '''''') || ') AND +v = '''
-  || getvariable('v') || '''';
--- (sqlite_query types an empty answer's columns as text: cast)
-CREATE TEMP TABLE held AS
-SELECT * FROM (SELECT scene, i::INT AS i, j::INT AS j, sx::DOUBLE AS sx,
-                      sy::DOUBLE AS sy, ox::DOUBLE AS ox, oy::DOUBLE AS oy,
-                      crs, clear::DOUBLE AS clear,
-                      cloud::DOUBLE AS cloud, squares, cell, lon::DOUBLE AS lon,
-                      lat::DOUBLE AS lat
-               FROM sqlite_query('db', getvariable('sq')))
-SEMI JOIN need USING (scene, i, j);
+-- (a cell read by two requests at once is kept twice: distinct)
+CREATE OR REPLACE TEMP TABLE held AS
+SELECT DISTINCT * EXCLUDE (tile, t, v)
+FROM db.cells SEMI JOIN need USING (scene, i, j)
+WHERE tile IN (SELECT id FROM tiles) AND v = getvariable('v')
+  AND t BETWEEN strftime(getvariable('t0'), '%Y%m%d')
+            AND strftime(getvariable('t1'), '%Y%m%d') || 'Z';
 
 -- one read a scene: the box of its cells lacking and a cell around it, its
 -- granule found where the store lacks it
-CREATE TEMP TABLE miss AS SELECT * FROM need ANTI JOIN held USING (scene, i, j);
-CREATE TEMP TABLE gr AS
+CREATE OR REPLACE TEMP TABLE miss AS
+SELECT * FROM need ANTI JOIN held USING (scene, i, j);
+CREATE OR REPLACE TEMP TABLE gr AS
 SELECT scene, coalesce(granule, regexp_extract(s2_get('s3://eodata/?list-type'
          || '=2&delimiter=/&prefix=' || dir), '/GRANULE/(L1C_[^/<]+)/', 1))
          AS granule
 FROM sc WHERE scene IN (SELECT scene FROM miss);
-CREATE TEMP TABLE rd AS
+CREATE OR REPLACE TEMP TABLE rd AS
 SELECT *, s2_detect('s3://eodata/' || dir || granule || '/IMG_DATA/' || f,
                     sx + 6400 * (i0 - 1), sy - 6400 * (j1 + 2),
                     sx + 6400 * (i1 + 2), sy - 6400 * (j0 - 1)) AS r
@@ -114,23 +84,23 @@ JOIN gr USING (scene) WHERE granule <> '';
 -- the cells read: their squares (cells.sql) and their hotspots, each in
 -- its own 100 km square, as s2_hotspots keeps them. a read's squares are
 -- split by cell in one pass, in its order, and its origin taken once
-CREATE TEMP TABLE rq AS
+CREATE OR REPLACE TEMP TABLE rq AS
 SELECT scene, floor((z.x - sx) / 6400) AS i, ceil((sy - z.y) / 6400) - 1 AS j,
        list(z ORDER BY k) AS q
 FROM (SELECT scene, sx, sy, unnest(r.cells) AS z,
              generate_subscripts(r.cells, 1) AS k FROM rd WHERE r.error IS NULL)
 GROUP BY ALL;
-CREATE TEMP TABLE ro AS
+CREATE OR REPLACE TEMP TABLE ro AS
 SELECT scene, origin(r.cells[1].x, sx) AS ox, -origin(-r.cells[1].y, -sy) AS oy,
        r.clear AS clear FROM rd WHERE r.error IS NULL;
-CREATE TEMP TABLE obs AS
+CREATE OR REPLACE TEMP TABLE obs AS
 SELECT *, coalesce(list_avg(list_transform(q, lambda z: z.cloud)), -1)
             AS cloud
 FROM (SELECT m.scene, m.i, m.j, s.sx, s.sy, r.ox, r.oy, s.crs, r.clear,
              coalesce(q.q, []) AS q, m.cell, m.lon, m.lat
       FROM miss m JOIN ro r USING (scene) JOIN sc s USING (scene)
       LEFT JOIN rq q ON q.scene = m.scene AND q.i = m.i AND q.j = m.j);
-CREATE TEMP TABLE det AS
+CREATE OR REPLACE TEMP TABLE det AS
 SELECT x.scene, o.i, o.j, h.x, h.y, ST_X(p) AS lon, ST_Y(p) AS lat,
        h.max_b12, h.avg_b12, h.peak_b11, h.ratio, h.peakedness, h.pixels,
        h.radiance, h.saturated, h.px, o.cell
@@ -142,13 +112,20 @@ LATERAL (SELECT ST_Transform(ST_Point(h.x, h.y), o.crs, 'EPSG:4326',
                              always_xy := true) AS p)
 WHERE h.x >= x.sx AND h.x < x.sx + 1e5 AND h.y > x.sy - 1e5 AND h.y <= x.sy;
 
-CREATE TABLE n.cells AS
-SELECT scene, i, j, getvariable('v') AS v, sx, sy, ox, oy, crs, clear, cloud,
-       packed(q, ox, oy, sx, sy, i, j) AS squares,
-       cell, lon, lat FROM obs;
-CREATE TABLE n.hotspots AS
-SELECT * EXCLUDE (px, saturated), saturated::INT AS saturated,
-       to_json(px)::VARCHAR AS px, getvariable('v') AS v FROM det;
-CREATE TABLE n.granules AS
+-- what the store lacks of them, the cells with their hotspots, at once
+BEGIN;
+INSERT INTO db.cells BY NAME
 SELECT split_part(scene, '_', 6)[2:] AS tile, split_part(scene, '_', 3) AS t,
-       scene, granule FROM gr WHERE granule <> '';
+       scene, i, j, getvariable('v') AS v, sx, sy, ox, oy, crs, clear, cloud,
+       packed(q, ox, oy, sx, sy, i, j) AS squares, cell, lon, lat
+FROM obs ANTI JOIN (FROM db.cells WHERE v = getvariable('v'))
+  USING (scene, i, j);
+INSERT INTO db.hotspots BY NAME
+SELECT * EXCLUDE (px, saturated), saturated::INT AS saturated,
+       to_json(px)::VARCHAR AS px, getvariable('v') AS v
+FROM det ANTI JOIN (FROM db.hotspots WHERE v = getvariable('v'))
+  USING (scene, x, y);
+INSERT INTO db.granules
+SELECT scene, granule FROM gr WHERE granule <> ''
+  AND scene NOT IN (SELECT scene FROM db.granules);
+COMMIT;

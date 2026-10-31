@@ -7,23 +7,40 @@ has a value that tells how clearly it saw the area.
 
 You can use burnoff in two ways:
 
-- **The hosted API.** Send a bounding box and a date range and get
-  GeoJSON. The service keeps every result, so a repeated area is fast.
+- **The hosted API.** Send a bounding box and a date range over DuckDB's
+  Quack protocol and get GeoJSON. The service keeps every result, so a repeated area is fast.
 - **The DuckDB extension.** Download it and run the detector on your own
   computer, over any area, in SQL.
 
 ## The API
 
-```
-GET https://dev.datadesk.eco/burnoff/hotspots?bbox=w,s,e,n[&datetime=a/b][&f=sites]
+The service speaks [Quack](https://duckdb.org/docs/2.0/quack/overview),
+DuckDB's client-server protocol, at `quack:dev.datadesk.eco:443` with the
+token `burnoff`. It accepts two queries and refuses all others:
+
+```sql
+FROM hotspots(w, s, e, n[, 'a', 'b'])
+FROM sites(w, s, e, n[, 'a', 'b'])
 ```
 
-- `bbox`: longitude and latitude, at most 0.44° by 0.25°.
-- `datetime`: `a/b` as ISO dates. Use `..` for an open end. The default
-  is the last 90 days.
-- `f=sites`: optional. Groups the hotspots into sites (see below).
+- `w, s, e, n`: longitude and latitude, at most 0.44° by 0.25°.
+- `'a', 'b'`: the dates, as ISO dates. Use `'..'` for an open end. The
+  default is the last 90 days.
 
-Without `f`, you get a feature collection, newest first:
+Each gives one row, with one column, `geojson`. From DuckDB 2.0:
+
+```sql
+INSTALL quack; LOAD quack;
+FROM quack_query('quack:dev.datadesk.eco:443',
+  'FROM sites(-103.6, 31.9, -103.5, 32, ''2026-08-01'', ''2026-10-30'')',
+  token := 'burnoff');
+```
+
+In a browser, use the
+[Quack SDK](https://github.com/tobilg/quack-protocol) at
+`https://dev.datadesk.eco`.
+
+`hotspots` gives a feature collection, newest first:
 
 - One `look` feature for each scene, with no geometry. `cloud` is the
   obscured share of the box (`-1` if the scene does not cover it). A
@@ -31,7 +48,7 @@ Without `f`, you get a feature collection, newest first:
 - One `hotspot` feature for each detection. The geometry is its pixels
   as a multipolygon. `pixel_b12` gives the B12 value of each pixel.
 
-With `f=sites`, you get one point feature for each site. The service
+`sites` gives one point feature for each site. The service
 finds sites from all the detections it holds, on all dates:
 
 1. Each detection is put on the 20 m pixel of its peak.
@@ -40,18 +57,13 @@ finds sites from all the detections it holds, on all dates:
    30 m apart, in one site: those are two flares that burned at the same
    time.
 
-The same detections always give the same sites, for any `bbox` or
-`datetime`. The `id` is the mean place of the site's detections, rounded
+The same detections always give the same sites, for any box or dates. The `id` is the mean place of the site's detections, rounded
 to 40 m (`live:<lat>,<lon>`). The mean changes little as detections are
-added, so the `id` usually stays the same. `datetime`
-selects only the dates in each site. Its properties are `id`,
+added, so the `id` usually stays the same. The dates select only the
+dates in each site. Its properties are `id`,
 `looks` (`[[date, cloud], …]` for the 640 m square under the site),
 `detections` (the brightest detection of each date, with its pixels)
 and `detection_count`.
-
-```sh
-curl 'https://dev.datadesk.eco/burnoff/hotspots?bbox=-103.6,31.9,-103.5,32&datetime=2026-08-01/2026-10-30&f=sites'
-```
 
 A new area takes some seconds, because the service reads each scene.
 An area that the service has already read comes back in less than a
@@ -61,24 +73,27 @@ second.
 
 The service runs on one machine in CloudFerro's WAW3-2 region, next to
 the Copernicus `eodata` archive. All of its data stays in the EU. It
-uses only this extension, SQLite and systemd. The files are in `serve/`,
-and `serve/deploy.sh` installs them.
+uses only this extension, DuckDB 2.0 and systemd. The files are in
+`serve/`, and `serve/deploy.sh` installs them.
 
+- One DuckDB process (`server.sql`) holds the store and serves Quack
+  behind caddy. Its gate (`api.sql`) turns `hotspots(...)` or
+  `sites(...)` into the service's SQL. It runs scripts from the
+  machine's own jobs (`q`) only with a key.
 - A request runs `hotspots.sql` in DuckDB with the extension. The SQL
   finds the box's tiles and scenes from an index of `eodata`. It reads
   each 6.4 km cell from the store if the store has it. Otherwise, it
   runs `s2_detect` on the cells that are missing. `sites.sql` groups the
   result into sites.
-- The store is one SQLite file. The service writes new cells and their
+- The store is one DuckDB file. A request writes new cells and their
   hotspots in one transaction, under a digest of the extension that made
   them. A new detector therefore reads the cells again.
 - systemd timers update the scene index each day (`index.sh`) and merge
   the store into the Data Desk archive each hour (`export.sh`). The
   archive is the record. The export replaces only the cells that the
   store holds, so it never removes rows, and a second run changes
-  nothing. If the store is empty, the export fills it from the archive. A
-  background job (`bulk.sh`) fills the store around known sites. It
-  stops while a request runs.
+  nothing. If the store is empty, the export fills it from the archive.
+  `bulk.sh`, run by hand, fills the store around known sites.
 
 ## The extension
 

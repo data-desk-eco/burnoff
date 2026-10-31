@@ -10,14 +10,15 @@ SET VARIABLE seed = (SELECT count(scene) = 0 FROM db.cells);
 -- newest processing (a reprocessing read after the first is kept, as a
 -- request reads the newest), and nothing written unless every cell is one
 -- of its square's 16 × 16. the hotspots are those of the cells read: a
--- merge (query) commits a cell with its hotspots, so a hotspot read after
--- c whose cell is not in it came with a newer cell, left to the next run
-CREATE TEMP TABLE c AS
-SELECT * FROM db.cells WHERE v = getvariable('v')
+-- request (hotspots.sql) commits a cell with its hotspots, so a hotspot
+-- read after c whose cell is not in it came with a newer cell, left to the
+-- next run
+CREATE OR REPLACE TEMP TABLE c AS
+SELECT DISTINCT * EXCLUDE (tile, t) FROM db.cells WHERE v = getvariable('v')
 QUALIFY scene = max(scene) OVER (PARTITION BY split_part(scene, '_', 6),
                                               split_part(scene, '_', 3));
-CREATE TEMP TABLE h AS
-SELECT * FROM db.hotspots SEMI JOIN c USING (scene, i, j)
+CREATE OR REPLACE TEMP TABLE h AS
+SELECT DISTINCT * FROM db.hotspots SEMI JOIN c USING (scene, i, j)
 WHERE v = getvariable('v');
 SELECT error('export: ' || count(*) || ' cells off their square')
 FROM c WHERE i NOT BETWEEN 0 AND 15 OR j NOT BETWEEN 0 AND 15
@@ -28,10 +29,11 @@ WHERE floor((h.x - c.sx) / 6400) <> i OR ceil((c.sy - h.y) / 6400) - 1 <> j
    OR h.x < c.sx OR h.x >= c.sx + 1e5 OR h.y <= c.sy - 1e5 OR h.y > c.sy
 HAVING count(*) > 0;
 
-CREATE MACRO sensed(scene) AS strptime(split_part(scene, '_', 3),
-                                     '%Y%m%dT%H%M%S');
-CREATE MACRO arc(t) AS TABLE FROM read_parquet(getvariable('arc') || '/' || t
-  || '/*/*.parquet', union_by_name := true, hive_partitioning := true);
+CREATE OR REPLACE MACRO sensed(scene) AS
+  strptime(split_part(scene, '_', 3), '%Y%m%dT%H%M%S');
+CREATE OR REPLACE MACRO arc(t) AS TABLE
+FROM read_parquet(getvariable('arc') || '/' || t || '/*/*.parquet',
+                  union_by_name := true, hive_partitioning := true);
 -- the partitions (d) where the store holds a scene's cell the archive lacks
 -- for its detector, the rest left unread and unwritten
 SET VARIABLE d = (SELECT coalesce(list(DISTINCT cell), []) FROM c
@@ -39,9 +41,10 @@ SET VARIABLE d = (SELECT coalesce(list(DISTINCT cell), []) FROM c
   USING (scene, i, j, v));
 DELETE FROM c WHERE NOT list_contains(getvariable('d'), cell);
 -- the archive's rows of those, bar the scenes' cells the store holds
-CREATE MACRO kept(t) AS TABLE FROM arc(t) ANTI JOIN c USING (scene, i, j)
+CREATE OR REPLACE MACRO kept(t) AS TABLE
+FROM arc(t) ANTI JOIN c USING (scene, i, j)
   WHERE list_contains(getvariable('d'), cell);
-CREATE TEMP TABLE o AS
+CREATE OR REPLACE TEMP TABLE o AS
 FROM (SELECT scene, sensed(scene) AS datetime, sensed(scene)::DATE AS date,
              split_part(scene, '_', 6)[2:] AS tile, i, j, sx, sy, ox, oy, crs,
              clear, cloud,
@@ -74,7 +77,8 @@ TO (getvariable('arc') || '/detections') (FORMAT parquet, COMPRESSION zstd,
 -- the seed: the current detector's rows (v) as the store keeps them
 BEGIN;
 INSERT INTO db.cells BY NAME
-SELECT scene, i, j, v, sx, sy, ox, oy, crs, clear, cloud, cell, lon, lat,
+SELECT tile, split_part(scene, '_', 3) AS t, scene, i, j, v, sx, sy, ox, oy,
+       crs, clear, cloud, cell, lon, lat,
        packed(squares, ox, oy, sx, sy, i, j) AS squares
 FROM arc('observations') WHERE getvariable('seed') AND v = getvariable('v');
 INSERT INTO db.hotspots BY NAME

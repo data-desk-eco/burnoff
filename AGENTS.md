@@ -70,26 +70,37 @@ fails.
 ## The service
 
 On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
-`serve/deploy.sh`, run by systemd behind caddy and fcgiwrap.
+`serve/deploy.sh`, run by systemd behind caddy: one DuckDB 2.0
+(`/opt/burnoff/duckdb`, `server.sql`) holding the store and serving Quack
+on localhost:9494, at `https://dev.datadesk.eco/quack`.
 
-- `hotspots.cgi` → `query` → `hotspots.sql`, then for an answer `box.sql`
-  and `geojson.sql` or `sites.sql`. Cells come from the store, else one
-  `s2_detect` of those missing; new cells are merged into the store in one
-  transaction, keyed by the detector's digest `v`. Requests run in
-  parallel, one a core.
+- `api.sql`'s gate (`quack_authorization_function`) sees every query.
+  `FROM hotspots(w, s, e, n[, 'a', 'b'])` or the same of `sites` runs
+  `args.sql`, `hotspots.sql`, `box.sql`, then `geojson.sql` or
+  `sites.sql`; a script after `admin <key>` (`q`, the key in
+  `/data/burnoff/env`) runs as it is; anything else is refused. A script
+  answers with its first SELECT's rows, so checks before the answer are
+  variables. Macros live in `api.sql` (one catalog for every
+  connection); per-request tables are `CREATE OR REPLACE TEMP`.
+- Cells come from the store, else one `s2_detect` of those missing; new
+  cells and their hotspots are added in one transaction, keyed by the
+  detector's digest `v`.
   `sites.sql` links every date's detections within 550 m of the box
   (`m`) by constrained single linkage (40 m, never two of one date over
   30 m apart in a site) and names a site by its mean place rounded to
   40 m, so a site and its id depend on the store alone, not on the
   request. Keep its sums integer (whole cm): float sums can round
   differently.
-- A response is kept a day (a closed window) or an hour, with the body's
-  hash as its ETag; a matching `If-None-Match` gets a 304 and no body.
-  Caddy's gzip suffixes the tag (`-gzip`), so the match is a substring.
-- The store is `/data/burnoff/store.db` (`schema.sql`, SQLite, WAL). It
-  is a cache: everything in it can be read again from eodata.
-- `index.sh` (daily) indexes eodata's scenes. `bulk.sh` (nice 19) fills
-  the store around the archive's sites and pauses during requests.
+- The store is `/data/burnoff/store.duckdb` (`schema.sql`; deploy.sh
+  copied the old SQLite store into it once). It is a cache: everything in
+  it can be read again from eodata. It has no keys: concurrent appends of
+  one key conflict in DuckDB, so a request adds what the store lacks and
+  readers take distinct rows. Cells lead with tile and sensing time and
+  are read by them: scenes' names share their first 8 bytes, so zonemaps
+  on `scene` skip nothing (0.45 s a request to 0.02).
+- `index.sh` (daily) indexes eodata's scenes. `bulk.sh`, by hand
+  (`systemctl start burnoff-bulk`), fills the store around the archive's
+  sites.
 - `export.sh` (hourly) merges the store into the archive's
   `data-desk/burnoff/{observations,detections}`, one file per H3 res-1
   cell. The archive is the record: the store's rows replace the archive's
@@ -99,10 +110,10 @@ On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
   the archive.
 - Units fail to `data-desk-failed@` and log as `burnoff-<unit>`.
 
-Gotchas: the export needs `memory_limit = 3GB`, 2 threads and a writable
-`temp_directory` (it was OOM-killed on the 7.5 GB box otherwise). DuckDB's
-sqlite scanner fails on `count(*)` of a `WITHOUT ROWID` table; count a
-column. A deploy restarts the service only for a new detector.
+Gotchas: the export runs in the service, under its `memory_limit = 4GB`
+and `temp_directory` (it was OOM-killed on the 7.5 GB box without them),
+with the archive's secret made and dropped around it. A deploy restarts
+the service, dropping requests in flight, only when a file changed.
 
 ## Measured
 
