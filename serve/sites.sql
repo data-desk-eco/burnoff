@@ -44,30 +44,44 @@ CREATE TEMP TABLE nd AS
 SELECT row_number() OVER (ORDER BY p.z, p.x, p.y) AS n, p,
        list({d: date, x: c.x, y: c.y}) AS q
 FROM pb GROUP BY p;
-SET VARIABLE q = (SELECT coalesce(list(q ORDER BY n), []) FROM nd);
 CREATE TEMP TABLE ln AS
 SELECT row_number() OVER (ORDER BY l, a.n, b.n) AS r, a.n AS a, b.n AS b
 FROM nd a JOIN nd b ON b.p.z = a.p.z AND b.n > a.n
   AND abs(b.p.x - a.p.x) <= 2 AND abs(b.p.y - a.p.y) <= 2,
 LATERAL (SELECT (b.p.x - a.p.x) ** 2 + (b.p.y - a.p.y) ** 2 AS l)
 WHERE l <= 4;
--- each node's site (g[n], its least node): a link joins two sites unless
+-- linked nodes' components (c, its least node), and each node's place in
+-- its own (i), so each component links on its own, all at once
+CREATE TEMP TABLE cn AS
+WITH RECURSIVE w(n, c) USING KEY (n) AS (
+  SELECT n, n FROM nd
+  UNION ALL
+  SELECT e.y, min(w.c) FROM w JOIN (SELECT a AS x, b AS y FROM ln
+    UNION ALL SELECT b, a FROM ln) e ON e.x = w.n
+  JOIN recurring.w o ON o.n = e.y WHERE w.c < o.c GROUP BY e.y)
+SELECT n, c, row_number() OVER (PARTITION BY c ORDER BY n) AS i FROM w;
+CREATE TEMP TABLE lc AS
+SELECT x.c, row_number() OVER (PARTITION BY x.c ORDER BY r) AS r,
+       x.i AS a, y.i AS b
+FROM ln JOIN cn x ON x.n = ln.a JOIN cn y ON y.n = ln.b;
+-- each node's site (g[i], its least node): a link joins two sites unless
 -- they hold pebbles of one date over 30 m apart
-CREATE MACRO grp(g, i) AS flatten(list_filter(getvariable('q'),
-  lambda x, j: g[j] = i));
+CREATE MACRO grp(q, g, i) AS flatten(list_filter(q, lambda x, j: g[j] = i));
 CREATE MACRO clash(u, v) AS list_bool_or(list_transform(u, lambda a:
   list_bool_or(list_transform(v, lambda b: a.d = b.d
     AND (a.x - b.x) ** 2 + (a.y - b.y) ** 2 > 3000 ** 2))));
 CREATE TEMP TABLE gs AS
-WITH RECURSIVE k(o, r, g) USING KEY (o) AS (
-  SELECT 0, 0, range(1, len(getvariable('q')) + 1)
+WITH RECURSIVE k(c, r, q, g) USING KEY (c) AS (
+  SELECT c, 0, list(q ORDER BY i), range(1, count(*) + 1)
+  FROM cn JOIN nd USING (n) GROUP BY c
   UNION ALL
-  SELECT 0, k.r + 1, if(i <> j AND NOT coalesce(clash(grp(k.g, i),
-           grp(k.g, j)), false), list_transform(k.g, lambda x:
+  SELECT k.c, k.r + 1, k.q, if(i <> j AND NOT coalesce(clash(grp(k.q, k.g,
+           i), grp(k.q, k.g, j)), false), list_transform(k.g, lambda x:
            if(x = j, i, x)), k.g)
-  FROM k JOIN ln ON ln.r = k.r + 1,
+  FROM k JOIN lc ON lc.c = k.c AND lc.r = k.r + 1,
   LATERAL (SELECT least(k.g[a], k.g[b]) AS i, greatest(k.g[a], k.g[b]) AS j))
-SELECT n, g[n] AS s FROM k, range(1, len(g) + 1) t(n);
+SELECT x.n, y.n AS s FROM k JOIN cn x USING (c) JOIN cn y
+  ON y.c = k.c AND y.i = k.g[x.i];
 CREATE TEMP TABLE nds AS SELECT nd.p, gs.s FROM nd JOIN gs USING (n);
 -- a site's place: its pebbles' mean, rounded to 40 m, in lon/lat
 CREATE TEMP TABLE st AS
@@ -84,7 +98,8 @@ CREATE TEMP TABLE hs AS
 SELECT h.* EXCLUDE (p), nds.s AS t
 FROM (SELECT *, pix(cm(lon, lat)) AS p FROM spots) h JOIN nds USING (p)
 SEMI JOIN st ON st.s = nds.s;
--- every scene's squares, in its crs, and the one under each site
+-- every scene's squares, in its crs, and the one under each site (ties
+-- to the least x, then y)
 CREATE TEMP TABLE sq AS
 SELECT scene, v.x, v.y, v.cloud
 FROM (SELECT scene, unnest(unpacked(squares, ox, oy, sx, sy, i, j, cloud))
@@ -92,11 +107,14 @@ FROM (SELECT scene, unnest(unpacked(squares, ox, oy, sx, sy, i, j, cloud))
       UNION ALL SELECT scene, unnest(q) FROM obs);
 CREATE TEMP TABLE lk AS
 SELECT t, date, min(cloud) AS cloud
-FROM (SELECT st.s AS t, sc.scene, sc.datetime::DATE AS date,
-             arg_min(sq.cloud, (sq.x - px) ** 2 + (sq.y - py) ** 2) AS cloud
-      FROM st JOIN sc ON true, LATERAL (SELECT ST_X(p) AS px, ST_Y(p) AS py
-        FROM (SELECT ST_Transform(ST_Point(st.lon, st.lat), 'EPSG:4326',
-                                  sc.crs, always_xy := true) AS p))
+FROM (SELECT pt.s AS t, sc.scene, sc.datetime::DATE AS date,
+             arg_min(sq.cloud, ((sq.x - px) ** 2 + (sq.y - py) ** 2, sq.x,
+               sq.y)) AS cloud
+      FROM (SELECT s, crs, ST_X(p) AS px, ST_Y(p) AS py
+            FROM st, (SELECT DISTINCT crs FROM sc), LATERAL (SELECT
+              ST_Transform(ST_Point(lon, lat), 'EPSG:4326', crs,
+                           always_xy := true) AS p)) pt
+      JOIN sc USING (crs)
       JOIN sq ON sq.scene = sc.scene AND abs(sq.x - px) <= 320
         AND abs(sq.y - py) <= 320
       GROUP BY ALL)
