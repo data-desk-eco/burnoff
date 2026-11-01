@@ -171,7 +171,9 @@ on localhost:9494, at `https://dev.datadesk.eco/quack`.
   round): Ras Laffan 0.6° × 0.4° for 2023 Q1, 180 granules, 13.4 s cold, 185
   hotspots (as `s3_detect` over the box), then sites in 0.3-0.9 s; of 13
   sites from 10 nights, 2 kept their id over the quarter, the rest moved
-  250 m to 1 km, and distinct sites stood 790 m or more apart.
+  250 m to 1 km, and distinct sites stood 790 m or more apart. Deployed,
+  off eodata: Ras Laffan 0.5° × 0.5° for the last 90 days, 28 sites in
+  10.9 s cold, 2.0 s warm.
 - Units fail to `data-desk-failed@` and log as `burnoff-<unit>`.
 
 Gotchas: the export runs in the service, under its `memory_limit = 4GB`
