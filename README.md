@@ -285,3 +285,9 @@ and this build only when the API fails.
   term. At Caseiro et al.'s 2017 flares, the median of its mean
   temperatures is 1964 K. Their modes are near 1200 and 1750 K.
 - A large box holds about 250 MB a granule in memory.
+- It places hotspots by the product's own geolocation, which in 2023's
+  baseline 004 puts Sentinel-3A about 250 m east of a flare and
+  Sentinel-3B about 350 m west (against VIIRS Nightfire and Sentinel-2
+  sites; ESA's SL_2_FRP shows the same).
+- It finds a flare on about half the nights VIIRS Nightfire sees it at
+  2-3 MW, and few under 1 MW.

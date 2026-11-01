@@ -203,3 +203,15 @@ Reads: 6.4 MB a granule for a 0.1° flare site (3.8 MB without a hot
 pixel: heads, tie points, S5's chunk with its flags and the mask), 19
 MB for the whole gulf box; 3.3-4.6 granules a second. A whole granule
 decodes in 0.4 s on an M2.
+
+Night detector against VIIRS Nightfire, 2026-11-01 (aerial's
+`docs/s3.md`): 2023 Q1, 11 regions, 1,264 night granules off MEEO's
+public mirror of the L1B (`https://meeo-s3.s3.eu-central-1.amazonaws.com/
+NTC/S3A/SL_1_RBT___/`, no key: a box can be tested off eodata), 0
+errors. Radiant heat at 432 sites both saw: 0.87 of VNF's (log r 0.88).
+Nights caught of those VNF saw lit, both clear: 7% under 0.5 MW, 40% at
+1-2, 55% at 2-3, 74% at 5-10, 79% over 20. The L1B's geolocation puts
+S3A +261 m E, +264 m N of VNF sites and S3B -371 m E, +252 m N (S2 sites
+and ESA's SL_2_FRP agree). ESA's SL_2_FRP has no fire in the Bakken or
+West Siberia that quarter; this detector finds 802 and 294 hotspots
+there.
