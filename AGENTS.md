@@ -156,6 +156,22 @@ on localhost:9494, at `https://dev.datadesk.eco/quack`.
   changes nothing. Only partitions where the store holds keys the archive
   lacks are read and rewritten (8-30 s). An empty store is seeded from
   the archive.
+- Sentinel-3 (`s3*.sql`): `s3_hotspots` and `s3_sites` run `s3args`,
+  `s3hotspots`, `s3box` and `s3geojson` or `s3sites`. Granules come from
+  CDSE's STAC, searched a 1° square and a day at a time (`s3_searched`, a
+  day kept once three days gone, with each granule's bbox). The store keeps
+  each granule's 0.1° cells (`s3_cells`: sza, pixels, clear and its 5 × 5
+  `squares` of 0.02°, s3_detect's) and their hotspots (`s3_hotspots`),
+  under `v`; a request reads, a granule, one s3_detect over the box of the
+  cells it lacks and splits the answer by cell. `s3sites.sql` is
+  `sites.sql`'s linkage at 250 m pixels, 750 m links, `clash3` (two
+  hotspots of one granule). `s3url` maps a granule's eodata dir to what is
+  read: itself; a local test reads MEEO's mirror instead. Not exported to
+  the archive yet. Measured locally off the mirror (eu-central-1, ~0.3 s a
+  round): Ras Laffan 0.6° × 0.4° for 2023 Q1, 180 granules, 13.4 s cold, 185
+  hotspots (as `s3_detect` over the box), then sites in 0.3-0.9 s; of 13
+  sites from 10 nights, 2 kept their id over the quarter, the rest moved
+  250 m to 1 km, and distinct sites stood 790 m or more apart.
 - Units fail to `data-desk-failed@` and log as `burnoff-<unit>`.
 
 Gotchas: the export runs in the service, under its `memory_limit = 4GB`

@@ -3,7 +3,8 @@
 //   s3_detect(dir VARCHAR, w DOUBLE, s DOUBLE, e DOUBLE, n DOUBLE
 //             [, thresholds VARCHAR])
 //   → STRUCT(sza DOUBLE, clear DOUBLE, error VARCHAR, hotspots STRUCT(lon,
-//            lat, pixels, s5, s6, temperature, rh, confirmed, saturated)[])
+//            lat, pixels, s5, s6, temperature, rh, confirmed, saturated)[],
+//            squares STRUCT(lon, lat, pixels, clear)[])
 // dir is a granule's .SEN3 directory, the box lon/lat degrees.
 //
 // the method is caseiro et al.'s (remote sens. 2018, 10:1118; essd 2020,
@@ -29,9 +30,9 @@
 #include <zlib.h>
 
 static const char *TK3[] = {"s5_gain", "s6_gain", "sza_min", "cloud_bits",
-  "t_min", "t_max", "exact"};
-static const double TD3[] = {.89, .80, 90, 0x3fc0, 500, 5000, 1};
-enum { G5, G6, SZAMIN, CBITS, TMIN, TMAX, EXACT, NT3 };
+  "t_min", "t_max", "exact", "square"};
+static const double TD3[] = {.89, .80, 90, 0x3fc0, 500, 5000, 1, .02};
+enum { G5, G6, SZAMIN, CBITS, TMIN, TMAX, EXACT, SQ, NT3 };
 
 // a file's head: superblock, object headers, heaps. geodetic_an's links lie
 // past 27 KB, so 24 KB took a second round on every granule
@@ -102,7 +103,22 @@ typedef struct sj {
   h3 *d;
   int nd, cap, in;
   int keep;            // another box of the granule follows: drop no file
+  // the box's squares, `square` degrees on a grid from 0°, 0°: from the
+  // square (qx, qy) at the box's south-west, qw by qh, each one's pixels
+  // (qn) and the clear among them (qc), as `clear` counts the box's
+  int *qn, *qc, qw, qh;
+  long qx, qy;
 } sj;
+
+// a pixel at lon, lat into its square, clear or not; none past the grid
+static void square(sj *x, double lon, double lat, int ok) {
+  double q = x->t[SQ];
+  long w = lround(360 / q), dx = ((long)floor(lon / q) - x->qx) % w,
+       dy = (long)floor(lat / q) - x->qy;
+  if (dx < 0) dx += w;
+  if (!x->qn || dx >= x->qw || dy < 0 || dy >= x->qh) return;
+  x->qn[dy * x->qw + dx]++, x->qc[dy * x->qw + dx] += ok;
+}
 
 // file f done with, unless another box of the granule will read it again
 static void drop3(job *j, int f) {
@@ -572,13 +588,24 @@ static const char *s3cands(job *j) {
     double lon, lat;
     long in = 0, clr = 0;
     x->cd = malloc(m * sizeof *x->cd);
+    if (x->t[SQ] > 0) {   // at most 4M squares: a 0.02° grid over 40°
+      double q = x->t[SQ], *b = x->box;
+      x->qx = floor(b[0] / q), x->qy = floor(b[1] / q);
+      x->qw = (long)floor((b[0] + span(b)) / q) - x->qx + 1;
+      x->qh = (long)floor(b[3] / q) - x->qy + 1;
+      if ((double)x->qw * x->qh <= 1 << 22)
+        x->qn = calloc((size_t)x->qw * x->qh, sizeof *x->qn),
+        x->qc = calloc((size_t)x->qw * x->qh, sizeof *x->qc);
+    }
     for (size_t i = 0; i < m; i++) {
       int r = x->r0 + i / ww, c = x->c0 + i % ww, f = flag(xc[i]);
       if (f & ABSENT) s5[i] = NAN;
       if (!(f & ABSENT) && (f & SAT5 || hot(x, S5, s5[i]))) x->cd[x->nc++] = i;
       else if (isfinite(s5[i]) && (place(x, r, c, &lon, &lat),
-                                   inbox(x->box, lon, lat)))
-        in++, clr += !(flag(cl[i]) & (int)x->t[CBITS]);
+                                   inbox(x->box, lon, lat))) {
+        int ok = !(flag(cl[i]) & (int)x->t[CBITS]);
+        in++, clr += ok, square(x, lon, lat, ok);
+      }
     }
     x->clear = in ? (double)clr / in : NAN;
     free(x->b[CLD]), x->b[CLD] = NULL;
@@ -776,6 +803,7 @@ static int bydir(const void *a, const void *b) {
 }
 
 #define NH 9   // a hotspot's fields
+#define NQ 4   // a square's
 static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
                       duckdb_vector out) {
   idx_t n = duckdb_data_chunk_get_size(in), cols =
@@ -815,12 +843,13 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
   }
   free(ix);
   run(rs, n);
-  // sza, clear, error and the hotspots; a null input row is a null result
-  duckdb_vector c[4];
-  uint64_t *mo, *mc[4];
+  // sza, clear, error, the hotspots and the squares; a null input row is a
+  // null result
+  duckdb_vector c[5];
+  uint64_t *mo, *mc[5];
   duckdb_vector_ensure_validity_writable(out);
   mo = duckdb_vector_get_validity(out);
-  for (int k = 0; k < 4; k++)
+  for (int k = 0; k < 5; k++)
     c[k] = duckdb_struct_vector_get_child(out, k),
     duckdb_vector_ensure_validity_writable(c[k]),
     mc[k] = duckdb_vector_get_validity(c[k]);
@@ -832,13 +861,26 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
   void *d[NH];
   for (int k = 0; k < NH; k++)
     d[k] = duckdb_vector_get_data(duckdb_struct_vector_get_child(f, k));
+  // the squares a pixel fell in
+  idx_t tq = 0, oq = 0;
+  for (idx_t i = 0; i < n; i++)
+    for (long k = 0; !rs[i].e && xs[i].qn && k < (long)xs[i].qw * xs[i].qh;
+         k++)
+      tq += xs[i].qn[k] > 0;
+  duckdb_list_vector_reserve(c[4], tq);
+  duckdb_list_vector_set_size(c[4], tq);
+  duckdb_vector fq = duckdb_list_vector_get_child(c[4]);
+  duckdb_list_entry *lq = duckdb_vector_get_data(c[4]);
+  void *dq[NQ];
+  for (int k = 0; k < NQ; k++)
+    dq[k] = duckdb_vector_get_data(duckdb_struct_vector_get_child(fq, k));
   for (idx_t i = 0; i < n; i++) {
     row *w = &rs[i];
     sj *x = &xs[i];
-    le[i] = (duckdb_list_entry){o, 0};
+    le[i] = (duckdb_list_entry){o, 0}, lq[i] = (duckdb_list_entry){oq, 0};
     if (!w->url) {   // its fields null too: duckdb reads a field alone
       duckdb_validity_set_row_invalid(mo, i);
-      for (int k = 0; k < 4; k++) duckdb_validity_set_row_invalid(mc[k], i);
+      for (int k = 0; k < 5; k++) duckdb_validity_set_row_invalid(mc[k], i);
       continue;
     }
     double s[2] = {x->sza, x->clear};
@@ -846,8 +888,20 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
       if (isnan(s[k])) duckdb_validity_set_row_invalid(mc[k], i);
       else ((double *)duckdb_vector_get_data(c[k]))[i] = s[k];
     if (w->e) duckdb_vector_assign_string_element(c[2], i, w->e),
-              duckdb_validity_set_row_invalid(mc[3], i);
+              duckdb_validity_set_row_invalid(mc[3], i),
+              duckdb_validity_set_row_invalid(mc[4], i);
     else duckdb_validity_set_row_invalid(mc[2], i);
+    for (long k = 0; !w->e && x->qn && k < (long)x->qw * x->qh; k++)
+      if (x->qn[k]) {
+        double q = x->t[SQ], lon = (x->qx + k % x->qw) * q;
+        // its south-west corner, to 1e-6°, off the float noise of k × q
+        ((double *)dq[0])[oq] = round((fmod(lon + 540, 360) - 180) * 1e6) / 1e6;
+        ((double *)dq[1])[oq] = round((x->qy + k / x->qw) * q * 1e6) / 1e6;
+        ((int32_t *)dq[2])[oq] = x->qn[k];
+        ((double *)dq[3])[oq++] = (double)x->qc[k] / x->qn[k];
+      }
+    lq[i].length = oq - lq[i].offset;
+    free(x->qn), free(x->qc);
     for (int k = 0; !w->e && k < x->nd; k++, o++) {
       h3 *h = &x->d[k];
       double y[] = {h->lon, h->lat, h->s5, h->s6, h->temp, h->rh};
@@ -873,15 +927,20 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
 static duckdb_state s3_register(duckdb_connection con) {
   const char *hn[] = {"lon", "lat", "pixels", "s5", "s6", "temperature", "rh",
                       "confirmed", "saturated"},
-             *sn[] = {"sza", "clear", "error", "hotspots"};
-  duckdb_logical_type ht[NH], st[4], dbl = type(DUCKDB_TYPE_DOUBLE),
+             *sn[] = {"sza", "clear", "error", "hotspots", "squares"},
+             *qn[] = {"lon", "lat", "pixels", "clear"};
+  duckdb_logical_type ht[NH], st[5], qt[NQ], dbl = type(DUCKDB_TYPE_DOUBLE),
                       vc = type(DUCKDB_TYPE_VARCHAR);
+  for (int k = 0; k < NQ; k++)
+    qt[k] = type(k == 2 ? DUCKDB_TYPE_INTEGER : DUCKDB_TYPE_DOUBLE);
+  duckdb_logical_type qs = duckdb_create_struct_type(qt, qn, NQ);
   for (int k = 0; k < NH; k++)
     ht[k] = type(k == 2 ? DUCKDB_TYPE_INTEGER
                  : k >= 7 ? DUCKDB_TYPE_BOOLEAN : DUCKDB_TYPE_DOUBLE);
   duckdb_logical_type hs = duckdb_create_struct_type(ht, hn, NH);
   st[0] = st[1] = dbl, st[2] = vc, st[3] = duckdb_create_list_type(hs);
-  duckdb_logical_type ret = duckdb_create_struct_type(st, sn, 4);
+  st[4] = duckdb_create_list_type(qs);
+  duckdb_logical_type ret = duckdb_create_struct_type(st, sn, 5);
   duckdb_scalar_function_set set = duckdb_create_scalar_function_set(
     "s3_detect");
   for (int extra = 0; extra < 2; extra++) {
@@ -901,6 +960,8 @@ static duckdb_state s3_register(duckdb_connection con) {
   duckdb_destroy_scalar_function_set(&set);
   for (int k = 0; k < NH; k++) duckdb_destroy_logical_type(&ht[k]);
   duckdb_destroy_logical_type(&hs), duckdb_destroy_logical_type(&st[3]);
+  for (int k = 0; k < NQ; k++) duckdb_destroy_logical_type(&qt[k]);
+  duckdb_destroy_logical_type(&qs), duckdb_destroy_logical_type(&st[4]);
   duckdb_destroy_logical_type(&ret), duckdb_destroy_logical_type(&dbl);
   duckdb_destroy_logical_type(&vc);
   return ok;

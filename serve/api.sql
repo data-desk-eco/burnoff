@@ -39,21 +39,39 @@ CREATE MACRO clash(u, v) AS list_bool_or(list_transform(u, lambda a:
   list_bool_or(list_transform(v, lambda b: a.d = b.d
     AND (a.x - b.x) ** 2 + (a.y - b.y) ** 2 > 3000 ** 2))));
 
+-- sentinel-3's: the local evening a granule's look falls in, at lon (its
+-- local solar time less 12 h: slstr passes at about 22:00), from its
+-- sensing time t (yyyymmddThhmmss); and a granule's directory as read (a
+-- test may read another mirror)
+CREATE MACRO s3night(t, lon) AS (strptime(t, '%Y%m%dT%H%M%S')
+  + to_microseconds((lon / 15 * 3600e6)::BIGINT) - INTERVAL 12 HOUR)::DATE;
+CREATE MACRO s3url(dir) AS dir;
+-- s3sites.sql's: two sites holding pebbles of one granule, two flares lit
+-- at once
+CREATE MACRO clash3(u, v) AS list_bool_or(list_transform(u, lambda a:
+  list_contains(list_transform(v, lambda b: b.d), a.d)));
+
 -- the gate (quack_authorization_function), on each query: a script of
 -- bulk, index or export (q) after 'admin <key>' and a line, run as it is;
 -- a public one only as `FROM hotspots(w, s, e, n[, 'a', 'b'])` or the same
 -- of sites, run as args.sql, hotspots.sql, box.sql and geojson.sql or
--- sites.sql, over those; anything else refused
+-- sites.sql, over those, or of s3_hotspots or s3_sites, run as s3args.sql,
+-- s3hotspots.sql, s3box.sql and s3geojson.sql or s3sites.sql; anything
+-- else refused
 CREATE TABLE cfg AS SELECT getenv('KEY') AS k, getenv('V') AS v;
 SELECT error('KEY unset or short') FROM cfg WHERE coalesce(len(k), 0) < 16;
 CREATE TABLE api AS
 SELECT f, string_agg(content, chr(10) ORDER BY o) AS body
 FROM (SELECT parse_filename(filename, true) AS n, content
       FROM read_text('*.sql')),
-     (VALUES ('hotspots', 'geojson'), ('sites', 'sites')) a(f, l),
-     LATERAL (SELECT list_position(['args', 'hotspots', 'box', l], n) AS o)
+     (VALUES ('hotspots', '', 'geojson'), ('sites', '', 'sites'),
+             ('s3_hotspots', 's3', 'geojson'), ('s3_sites', 's3', 'sites'))
+       a(f, p, l),
+     LATERAL (SELECT list_position(list_transform(['args', 'hotspots',
+       'box', l], lambda x: p || x), n) AS o)
 WHERE o IS NOT NULL GROUP BY f;
-CREATE MACRO call(q) AS regexp_extract(q, '^FROM (hotspots|sites)\(' ||
+CREATE MACRO call(q) AS regexp_extract(q,
+  '^FROM (hotspots|sites|s3_hotspots|s3_sites)\(' ||
   '([-0-9.]+), ?([-0-9.]+), ?([-0-9.]+), ?([-0-9.]+)' ||
   '(?:, ?''([0-9-]{10}|\.\.)'', ?''([0-9-]{10}|\.\.)'')?\)$',
   ['f', 'w', 's', 'e', 'n', 'a', 'b']);

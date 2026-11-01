@@ -18,14 +18,20 @@ You can use burnoff in two ways:
 
 The service speaks [Quack](https://duckdb.org/docs/2.0/quack/overview),
 DuckDB's client-server protocol, at `quack:dev.datadesk.eco:443` with the
-token `burnoff`. It accepts two queries and refuses all others:
+token `burnoff`. It accepts four queries and refuses all others:
 
 ```sql
 FROM hotspots(w, s, e, n[, 'a', 'b'])
 FROM sites(w, s, e, n[, 'a', 'b'])
+FROM s3_hotspots(w, s, e, n[, 'a', 'b'])
+FROM s3_sites(w, s, e, n[, 'a', 'b'])
 ```
 
-- `w, s, e, n`: longitude and latitude, at most 0.44° by 0.25°.
+The first two are Sentinel-2's, by day; the `s3_` ones are Sentinel-3's,
+by night (below).
+
+- `w, s, e, n`: longitude and latitude, at most 0.44° by 0.25° (1° by 1°
+  for `s3_`).
 - `'a', 'b'`: the dates, as ISO dates. Use `'..'` for an open end. The
   default is the last 90 days.
 
@@ -66,6 +72,24 @@ dates in each site. Its properties are `id`,
 `looks` (`[[date, cloud], …]` for the 640 m square under the site),
 `detections` (the brightest detection of each date, with its pixels)
 and `detection_count`.
+
+`s3_hotspots` and `s3_sites` are the same for Sentinel-3 SLSTR by night
+(the night detector, below), at its 500 m scale:
+
+- `s3_hotspots`: a `look` for each granule that saw the box by night,
+  its `date` the local evening it falls in and `clear` the clear share of
+  the box's pixels, or an `error`; and a point `hotspot` for each
+  detection, with its radiant heat `rh` (MW), `temperature` (K),
+  `pixels` and `confirmed`.
+- `s3_sites`: sites from all the S3 hotspots the service holds, as for
+  Sentinel-2 but at 750 m: a join is not made if it would put two
+  hotspots of the same granule in one site. The `id` is the mean place
+  rounded to 250 m (`s3:<lat>,<lon>`). It moves more than Sentinel-2's as
+  nights are added (Sentinel-3A places a flare about 250 m east and 3B
+  about 350 m west), so join a site that comes back within about 600 m.
+  `looks` is `[[date, cloud], …]` for the 0.02° square under the site, the
+  clearest granule a night; `detections`, a night's hotspots of the site in
+  its brightest granule, summed (`rh`, `pixels`, `hotspots`).
 
 A new area takes some seconds, because the service reads each scene.
 An area that the service has already read comes back in less than a
@@ -164,7 +188,7 @@ from s3_hotspots(ST_MakeEnvelope(51.4, 25.8, 51.7, 26.0), '2025-01-01',
   twice gives only the granules of its newest baseline.
 - `s3_detect(dir, w, s, e, n [, thresholds])` detects in one granule (its
   `.SEN3` directory) over a lon/lat box. It gives `sza`, `clear`, an
-  `error` and the `hotspots`. A granule where the sun is up at the box
+  `error`, the `hotspots` and the `squares`. A granule where the sun is up at the box
   (`sza` under `sza_min`, 90°) has no hotspots and no `clear`. For a box
   under 10° it is not read at all.
 - `s3_flares(g, t0, t1 := today, t_min := 1500, min_passes := 5)` gives
@@ -198,7 +222,11 @@ hotspot. Each hotspot has:
   This is Caseiro et al.'s high-accuracy class.
 
 `clear` is the share of the box's other pixels on which none of the
-cloud tests in `cloud_bits` (the thermal ones, by default) fired.
+cloud tests in `cloud_bits` (the thermal ones, by default) fired. `squares`
+gives the same for each square of a grid of `square` degrees (0.02°, about
+2 km, by default) that the box's pixels fall in: its south-west corner
+(`lon`, `lat`), its `pixels` and their `clear` share. A site's square says
+how clearly that pass saw the site.
 
 The detector reads only parts of each granule. It reads the file heads,
 then the tie-point grid (1.7 MB), which places the box in the image. Then

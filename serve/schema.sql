@@ -22,3 +22,23 @@ CREATE TABLE IF NOT EXISTS db.hotspots (
   lat DOUBLE, max_b12 DOUBLE, avg_b12 DOUBLE, peak_b11 DOUBLE, ratio DOUBLE,
   peakedness DOUBLE, pixels INTEGER, radiance DOUBLE, saturated INTEGER,
   px VARCHAR, cell VARCHAR, v VARCHAR);
+
+-- sentinel-3 (s3*.sql). s3_granules: the slstr l1b granules cdse's catalogue
+-- lists, with its bbox of each, searched a 1° square and a day at a time
+-- (s3_searched: a day's search is kept once the day is three days gone).
+-- s3_cells: each 0.1° cell (i, j: floor of lon and lat × 10) a granule's
+-- read covered, by night or not: the sun's zenith, the clear share of its
+-- pixels, and squares, its 5 × 5 squares of 0.02° from the south-west, row
+-- by row, each [pixels, clear] or null where no pixel fell, as json.
+-- s3_hotspots: those of each cell. both kept under v, as s2's are
+CREATE TABLE IF NOT EXISTS db.s3_granules (
+  granule VARCHAR, t VARCHAR, dir VARCHAR, w DOUBLE, s DOUBLE, e DOUBLE,
+  n DOUBLE);
+CREATE TABLE IF NOT EXISTS db.s3_searched (sq VARCHAR, day VARCHAR);
+CREATE TABLE IF NOT EXISTS db.s3_cells (
+  t VARCHAR, granule VARCHAR, i INTEGER, j INTEGER, v VARCHAR, sza DOUBLE,
+  pixels INTEGER, clear DOUBLE, squares VARCHAR);
+CREATE TABLE IF NOT EXISTS db.s3_hotspots (
+  t VARCHAR, granule VARCHAR, i INTEGER, j INTEGER, lon DOUBLE, lat DOUBLE,
+  pixels INTEGER, s5 DOUBLE, s6 DOUBLE, temperature DOUBLE, rh DOUBLE,
+  confirmed BOOLEAN, saturated BOOLEAN, v VARCHAR);
