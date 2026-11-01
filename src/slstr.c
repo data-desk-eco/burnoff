@@ -249,10 +249,13 @@ typedef struct s3k {
   long long at;   // the chunk's place in its file
   int k;          // and its variable
   unsigned char *b;
+  unsigned *h;    // its count of dn, for a band's threshold
+  int counted;    // once h is made
 } s3k;
 
 static void s3kfree(job *j) {
-  for (s3k *c = j->k3, *n; c; c = n) n = c->next, free(c->b), free(c);
+  for (s3k *c = j->k3, *n; c; c = n)
+    n = c->next, free(c->b), free(c->h), free(c);
   j->k3 = NULL;
 }
 
@@ -277,24 +280,39 @@ static const char *unchunk(job *j, int k, const var *v, int i,
         for (int c = 0; c < v->es; c++) b[q * v->es + c] = a[c * m + q];
     if (!e && j->x->keep) {
       s3k *c = malloc(sizeof *c);
-      *c = (s3k){j->k3, v->ka[i], k, b}, j->k3 = c;
+      *c = (s3k){j->k3, v->ka[i], k, b, h ? calloc(65536, sizeof *h) : NULL,
+                 0};
+      j->k3 = held = c;
       if (b != a) free(a);
       a = NULL;
     }
   }
-  for (int r = 0; !e && r < MIN(v->ch, v->h - v->kr[i]); r++)
-    for (int c = 0; c < MIN(v->cw, v->w - v->kc[i]); c++) {
+  // a held chunk's count is made once: after it, only the window is read
+  int whole = h && !(held && held->counted), rh = MIN(v->ch,
+      v->h - v->kr[i]), cw = MIN(v->cw, v->w - v->kc[i]);
+  unsigned *hc = held && held->h ? held->h : h;
+  if (h && held && held->h && !whole)
+    for (int q = 0; q < 65536; q++) h[q] += held->h[q];
+  int ra = whole ? 0 : MAX(r0 - v->kr[i], 0), rb = whole ? rh
+         : MIN(r1 - v->kr[i], rh), ca = whole ? 0 : MAX(c0 - v->kc[i], 0),
+      cb = whole ? cw : MIN(c1 - v->kc[i], cw);
+  for (int r = ra; !e && r < rb; r++)
+    for (int c = ca; c < cb; c++) {
       const unsigned char *s = b + ((size_t)r * v->cw + c) * v->es;
       long long u = v->fl ? 0 : le(s, v->es);
       double x = v->fl ? real(s, v->es)
                : v->sg && v->es < 8 && u >> (8 * v->es - 1)
                  ? u - (1ll << 8 * v->es) : u;
       int y = r + v->kr[i], w = c + v->kc[i];
-      if (h && x != v->fill) h[(unsigned short)u]++;
+      if (whole && x != v->fill) hc[(unsigned short)u]++;
       if (y >= r0 && y < r1 && w >= c0 && w < c1)
         o[(size_t)(y - r0) * (c1 - c0) + w - c0] =
           x == v->fill ? NAN : x * v->sc + v->of;
     }
+  if (whole && hc != h) {   // counted into the held chunk: then to h
+    for (int q = 0; q < 65536; q++) h[q] += hc[q];
+    held->counted = 1;
+  }
   if (a) {   // not held
     if (b != a) free(b);
     free(a);
