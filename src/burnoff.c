@@ -1439,6 +1439,8 @@ typedef struct row {
   double box[4], th[NT], org[3];   // org: b12's origin and pixel
   res r;
   struct sj *x;                    // or slstr's job
+  struct row *same;                // the next row of x's granule, which
+  int follow;                      // follows this one on its worker
   const char *e;
   int *left;
   pthread_mutex_t *m;
@@ -1461,13 +1463,18 @@ static void *worker(void *_) {
     if (!(qh = w->next)) qt = NULL;
     pthread_mutex_unlock(&qm);
     __atomic_add_fetch(&busy, 1, __ATOMIC_RELAXED);
-    if (!w->e && w->x) {
+    if (w->x) {   // a granule's boxes, one after another, sharing its reads
       job j = {0};
-      s3start(&j, w->x);
-      for (int s; (s = step(&j));)
-        if (s == READ) fetch(&x, j.rq, j.nr);
-      w->e = j.e;
-      end(&j), s3end(w->x);
+      for (row *v = w; v; v = v->same) {
+        if (v->e) continue;
+        j.st = 0, j.e = NULL, j.nq = 0;
+        s3start(&j, v->x);
+        for (int s; (s = step(&j));)
+          if (s == READ) fetch(&x, j.rq, j.nr);
+        v->e = j.e;
+        s3end(v->x);
+      }
+      end(&j);
     } else if (!w->e) {
       job j = {0};
       start(&j, w->url, w->box, w->th);
@@ -1536,7 +1543,7 @@ static void run(row *rs, idx_t n) {
   pthread_once(&once, init);
   pthread_mutex_lock(&qm);
   for (idx_t i = 0; i < n; i++)
-    if (rs[i].url) {
+    if (rs[i].url && !rs[i].follow) {
       rs[i].left = &left, rs[i].m = &m, rs[i].c = &c, left++;
       if (qt) qt->next = &rs[i]; else qh = &rs[i];
       qt = &rs[i];
@@ -1625,8 +1632,9 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
   for (idx_t i = 0; i < n; i++) {
     row *w = &rs[i];
     le[i] = (duckdb_list_entry){o, 0}, lq[i] = (duckdb_list_entry){oq, 0};
-    if (!w->url) {
-      duckdb_validity_set_row_invalid(mo, i);
+    if (!w->url) {   // its fields null too: duckdb reads a field alone
+      uint64_t *ms[] = {mo, mc, me, ml, mq};
+      for (int k = 0; k < 5; k++) duckdb_validity_set_row_invalid(ms[k], i);
       continue;
     }
     if (isnan(w->r.clear)) duckdb_validity_set_row_invalid(mc, i);

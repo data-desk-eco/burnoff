@@ -62,13 +62,23 @@ ext/wgpu:
 	unzip -q ext/wgpu.zip 'include/*' 'lib/*.a' -d $@ && rm ext/wgpu.zip
 
 # loads, defines its macros and gives a failed row its error, offline; and
-# a day granule is read not at all
+# a day granule is read not at all; and a granule's boxes in one chunk
+# each get their own answer
 test: $(E)
 	duckdb -unsigned -c "install spatial; load spatial; load '$(CURDIR)/$(E)'; select \
 	  coalesce(s2_detect('file:///none', 0, 0, 1, 1).error, error('no error')), \
+	  if((select count(s2_detect(d, 0, 0, 1, 1).error) from (values (null)) \
+	    t(d)) = 0, 'null', error('a null row has an error')), \
 	  coalesce(s3_detect('file:///none', 0, 0, 1, 1).error, error('no error')), \
 	  if(s3_detect('file:///S3A_SL_1_RBT____20250115T090000_x.SEN3', 0, 0, \
 	    1, 1).error is null, 'day', error('read by day'))"
+	duckdb -unsigned -c "install spatial; load spatial; load '$(CURDIR)/$(E)'; \
+	  select if(count(r.error) = 3 and count(r.sza) = 3 and count(*) = 4, \
+	    'one granule, three boxes, and a null row null field by field', \
+	    error('boxes of a granule')) from (select s3_detect(d, 0, 0, 1, 1) r \
+	    from (values ('file:///S3A_SL_1_RBT____20250115T210000_x.SEN3'), \
+	    ('file:///S3A_SL_1_RBT____20250115T210000_x.SEN3'), (null), \
+	    ('file:///S3A_SL_1_RBT____20250115T210000_x.SEN3')) t(d))"
 
 # into ~/.duckdb/extensions, so `load burnoff` works from any directory
 install: $(E)

@@ -33,7 +33,9 @@ static const char *TK3[] = {"s5_gain", "s6_gain", "sza_min", "cloud_bits",
 static const double TD3[] = {.89, .80, 90, 0x3fc0, 500, 5000, 1};
 enum { G5, G6, SZAMIN, CBITS, TMIN, TMAX, EXACT, NT3 };
 
-#define HEAD3 24576   // a file's head: superblock, object headers, heaps
+// a file's head: superblock, object headers, heaps. geodetic_an's links lie
+// past 27 KB, so 24 KB took a second round on every granule
+static const int HEAD3[] = {24576, 24576, 24576, 24576, 24576, 24576, 40960};
 #define TREE3 2616    // a v1 b-tree node of chunks, 2-d, k = 32
 #define MARGIN 4      // the background's 2 pixels and the bands' offsets
 #define APIX 2.5e5    // a pixel's m², the image grid's 500 m on the ground
@@ -99,7 +101,13 @@ typedef struct sj {
   char *ok;            // each cluster confirmed in S6
   h3 *d;
   int nd, cap, in;
+  int keep;            // another box of the granule follows: drop no file
 } sj;
+
+// file f done with, unless another box of the granule will read it again
+static void drop3(job *j, int f) {
+  if (!j->x->keep) forget(j, j->x->u[f]);
+}
 
 // an attribute message's value, if it is named nm: v1 pads its parts to 8
 // bytes, v2 does not, v3 adds an encoding byte
@@ -461,7 +469,7 @@ static void km(const sj *x, int f, int i, int j, int *r, int *c) {
 static const char *s3window(job *j) {
   sj *x = j->x;
   int th = x->v[LAT].h, tw = x->v[LAT].w;
-  forget(j, x->u[0]);   // each stage drops the files it is done with
+  drop3(j, 0);   // each stage drops the files it is done with
   if (!x->r1) {
     double *la = x->ll[0], *lo = x->ll[1], *b = x->box;
     int r0 = x->H, r1 = 0, c0 = x->W, c1 = 0;
@@ -510,7 +518,7 @@ static const char *s3cands(job *j) {
   int ww = x->c1 - x->c0;
   size_t m = (size_t)(x->r1 - x->r0) * ww;
   float *s5 = x->b[S5], *xc = x->b[X5], *cl = x->b[CLD];
-  forget(j, x->u[1]), forget(j, x->u[5]);
+  drop3(j, 1), drop3(j, 5);
   if (!x->cd) {
     double lon, lat;
     long in = 0, clr = 0;
@@ -580,7 +588,7 @@ static const char *s3clus(job *j) {
   int nc = x->nc, *cd = x->cd, ww = x->c1 - x->c0, need = 0;
   if (!x->mb) {
     int *par = malloc(nc * 4), *p;
-    for (int f = 0; f < NF; f++) forget(j, x->u[f]);
+    for (int f = 0; f < NF; f++) drop3(j, f);
     for (int k = 0; k < nc; k++) {
       par[k] = k;
       for (int q = k - 1; q >= 0 && cd[k] - cd[q] <= ww + 1; q--)
@@ -695,7 +703,7 @@ static const char *s3stage(job *j) {
 static void s3start(job *j, sj *x) {
   j->x = x, j->gap = 1 << 20, x->clear = x->sza = NAN;
   for (int f = 0; f < NF; f++)
-    if (x->hn[f] = HEAD3, asprintf(&x->u[f], "%s/%s.nc", x->dir, F3[f]) < 0)
+    if (x->hn[f] = HEAD3[f], asprintf(&x->u[f], "%s/%s.nc", x->dir, F3[f]) < 0)
       x->u[f] = NULL;
 }
 
@@ -707,6 +715,15 @@ static void s3end(sj *x) {
   free(x->ll[0]), free(x->ll[1]), free(x->cd), free(x->at), free(x->mb);
   free(x->ok);
   x->ll[0] = x->ll[1] = NULL, x->cd = x->at = x->mb = NULL, x->ok = NULL;
+}
+
+// rows by granule, then by place in the chunk; a null row last
+static __thread row *qrs;
+static int bydir(const void *a, const void *b) {
+  idx_t i = *(const idx_t *)a, k = *(const idx_t *)b;
+  const char *u = qrs[i].url, *v = qrs[k].url;
+  int c = !u || !v ? !u - !v : strcmp(u, v);
+  return c ? c : (i > k) - (i < k);
 }
 
 #define NH 9   // a hotspot's fields
@@ -736,6 +753,18 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
     }
     if (!w->e && x->box[3] <= x->box[1]) w->e = "empty box";
   }
+  // the rows of one granule run as one job on one worker, each box after
+  // the last, so the heads, the tie-point grid and any chunk two boxes share
+  // are read once: rows in the granule's order chain as they come
+  idx_t *ix = malloc((n ? n : 1) * sizeof *ix);
+  for (idx_t i = 0; i < n; i++) ix[i] = i;
+  qrs = rs, qsort(ix, n, sizeof *ix, bydir);
+  for (idx_t i = 1; i < n; i++) {
+    row *a = &rs[ix[i - 1]], *b = &rs[ix[i]];
+    if (a->url && b->url && !strcmp(a->url, b->url))
+      a->same = b, b->follow = 1, a->x->keep = 1;
+  }
+  free(ix);
   run(rs, n);
   // sza, clear, error and the hotspots; a null input row is a null result
   duckdb_vector c[4];
@@ -758,8 +787,9 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
     row *w = &rs[i];
     sj *x = &xs[i];
     le[i] = (duckdb_list_entry){o, 0};
-    if (!w->url) {
+    if (!w->url) {   // its fields null too: duckdb reads a field alone
       duckdb_validity_set_row_invalid(mo, i);
+      for (int k = 0; k < 4; k++) duckdb_validity_set_row_invalid(mc[k], i);
       continue;
     }
     double s[2] = {x->sza, x->clear};

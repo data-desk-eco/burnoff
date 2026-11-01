@@ -69,7 +69,8 @@ heap links and attributes (one direct block), v3 chunked layout, a v1
 B-tree leaf, shuffle and deflate (zlib). Anything else is an error.
 
 - A job's stages: the sun (`sza_min`), then the heads of 7 files (24 KB,
-  read further while a link is not found); every chunk index with the
+  geodetic_an's 40 KB, as its links lie past 27 KB; read further while a
+  link is not found); every chunk index with the
   tie-point grid; S5, its exception flags and the cloud mask over the
   box; if S5 has a hot pixel, S6 and the per-pixel geolocation of the
   chunks under hot pixels; the clusters; S7 and F1 (one 2.4 MB chunk
@@ -93,6 +94,12 @@ B-tree leaf, shuffle and deflate (zlib). Anything else is an error.
   bit 16 (saturated) always is. The night cloud tests flag most hot
   pixels (58% of a gulf granule's, `medium_high`), so `clear` leaves hot
   pixels out and the mask never removes a detection.
+- The rows of one `s3_detect` chunk that name one granule run as one job
+  on one worker, box after box, sharing its reads (`same`, `keep`): the
+  heads, tie points and any chunk two boxes share are read once. Order a
+  many-site query by granule so they share a chunk. 8 gulf sites over 24
+  granules: 953 MB and 4.05 rounds a box to 300 MB and 0.69, 22 s to 8,
+  every field the same.
 - Memory: a whole-granule box holds ~250 MB a job (float rasters of S5,
   its flags, S6 and the hot pixels' places). The jump host runs out at 8
   jobs beside the service; use `BURNOFF_THREADS`.
