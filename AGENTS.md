@@ -10,6 +10,8 @@ the code. `make test` checks that the extension loads, offline.
 - `src/burnoff.c`: the detector and its DuckDB and curl host.
 - `src/j2k.c`: the JPEG 2000 decoder (headers, packets, tier-2, the
   CPU's tier-1 and inverse 5/3 DWT).
+- `src/slstr.c`: the Sentinel-3 SLSTR night detector (`s3_detect`), on
+  the same jobs and host; native only, as eodata needs its keys.
 - `web/j2k.wgsl`: tier-1, the DWT and B12's screen on the GPU, for
   `src/gpu.c` (wgpu-native) and `web/gpu.js` (WebGPU).
 - `src/burnoff.sql`: macros run on load (`s2_scenes`, `s2_hotspots`).
@@ -57,6 +59,43 @@ shape the L1C baselines do not use. The cell table (`table()`) turns
 `screen()`'s comparisons into DN cuts so the GPU matches; change both
 sides together. Over file://, run each date's boxes in its own process:
 a header cached from another date can give `tile-part not found`.
+
+## The night detector
+
+`slstr.c` reads SLSTR L1B (`SL_1_RBT`) granules, netCDF-4 files of a few
+deflated chunks per variable (S5: 4 of 1201x1500), with its own reader
+of the HDF5 that they use: superblock v2, v2 object headers, compact or
+heap links and attributes (one direct block), v3 chunked layout, a v1
+B-tree leaf, shuffle and deflate (zlib). Anything else is an error.
+
+- A job's stages: the sun (`sza_min`), then the heads of 7 files (24 KB,
+  read further while a link is not found); every chunk index with the
+  tie-point grid; S5, its exception flags and the cloud mask over the
+  box; if S5 has a hot pixel, S6 and the per-pixel geolocation of the
+  chunks under hot pixels; the clusters; S7 and F1 (one 2.4 MB chunk
+  each) only if S6 leaves a cluster unconfirmed; the hotspots. A stage
+  drops the files it is done with.
+- The tie-point grid places the box only: an's row i is its row i/2 and
+  column j its column `to_tx - (to_an - j) / 32` (track offsets). It is
+  ~200-400 m off on flat ground and up to 2 km over hills (terrain
+  parallax), so hotspots are placed by `geodetic_an`.
+- `start_offset` changed meaning between baselines (2017's an grid gives
+  the 1 km value, 2025's twice it): rows map by index, not by it.
+- Before baseline 004, F1 is `F1_BT_in` (1 km in grid) not `F1_BT_fn`;
+  a 404 on `F1_BT_fn` switches to it.
+- A band's threshold is Caseiro et al.'s lowest unheld DN, but from the
+  histogram's mode, not their 1000th brightest pixel (which in a gulf
+  granule lies among the flares), and over the chunks read: holding 1/w
+  of the granule, w empty DN levels in a row (as likely, for Poisson
+  counts, as one level over the whole). On a whole 2025 gulf granule
+  this equals their value (S5 0.2303).
+- Exception bit 2 (pixel absent, a neighbour's copy) is no candidate;
+  bit 16 (saturated) always is. The night cloud tests flag most hot
+  pixels (58% of a gulf granule's, `medium_high`), so `clear` leaves hot
+  pixels out and the mask never removes a detection.
+- Memory: a whole-granule box holds ~250 MB a job (float rasters of S5,
+  its flags, S6 and the hot pixels' places). The jump host runs out at 8
+  jobs beside the service; use `BURNOFF_THREADS`.
 
 ## The browser
 
@@ -134,3 +173,24 @@ with 2 pairs of sites on one id (30 m: 89-90%, more sites split; 60 m:
 0.05° and in a June-August window; from detections to June alone, 49 of
 52 ids survive the rest of the year, holding 97% of their detections.
 The densest box (Kerman, ~1,000 detections) takes 0.45 s.
+
+Night detector, 2026-10-31, on the jump host (6 jobs, 2 DuckDB
+threads). Against Caseiro et al.'s 2017 flaring cells (GFlaringS3, ECCAD
+doi:10.25326/19: Sentinel-3A, by night, 0.025° cells with a maximum over
+1500 K and more than 5 confirmed detections), from 13,044 S3A granules of
+2017 (0 errors): our cells by the same rule hold, within a cell, 738 of
+their 770 in the Persian Gulf (47-57 E, 23-32.5 N), 122 of 125 in the
+Niger Delta (5-7.5 E, 4-6.5 N), 40 of 40 at Punta de Mata, 8 of 8 on
+Yamal and 103 of 112 at 33 random sites (0.1° boxes); of ours, 824 of
+833, 124 of 138, 61 of 63, 8 of 11 and 107 of 109 are theirs. Nights a
+cell: Ras Laffan 134 (theirs 109), Punta de Mata 130 (49), the
+Iraq-Iran border 118 (160). Mean temperatures at our sites: 1755-2220 K
+(10-90%); theirs are 950-2250 K. 99.7% of hotspots are confirmed.
+Against ESA's SL_2_FRP (`FRP_an`, the same 63 night passes over the
+gulf, January 2025): 5,078 of our 5,323 hotspots lie within 1 km of
+theirs (median 147 m); theirs are pixels, not clusters, and the 18%
+we miss are dim (median FRP_SWIR 1.4 MW, against 3.8 for those found).
+Reads: 6.4 MB a granule for a 0.1° flare site (3.8 MB without a hot
+pixel: heads, tie points, S5's chunk with its flags and the mask), 19
+MB for the whole gulf box; 3.3-4.6 granules a second. A whole granule
+decodes in 0.4 s on an M2.

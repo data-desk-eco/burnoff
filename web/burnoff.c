@@ -135,7 +135,7 @@ EMSCRIPTEN_KEEPALIVE job *detect(const char *url, double w, double s,
   const char *fn = strrchr(url, '/') ? strrchr(url, '/') + 1 : url;
   double t[NT];
   memcpy(t, TD, sizeof t);
-  const char *er = params(th, t);
+  const char *er = params(th, t, TK, NT);
   start(&x->j, url, NULL, t);
   *x = (web){x->j, {w, s, e, n}, {INFINITY, INFINITY, -INFINITY, -INFINITY},
              atoi(fn + 1), fn[3] < 'N', part, parts};

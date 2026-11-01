@@ -86,15 +86,16 @@ enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
 #define WHOLE (1 << 20)
 
 // "name=value,name=value" over t
-static const char *params(const char *s, double *t) {
+static const char *params(const char *s, double *t, const char **tk,
+                          int nt) {
   while (s && *s) {
     const char *eq = strchr(s, '='), *end = strchr(s, ',');
     int k = 0;
     if (!eq || (end && eq > end)) return "expected name=value";
-    while (k < NT && (strlen(TK[k]) != (size_t)(eq - s) ||
-                      strncmp(TK[k], s, eq - s)))
+    while (k < nt && (strlen(tk[k]) != (size_t)(eq - s) ||
+                      strncmp(tk[k], s, eq - s)))
       k++;
-    if (k == NT) return "unknown threshold";
+    if (k == nt) return "unknown threshold";
     t[k] = atof(eq + 1);
     s = end ? end + 1 : NULL;
   }
@@ -273,6 +274,7 @@ typedef struct job {
   res r;
   const char *e;
   int (*fit)(struct job *);
+  struct sj *x;                   // slstr's job (slstr.c), or NULL
   int st, budget, nr, rcap, nq, qcap, nw, cb;   // cb: by code-block (slow)
   long long gap;
   band bd[3];
@@ -1250,16 +1252,19 @@ enum { DONE, READ, DECODE };
 // (j->dq), which the host may run and mark done, or DONE, with j->e set on
 // a failure. decodes left undone are run here; nothing is read or decoded
 // twice
+static const char *s3stage(job *j);   // slstr.c's stages, and their number
+#define NS3 6
 static int step(job *j) {
+  int ns = j->x ? NS3 : sizeof stage / sizeof *stage;
   for (rd *r = j->rq; r < j->rq + j->nr; r++)
     if (r->ok && r->hi >= 0 && (r->lo != r->wl || r->hi != r->wh)) fill(j, r);
   for (int i = 0; i < j->nq && !j->e; i++)
     if (!j->dq[i].done) j->e = dodec(j, &j->dq[i]);
   j->nq = 0;
-  while (!j->e && j->st < (int)(sizeof stage / sizeof *stage)) {
-    const char *e = stage[j->st](j);
+  while (!j->e && j->st < ns) {
+    const char *e = j->x ? s3stage(j) : stage[j->st](j);
     if (e == LACK) return READ;
-    if (e == FIN) j->st = sizeof stage / sizeof *stage;
+    if (e == FIN) j->st = ns;
     else if (e) j->e = e;
     else j->st++;
     if (j->nq) return DECODE;
@@ -1294,6 +1299,11 @@ static void end(job *j) {
   for (size_t i = 0; i < sizeof p / sizeof *p; i++) free(p[i]);
   drop(&j->s), drop(&j->mk);
 }
+
+// slstr's night-time detector (slstr.c): eodata alone, not the browser's
+#ifdef __EMSCRIPTEN__
+static const char *s3stage(job *j) { return "no slstr in the browser"; }
+#endif
 
 #ifndef __EMSCRIPTEN__
 #define DUCKDB_EXTENSION_NAME burnoff
@@ -1428,6 +1438,7 @@ typedef struct row {
   char *url;
   double box[4], th[NT], org[3];   // org: b12's origin and pixel
   res r;
+  struct sj *x;                    // or slstr's job
   const char *e;
   int *left;
   pthread_mutex_t *m;
@@ -1436,6 +1447,8 @@ typedef struct row {
 static row *qh, *qt;
 static pthread_mutex_t qm = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t qc = PTHREAD_COND_INITIALIZER;
+
+static void s3start(job *j, struct sj *x), s3end(struct sj *x);
 
 static void *worker(void *_) {
   ctx x;
@@ -1448,7 +1461,14 @@ static void *worker(void *_) {
     if (!(qh = w->next)) qt = NULL;
     pthread_mutex_unlock(&qm);
     __atomic_add_fetch(&busy, 1, __ATOMIC_RELAXED);
-    if (!w->e) {
+    if (!w->e && w->x) {
+      job j = {0};
+      s3start(&j, w->x);
+      for (int s; (s = step(&j));)
+        if (s == READ) fetch(&x, j.rq, j.nr);
+      w->e = j.e;
+      end(&j), s3end(w->x);
+    } else if (!w->e) {
       job j = {0};
       start(&j, w->url, w->box, w->th);
       for (int s; (s = step(&j));)
@@ -1507,18 +1527,34 @@ static char *str(duckdb_vector v, idx_t i) {
   return strndup(duckdb_string_t_data(s), duckdb_string_t_length(*s));
 }
 
+// rows with a url run on the pool, back once all are done
+static void run(row *rs, idx_t n) {
+  static pthread_once_t once = PTHREAD_ONCE_INIT;
+  int left = 0;
+  pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+  pthread_cond_t c = PTHREAD_COND_INITIALIZER;
+  pthread_once(&once, init);
+  pthread_mutex_lock(&qm);
+  for (idx_t i = 0; i < n; i++)
+    if (rs[i].url) {
+      rs[i].left = &left, rs[i].m = &m, rs[i].c = &c, left++;
+      if (qt) qt->next = &rs[i]; else qh = &rs[i];
+      qt = &rs[i];
+    }
+  pthread_cond_broadcast(&qc);
+  pthread_mutex_unlock(&qm);
+  pthread_mutex_lock(&m);
+  while (left) pthread_cond_wait(&c, &m);
+  pthread_mutex_unlock(&m);
+}
+
 static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
                       duckdb_vector out) {
-  static pthread_once_t once = PTHREAD_ONCE_INIT;
   idx_t n = duckdb_data_chunk_get_size(in), cols =
     duckdb_data_chunk_get_column_count(in), total = 0;
   duckdb_vector v[6];
   row *rs = calloc(n ? n : 1, sizeof *rs);
-  int left = 0;
-  pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
-  pthread_cond_t c = PTHREAD_COND_INITIALIZER;
   (void)info;
-  pthread_once(&once, init);
   for (idx_t k = 0; k < cols; k++) v[k] = duckdb_data_chunk_get_vector(in, k);
   for (idx_t i = 0; i < n; i++) {
     row *w = &rs[i];
@@ -1531,24 +1567,13 @@ static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,
     memcpy(w->th, TD, sizeof w->th);
     if (cols > 5 && valid(v[5], i)) {
       char *p = str(v[5], i);
-      w->e = params(p, w->th);
+      w->e = params(p, w->th, TK, NT);
       free(p);
     }
     if (!w->e && (w->box[2] <= w->box[0] || w->box[3] <= w->box[1]))
       w->e = "empty box";
-    w->left = &left, w->m = &m, w->c = &c, left++;
   }
-  pthread_mutex_lock(&qm);
-  for (idx_t i = 0; i < n; i++)
-    if (rs[i].url) {
-      if (qt) qt->next = &rs[i]; else qh = &rs[i];
-      qt = &rs[i];
-    }
-  pthread_cond_broadcast(&qc);
-  pthread_mutex_unlock(&qm);
-  pthread_mutex_lock(&m);
-  while (left) pthread_cond_wait(&c, &m);
-  pthread_mutex_unlock(&m);
+  run(rs, n);
 
   // clear, error and the hotspots list; a null input row is a null result
   duckdb_vector vc = duckdb_struct_vector_get_child(out, 0),
@@ -1676,6 +1701,8 @@ static duckdb_logical_type type(duckdb_type t) {
   return duckdb_create_logical_type(t);
 }
 
+#include "slstr.c"
+
 // burnoff.sql, as a string literal made by make
 static const char *macros =
 #include "burnoff.sql.h"
@@ -1736,6 +1763,7 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   if (ok == DuckDBSuccess) ok = duckdb_register_scalar_function(con, f);
   duckdb_destroy_scalar_function(&f), duckdb_destroy_logical_type(&vc);
   curl_global_init(CURL_GLOBAL_ALL);
+  if (ok == DuckDBSuccess) ok = s3_register(con);
   if (ok == DuckDBSuccess) ok = duckdb_query(con, macros, NULL);
   if (ok == DuckDBError) access->set_error(info, "could not register");
   return ok == DuckDBSuccess;

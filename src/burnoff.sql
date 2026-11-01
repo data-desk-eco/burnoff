@@ -85,3 +85,76 @@ from (
                              source := source))))
 where x >= sx and x < sx + 1e5 and y > sy - 1e5 and y <= sy
   and ST_Intersects(g, p);
+
+-- every SLSTR L1B (RBT) granule over a lon/lat geometry's bounds from t0 to
+-- t1 (today), newest first, by night (an ascending pass, about 22:00 local)
+-- unless night := false, from eodata alone: dir is the granule's .SEN3. an
+-- orbit (platform, cycle, relative orbit) processed twice is its newest
+-- baseline's granules alone, which can start at other times (2017's
+-- reprocessing cut new frames), and a granule processed twice its newest
+-- processing. each search spans the
+-- days that should half fill a 1000-granule page; a full page fails the
+-- query rather than lose granules
+create or replace macro s3_days(g) as
+greatest(1, floor(80 / (1 + (ST_XMax(g) - ST_XMin(g))
+                            * (ST_YMax(g) - ST_YMin(g)) / 50)))::int;
+
+create or replace macro s3_scenes(g, t0, t1 := current_date, night := true)
+as table
+select id, datetime, orbit, dir
+from (
+  select f ->> '$.id' id,
+         (f ->> '$.properties.datetime')::timestamp datetime,
+         f ->> '$.properties.sat:orbit_state' orbit,
+         regexp_replace(f ->> '$.assets.S5_radiance_an.href',
+                        '/S5_radiance_an.nc$', '') dir
+  from (select unnest((j -> '$.features')::json[]) f, j from (
+    select s2_get(unnest(list_transform(
+      generate_series(t0::date, t1::date, to_days(s3_days(g))),
+      lambda m: 'https://stac.dataspace.copernicus.eu/v1/search'
+        || '?collections=sentinel-3-sl-1-rbt-ntc&limit=1000'
+        || '&bbox=' || ST_XMin(g) || ',' || ST_YMin(g) || ','
+        || ST_XMax(g) || ',' || ST_YMax(g)
+        || '&datetime=' || strftime(m, '%Y-%m-%d') || 'T00:00:00Z/'
+        || strftime(least(m + to_days(s3_days(g) - 1), t1::date),
+                    '%Y-%m-%d') || 'T23:59:59Z'
+        || '&fields=id,properties.datetime,properties.sat:orbit_state,'
+        || 'assets.S5_radiance_an.href')))::json j))
+  where if(list_contains(list_transform((j -> '$.links')::json[],
+                                        lambda l: l ->> 'rel'), 'next'),
+           error('a catalogue search came back full: ask for less'), true))
+where not night or orbit = 'ascending'
+qualify id[-3:] = max(id[-3:]) over (partition by id[1:3], id[70:76])
+    and row_number() over (partition by id[1:3], id[17:31]
+                           order by id[49:63] desc) = 1
+order by datetime desc;
+
+-- the night-time hotspots in a lon/lat geometry from t0 to t1 (today), one
+-- row each, with the granule's sun and clear share of the box
+create or replace macro s3_hotspots(g, t0, t1 := current_date,
+                                    thresholds := '')
+as table
+select id scene, datetime, sza, clear, lon, lat, pixels, s5, s6,
+       temperature, rh, confirmed, saturated
+from (select id, datetime, r.sza, r.clear, unnest(r.hotspots, recursive := true)
+      from (select *, s3_detect(dir, ST_XMin(g), ST_YMin(g), ST_XMax(g),
+                                ST_YMax(g), thresholds) r
+            from s3_scenes(g, t0, t1 := t1)))
+where ST_Intersects(g, ST_Point(lon, lat));
+
+-- caseiro et al.'s flares (essd 2020): the 0.025° cells (by their centres)
+-- where hotspots from t0 to t1 reach over t_min K and are confirmed on more
+-- than min_passes passes (a platform's orbit). a year's is their test;
+-- biomass fires are cooler and seldom last
+create or replace macro s3_flares(g, t0, t1 := current_date, t_min := 1500,
+                                  min_passes := 5)
+as table
+select round((floor(lon / .025) + .5) * .025, 4) lon,
+       round((floor(lat / .025) + .5) * .025, 4) lat,
+       count(distinct scene[1:3] || scene[70:76]) filter (confirmed) passes,
+       count(*) hotspots, max(temperature) max_temperature,
+       median(rh) median_rh
+from s3_hotspots(g, t0, t1 := t1)
+group by all
+having max_temperature > t_min and passes > min_passes
+order by passes desc;

@@ -1,10 +1,11 @@
-# one c file over libcurl, with its own jpeg 2000 decoder (src/j2k.c). src/
-# holds duckdb v2.0.0's c extension headers; the extension targets the stable
-# c api v1.2.0, so it loads in any duckdb from 1.2 on
+# one c file over libcurl and zlib, with its own jpeg 2000 decoder
+# (src/j2k.c) and netcdf reader (src/slstr.c). src/ holds duckdb v2.0.0's c
+# extension headers; the extension targets the stable c api v1.2.0, so it
+# loads in any duckdb from 1.2 on
 PKGS = libcurl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
 CFLAGS += $(shell pkg-config --cflags $(PKGS))
-LDLIBS = $(shell pkg-config --libs $(PKGS)) -lpthread -lm
+LDLIBS = $(shell pkg-config --libs $(PKGS)) -lz -lpthread -lm
 SRC = src/burnoff.c
 PLATFORM ?= $(shell uname -sm | awk '{ \
 	os = $$1 == "Darwin" ? "osx" : tolower($$1); \
@@ -34,7 +35,8 @@ E = ext/burnoff.duckdb_extension
 # the shared library plus duckdb's metadata footer: a wasm-style custom
 # section header, eight 32-byte fields (last first) and 256 bytes left for a
 # signature
-$(E): src/burnoff.c src/j2k.c src/gpu.c ext/burnoff.sql.h ext/j2k.wgsl.h $(GPUDEP)
+$(E): src/burnoff.c src/j2k.c src/slstr.c src/gpu.c ext/burnoff.sql.h \
+  ext/j2k.wgsl.h $(GPUDEP)
 	$(CC) $(CFLAGS) -Iext -shared -fPIC $(SRC) $(LDLIBS) -o ext/burnoff.so
 	{ cat ext/burnoff.so; printf '\000\223\004\020duckdb_signature\200\004'; \
 	  for f in "" "" "" C_STRUCT $(VERSION) v1.2.0 $(PLATFORM) 4; do \
@@ -59,10 +61,14 @@ ext/wgpu:
 	curl -fsSL -o ext/wgpu.zip $(WURL)
 	unzip -q ext/wgpu.zip 'include/*' 'lib/*.a' -d $@ && rm ext/wgpu.zip
 
-# loads, defines its macros and gives a failed row its error, offline
+# loads, defines its macros and gives a failed row its error, offline; and
+# a day granule is read not at all
 test: $(E)
 	duckdb -unsigned -c "install spatial; load spatial; load '$(CURDIR)/$(E)'; select \
-	  coalesce(s2_detect('file:///none', 0, 0, 1, 1).error, error('no error'))"
+	  coalesce(s2_detect('file:///none', 0, 0, 1, 1).error, error('no error')), \
+	  coalesce(s3_detect('file:///none', 0, 0, 1, 1).error, error('no error')), \
+	  if(s3_detect('file:///S3A_SL_1_RBT____20250115T090000_x.SEN3', 0, 0, \
+	    1, 1).error is null, 'day', error('read by day'))"
 
 # into ~/.duckdb/extensions, so `load burnoff` works from any directory
 install: $(E)

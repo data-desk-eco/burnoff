@@ -3,7 +3,9 @@
 Burnoff detects hotspots, such as gas flares, in Sentinel-2 L1C imagery.
 It reads the JPEG 2000 files directly and decodes only the parts it needs.
 Each hotspot has a position, brightness, radiance and pixels. Each scene
-has a value that tells how clearly it saw the area.
+has a value that tells how clearly it saw the area. The extension also
+detects hotspots by night in Sentinel-3 SLSTR L1B granules, read in the
+same way from the netCDF files.
 
 You can use burnoff in two ways:
 
@@ -143,13 +145,77 @@ surroundings is a tenth or more of its rise in B12: sunlight reflected
 off roofs, glass and tanks, which a fire does not give. A large value
 turns the test off.
 
+### Night-time hotspots from Sentinel-3
+
+A second detector reads Sentinel-3 SLSTR L1B (`SL_1_RBT`) granules from
+eodata, by night. It needs eodata's keys, as `source := 'eodata'` does.
+
+```sql
+from s3_hotspots(ST_MakeEnvelope(51.4, 25.8, 51.7, 26.0), '2025-01-01',
+                 t1 := '2025-01-31');
+```
+
+- `s3_hotspots(g, t0, t1 := today, thresholds := '')` gives one row for
+  each hotspot in a lon/lat geometry from t0 to t1, with its granule's
+  `sza` (the sun's zenith angle at the box) and `clear` share.
+- `s3_scenes(g, t0, t1 := today, night := true)` gives the granules that
+  CDSE's catalogue lists over the bounds: by default only ascending
+  passes, which cross at about 22:00 local time. An orbit processed
+  twice gives only the granules of its newest baseline.
+- `s3_detect(dir, w, s, e, n [, thresholds])` detects in one granule (its
+  `.SEN3` directory) over a lon/lat box. It gives `sza`, `clear`, an
+  `error` and the `hotspots`. A granule where the sun is up at the box
+  (`sza` under `sza_min`, 90°) has no hotspots and no `clear`. For a box
+  under 10° it is not read at all.
+- `s3_flares(g, t0, t1 := today, t_min := 1500, min_passes := 5)` gives
+  Caseiro et al.'s flares: the 0.025° cells where the hotspots reach over
+  `t_min` K and are confirmed on more than `min_passes` passes (one
+  platform's orbit). Their test is a year of hotspots. Biomass fires are
+  cooler, and few burn for as long.
+
+The method is that of Caseiro et al. (2018, Remote Sensing 10:1118; 2020,
+ESSD 12:2137). At night, only heat gives radiance in the SWIR bands. In
+each band, a pixel is hot above the band's threshold: the lowest multiple
+of the band's radiance step, above its background, that no pixel takes.
+Hot S5 pixels (1.61 µm, 500 m) that touch, diagonally too, make one
+hotspot. Each hotspot has:
+
+- `lon`, `lat`: the mean place of its pixels, weighted by their S5
+  radiance, from the product's own per-pixel geolocation. With
+  `exact=0`, the place comes from the tie-point grid instead. That place
+  is a few hundred metres off on flat ground and up to 2 km off over
+  hills, but it saves 2.7 MB of reads for each 400 by 500 km of image
+  with a hotspot in it.
+- `pixels`, and `s5`, `s6`: the sums of its S5 and S6 radiance over the
+  background (the median of the pixels two beyond it), scaled by 0.89 and
+  0.80 for the bands' known overestimate (`s5_gain`, `s6_gain`).
+- `temperature`: the temperature at which Planck's law gives the ratio
+  of `s5` to `s6`. A hotspot outside 500-5000 K is dropped as spurious. A
+  saturated one (`saturated`) has none.
+- `rh`: its radiant heat in MW, σT⁴ times the fire area that `s6` gives at
+  that temperature. Neither value is corrected for the atmosphere.
+- `confirmed`: S6 is hot under it too, or else S7 or F1 (3.74 µm, 1 km).
+  This is Caseiro et al.'s high-accuracy class.
+
+`clear` is the share of the box's other pixels on which none of the
+cloud tests in `cloud_bits` (the thermal ones, by default) fired.
+
+The detector reads only parts of each granule. It reads the file heads,
+then the tie-point grid (1.7 MB), which places the box in the image. Then
+it reads the S5 chunks under the box, with their exception flags and the
+cloud mask. Only when S5 holds a hot pixel does it read S6 and the
+geolocation of the hot pixels' chunks, and S7 and F1 only for a hotspot
+that S6 does not confirm. A small box takes four rounds of reads, or
+five.
+
 ### Build
 
-Requires a C compiler, `pkg-config` and libcurl (`libcurl4-openssl-dev` on
-Ubuntu). The JPEG 2000 decoder is burnoff's own, `src/j2k.c`. The build
-downloads wgpu-native into `ext/` so that the extension can decode on the
-GPU (Metal on macOS, Vulkan on Linux); `make GPU=0` builds without it.
-`make wasm` also needs emscripten.
+Requires a C compiler, `pkg-config`, libcurl and zlib
+(`libcurl4-openssl-dev` and `zlib1g-dev` on Ubuntu). The JPEG 2000
+decoder is burnoff's own, `src/j2k.c`. The build downloads wgpu-native
+into `ext/` so that the extension can decode on the GPU (Metal on macOS,
+Vulkan on Linux); `make GPU=0` builds without it. `make wasm` also needs
+emscripten.
 
 ```sh
 make              # ext/burnoff.duckdb_extension
@@ -211,3 +277,11 @@ and this build only when the API fails.
 - burnoff needs baseline N0400 or later, which has a raster cloud mask.
 - A search that fills the catalogue's 1000-scene page stops the query.
 - Hotspots in an overlap of two UTM zones are found in both.
+- The Sentinel-3 detector reads eodata only, so it needs eodata's keys,
+  and it does not run in the browser.
+- Its thresholds come from the chunks that it reads, a quarter of a
+  granule or more, not from the whole granule.
+- Its temperature uses S5 and S6 only, with no background or mid-infrared
+  term. At Caseiro et al.'s 2017 flares, the median of its mean
+  temperatures is 1964 K. Their modes are near 1200 and 1750 K.
+- A large box holds about 250 MB a granule in memory.
