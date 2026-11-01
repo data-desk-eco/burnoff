@@ -275,6 +275,7 @@ typedef struct job {
   const char *e;
   int (*fit)(struct job *);
   struct sj *x;                   // slstr's job (slstr.c), or NULL
+  struct s3k *k3;                 // and its chunks inflated, for the next box
   int st, budget, nr, rcap, nq, qcap, nw, cb;   // cb: by code-block (slow)
   long long gap;
   band bd[3];
@@ -1289,8 +1290,11 @@ static void start(job *j, const char *url, const double *box,
   j->gap = j->budget ? 1 << 20 : GAP, j->r.clear = NAN;
 }
 
+static void s3kfree(job *j);   // slstr.c's, or the browser's none
+
 // all but its result
 static void end(job *j) {
+  s3kfree(j);
   for (rd *r = j->rq; r < j->rq + j->nr; r++) free(r->url), free(r->b.p);
   for (int i = 0; i < 4; i++) free(j->u[i]);
   void *p[] = {j->rq, j->dq, j->wn, j->b12, j->m, j->v12, j->v11, j->v8a,
@@ -1303,6 +1307,7 @@ static void end(job *j) {
 // slstr's night-time detector (slstr.c): eodata alone, not the browser's
 #ifdef __EMSCRIPTEN__
 static const char *s3stage(job *j) { return "no slstr in the browser"; }
+static void s3kfree(job *j) {}
 #endif
 
 #ifndef __EMSCRIPTEN__

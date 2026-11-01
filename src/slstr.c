@@ -241,19 +241,47 @@ static const char *btree(const unsigned char *p, var *v) {
   return v->ok = 1, NULL;
 }
 
-// chunk i of v from its bytes z into raster o (rows [r0, r1), columns
-// [c0, c1)), unpacked, its fill NAN; and, with h, a count of the chunk's dn
-// (as unsigned shorts), all of it, for the band's threshold
-static const char *unchunk(const var *v, int i, const unsigned char *z,
-                           float *o, int r0, int r1, int c0, int c1,
-                           unsigned *h) {
+// a chunk inflated and unshuffled, held while another box of the granule
+// follows: boxes a few km apart share the chunks under them, and inflating
+// them is most of a box's time once its reads are shared
+typedef struct s3k {
+  struct s3k *next;
+  long long at;   // the chunk's place in its file
+  int k;          // and its variable
+  unsigned char *b;
+} s3k;
+
+static void s3kfree(job *j) {
+  for (s3k *c = j->k3, *n; c; c = n) n = c->next, free(c->b), free(c);
+  j->k3 = NULL;
+}
+
+// chunk i of v (variable k) from its bytes z into raster o (rows [r0, r1),
+// columns [c0, c1)), unpacked, its fill NAN; and, with h, a count of the
+// chunk's dn (as unsigned shorts), all of it, for the band's threshold
+static const char *unchunk(job *j, int k, const var *v, int i,
+                           const unsigned char *z, float *o, int r0, int r1,
+                           int c0, int c1, unsigned *h) {
   uLongf n = (uLongf)v->ch * v->cw * v->es, m = n / v->es;
-  unsigned char *a = malloc(n), *b = v->sh ? malloc(n) : a;
-  const char *e = uncompress(a, &n, z, v->kn[i]) != Z_OK ||
-                  n != m * v->es ? "a chunk did not inflate" : NULL;
-  if (!e && v->sh)   // byte k of every element, then byte k + 1
-    for (size_t k = 0; k < m; k++)
-      for (int c = 0; c < v->es; c++) b[k * v->es + c] = a[c * m + k];
+  const char *e = NULL;
+  unsigned char *a = NULL, *b = NULL;
+  s3k *held = j->k3;
+  while (held && (held->k != k || held->at != v->ka[i])) held = held->next;
+  if (held) b = held->b;
+  else {
+    a = malloc(n), b = v->sh ? malloc(n) : a;
+    e = uncompress(a, &n, z, v->kn[i]) != Z_OK || n != m * v->es
+        ? "a chunk did not inflate" : NULL;
+    if (!e && v->sh)   // byte k of every element, then byte k + 1
+      for (size_t q = 0; q < m; q++)
+        for (int c = 0; c < v->es; c++) b[q * v->es + c] = a[c * m + q];
+    if (!e && j->x->keep) {
+      s3k *c = malloc(sizeof *c);
+      *c = (s3k){j->k3, v->ka[i], k, b}, j->k3 = c;
+      if (b != a) free(a);
+      a = NULL;
+    }
+  }
   for (int r = 0; !e && r < MIN(v->ch, v->h - v->kr[i]); r++)
     for (int c = 0; c < MIN(v->cw, v->w - v->kc[i]); c++) {
       const unsigned char *s = b + ((size_t)r * v->cw + c) * v->es;
@@ -267,8 +295,11 @@ static const char *unchunk(const var *v, int i, const unsigned char *z,
         o[(size_t)(y - r0) * (c1 - c0) + w - c0] =
           x == v->fill ? NAN : x * v->sc + v->of;
     }
-  if (b != a) free(b);
-  return free(a), e;
+  if (a) {   // not held
+    if (b != a) free(b);
+    free(a);
+  }
+  return e;
 }
 
 // v (variable k of file f) over rows [r0, r1) and columns [c0, c1) into
@@ -302,8 +333,8 @@ static const char *grab(job *j, int k, int r0, int r1, int c0, int c1) {
   for (int i = 0; i < v->nk; i++)
     if (UNDER(i)) {
       rd *r = got(j, u, v->ka[i], v->ka[i] + v->kn[i]);
-      if ((e = unchunk(v, i, r->b.p + v->ka[i] - r->lo, x->b[k], r0, r1, c0,
-                       c1, x->hist[k])))
+      if ((e = unchunk(j, k, v, i, r->b.p + v->ka[i] - r->lo, x->b[k], r0,
+                       r1, c0, c1, x->hist[k])))
         return e;
     }
 #undef UNDER

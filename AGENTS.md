@@ -96,8 +96,9 @@ B-tree leaf, shuffle and deflate (zlib). Anything else is an error.
   pixels out and the mask never removes a detection.
 - The rows of one `s3_detect` chunk that name one granule run as one job
   on one worker, box after box, sharing its reads (`same`, `keep`): the
-  heads, tie points and any chunk two boxes share are read once. Order a
-  many-site query by granule so they share a chunk. 8 gulf sites over 24
+  heads, tie points and any chunk two boxes share are read once, and a
+  chunk two boxes share is inflated once (`s3k`, held while another box
+  follows). Order a many-site query by granule so they share a chunk. 8 gulf sites over 24
   granules: 953 MB and 4.05 rounds a box to 300 MB and 0.69, 22 s to 8,
   every field the same.
 - Memory: a whole-granule box holds ~250 MB a job (float rasters of S5,
