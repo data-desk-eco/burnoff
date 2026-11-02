@@ -7,8 +7,8 @@
 -- sites unless they hold two pebbles of one granule, two flares lit at
 -- once (a granule's hotspots are its 8-connected clusters, so a flare is
 -- one of them). 750 m, as a hotspot's corrected place (api.sql's s3at)
--- is still within ~500 m of its flare 9 times in 10. a site is named by its pebbles' mean place rounded to
--- 250 m (s3:<lat>,<lon>). the box's sites with a detection in the window:
+-- is still within ~500 m of its flare 9 times in 10. a site is named by
+-- its pebbles' mean place rounded to 250 m (s3:<lat>,<lon>). the box's sites with a detection in the window:
 -- looks, [[date, cloud], …], the obscured share of the 0.02° square under
 -- the site, its clearest granule a night; and each night's detection, the
 -- site's hotspots in its brightest granule, summed
