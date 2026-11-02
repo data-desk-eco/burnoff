@@ -59,17 +59,24 @@ CREATE MACRO s3m(c, t) AS c[1] + c[2] * t + c[3] * t * t;
 CREATE MACRO s3lon(g, tr, lon, lat) AS lon - s3m(s3c(g)[1], tr / 1000)
   / (111320 * cos(radians(lat)));
 CREATE MACRO s3lat(g, tr, lat) AS lat - s3m(s3c(g)[2], tr / 1000) / 110540;
--- and its pixels moved as its place is, each [rh, lon, lat × 4 corners]
-CREATE MACRO s3px(g, tr, lon, lat, px) AS list_transform(from_json(px,
-  '[["DOUBLE"]]'), lambda p: list_transform(p, lambda v, k: if(k = 1, v,
-  round(v + if(k % 2 = 0, s3lon(g, tr, lon, lat) - lon,
-               s3lat(g, tr, lat) - lat), 6))));
+-- and drawn as one pixel, [[rh, lon, lat × 4 corners]]: a flare is tens of
+-- metres, so a cluster is one fire spread by the optics, and the corrected
+-- place a better guess at it than any pixel's own. its brightest pixel
+-- (s3_detect's px, the first if none has heat), moved to centre on it
+CREATE MACRO s3pk(ps) AS ps[list_position(list_transform(ps, lambda q:
+  coalesce(q[1], 0)), list_max(list_transform(ps, lambda q:
+  coalesce(q[1], 0))))];
+CREATE MACRO s3sq(p, rh, lon, lat) AS [[rh] || list_transform(p[2:],
+  lambda v, k: round(v + if(k % 2 = 1, lon - (p[2] + p[4] + p[6] + p[8]) / 4,
+                            lat - (p[3] + p[5] + p[7] + p[9]) / 4), 6))];
 -- a request's hotspots as placed: the store's, of the current detector,
 -- within 0.05° (more than any correction) of the box, and what it read (h)
 CREATE MACRO s3at(h) AS TABLE
 SELECT * REPLACE (s3lon(granule, track, lon, lat) AS lon,
                   s3lat(granule, track, lat) AS lat,
-                  s3px(granule, track, lon, lat, px) AS px)
+                  s3sq(s3pk(from_json(px, '[["DOUBLE"]]')), rh,
+                       s3lon(granule, track, lon, lat),
+                       s3lat(granule, track, lat)) AS px)
 FROM (SELECT * EXCLUDE (v) FROM db.s3_hotspots WHERE v = getvariable('v')
         AND lat BETWEEN getvariable('s') - .05 AND getvariable('n') + .05
       UNION ALL BY NAME FROM query_table(h));

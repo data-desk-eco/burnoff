@@ -11,7 +11,7 @@
 -- (s3:<lat>,<lon>). the box's sites with a detection in the window: looks,
 -- [[date, cloud], …], the obscured share of the 0.02° square under the site,
 -- its clearest granule a night; and each night's detection, the site's hotspots
--- in its brightest granule, summed, and their pixels (px, s3_detect's)
+-- in its brightest granule, summed, and a pixel each (px, api.sql's s3sq)
 CREATE OR REPLACE TEMP TABLE pb AS
 SELECT cm(lon, lat) AS c, {z: cm(lon, lat).z, x: cm(lon, lat).x // 25000,
          y: cm(lon, lat).y // 25000} AS p, granule AS d

@@ -171,7 +171,9 @@ on localhost:9494, at `https://dev.datadesk.eco/quack`.
   under `v`; a request reads, a granule, one s3_detect over the box of the
   cells it lacks and splits the answer by cell. `s3sites.sql` is
   `sites.sql`'s linkage at 250 m pixels, 750 m links, `clash3` (two
-  hotspots of one granule). Places are corrected at read (`s3at`, api.sql;
+  hotspots of one granule). A hotspot is drawn as one pixel, its brightest
+  centred on its corrected place (`s3sq`). Places are corrected at read
+  (`s3at`, api.sql;
   the store keeps the l1b's and `track`): see the night detector's
   geolocation below. `s3url` maps a granule's eodata dir to what is
   read: itself; a local test reads MEEO's mirror instead. Not exported to
