@@ -11,7 +11,7 @@
 -- (s3:<lat>,<lon>). the box's sites with a detection in the window: looks,
 -- [[date, cloud], …], the obscured share of the 0.02° square under the site,
 -- its clearest granule a night; and each night's detection, the site's hotspots
--- in its brightest granule, summed
+-- in its brightest granule, summed, and their pixels (px, s3_detect's)
 CREATE OR REPLACE TEMP TABLE pb AS
 SELECT cm(lon, lat) AS c, {z: cm(lon, lat).z, x: cm(lon, lat).x // 25000,
          y: cm(lon, lat).y // 25000} AS p, granule AS d
@@ -71,7 +71,8 @@ SELECT nds.s AS t, h.granule, any_value(h.date) AS date,
        sum(h.rh) AS rh,
        sum(h.rh * h.temperature) / nullif(sum(h.rh) FILTER (
          h.temperature IS NOT NULL), 0) AS temperature,
-       sum(h.pixels)::INT AS pixels, count(*)::INT AS hotspots,
+       sum(h.pixels)::INT AS pixels, flatten(list(h.px)) AS px,
+       count(*)::INT AS hotspots,
        bool_and(h.confirmed) AS confirmed, bool_or(h.saturated) AS saturated,
        sum(h.lon * h.rh) / nullif(sum(h.rh), 0) AS lon,
        sum(h.lat * h.rh) / nullif(sum(h.rh), 0) AS lat
@@ -104,7 +105,8 @@ FROM (SELECT json_object('type', 'Feature', 'geometry', json_object('type',
         'detections', d.ds, 'detection_count', len(d.ds)))::VARCHAR AS f
       FROM st JOIN (SELECT t, list(json_object('date', date, 'datetime',
               datetime, 'granule', granule, 'lon', lon, 'lat', lat, 'rh', rh,
-              'temperature', temperature, 'pixels', pixels, 'hotspots',
+              'temperature', temperature, 'pixels', pixels, 'px', px,
+              'hotspots',
               hotspots, 'confirmed', confirmed, 'saturated', saturated)
               ORDER BY date) AS ds
             FROM (FROM hs QUALIFY row_number() OVER (PARTITION BY t, date

@@ -165,7 +165,9 @@ on localhost:9494, at `https://dev.datadesk.eco/quack`.
   CDSE's STAC, searched a 1° square and a day at a time (`s3_searched`, a
   day kept once three days gone, with each granule's bbox). The store keeps
   each granule's 0.1° cells (`s3_cells`: sza, pixels, clear and its 5 × 5
-  `squares` of 0.02°, s3_detect's) and their hotspots (`s3_hotspots`),
+  `squares` of 0.02°, s3_detect's) and their hotspots (`s3_hotspots`,
+  with `px`, each 500 m pixel's corners off the tie points, moved by its
+  own place's parallax, and its share of the heat by its s6 excess),
   under `v`; a request reads, a granule, one s3_detect over the box of the
   cells it lacks and splits the answer by cell. `s3sites.sql` is
   `sites.sql`'s linkage at 250 m pixels, 750 m links, `clash3` (two

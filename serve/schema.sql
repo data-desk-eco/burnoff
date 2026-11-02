@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS db.hotspots (
 -- read covered, by night or not: the sun's zenith, the clear share of its
 -- pixels, and squares, its 5 × 5 squares of 0.02° from the south-west, row
 -- by row, each [pixels, clear] or null where no pixel fell, as json.
--- s3_hotspots: those of each cell. both kept under v, as s2's are
+-- s3_hotspots: those of each cell, px its pixels as s3_detect gives them.
+-- both kept under v, as s2's are
 CREATE TABLE IF NOT EXISTS db.s3_granules (
   granule VARCHAR, t VARCHAR, dir VARCHAR, w DOUBLE, s DOUBLE, e DOUBLE,
   n DOUBLE);
@@ -43,3 +44,4 @@ CREATE TABLE IF NOT EXISTS db.s3_hotspots (
   pixels INTEGER, s5 DOUBLE, s6 DOUBLE, temperature DOUBLE, rh DOUBLE,
   confirmed BOOLEAN, saturated BOOLEAN, v VARCHAR);
 ALTER TABLE db.s3_hotspots ADD COLUMN IF NOT EXISTS track DOUBLE;
+ALTER TABLE db.s3_hotspots ADD COLUMN IF NOT EXISTS px VARCHAR;

@@ -4,7 +4,7 @@
 //             [, thresholds VARCHAR])
 //   → STRUCT(sza DOUBLE, clear DOUBLE, error VARCHAR, hotspots STRUCT(lon,
 //            lat, pixels, s5, s6, temperature, rh, confirmed, saturated,
-//            track)[],
+//            track, px)[],
 //            squares STRUCT(lon, lat, pixels, clear)[])
 // dir is a granule's .SEN3 directory, the box lon/lat degrees.
 //
@@ -79,11 +79,14 @@ typedef struct {
 
 // one hotspot: its place, swir excess radiances summed, planck's
 // temperature (K) and radiant heat (MW), pixels, and its column from the
-// sub-satellite track (500 m pixels, excess-weighted)
+// sub-satellite track (500 m pixels, excess-weighted); and its pixels as
+// json, [[rh, then each corner's lon and lat], …], each pixel's share of
+// the heat by its s6 excess (null when saturated)
 typedef struct {
   double lon, lat, s5, s6, temp, rh;
   int px, conf, sat;
   double track;
+  char *pj;
 } h3;
 
 // a job's own: the granule, its variables, its grids' columns from the
@@ -764,11 +767,32 @@ static const char *s3dets(job *j) {
         t = (lo + hi) / 2,
         *(planck(L5, t) / planck(L6, t) < rt ? &lo : &hi) = t;
     }
+    double rh = 5.670374e-8 * pow(t, 4) * a6 / planck(L6, t) * APIX / 1e6;
+    // each pixel's corners off the tie points, moved by what its own place
+    // (the terrain's parallax) moves its centre
+    char *pj;
+    size_t pn;
+    FILE *fp = open_memstream(&pj, &pn);
+    for (int q = 0; q < n; q++) {
+      int i = x->r0 + m[q] / ww, jj = x->c0 + m[q] % ww;
+      float la = px(x, LA5, i, jj), lo = px(x, LO5, i, jj),
+            y6 = px(x, S6, i, jj);
+      double v = (isfinite(y6) ? y6 - bg6 : 0) * x->t[G6] / a6 * rh, a, b;
+      place(x, i, jj, &b, &a);
+      double dy = isfinite(la + lo) ? la - a : 0, dx = isfinite(la + lo)
+        ? lo - b - 360 * round((lo - b) / 360) : 0;
+      fprintf(fp, isfinite(v) ? "%s[%.4g" : "%s[null", q ? "," : "[", v);
+      for (int z = 0; z < 4; z++) {
+        place(x, i + (z < 2 ? -.5 : .5), jj + (z % 3 ? .5 : -.5), &b, &a);
+        fprintf(fp, ",%.6f,%.6f", fmod(b + dx + 540, 360) - 180, a + dy);
+      }
+      fputc(']', fp);
+    }
+    fputc(']', fp), fclose(fp);
     if (x->nd == x->cap)
       x->d = realloc(x->d, (x->cap = 2 * x->cap + 8) * sizeof *x->d);
-    x->d[x->nd++] = (h3){lon, lat, a5, a6, t,
-      5.670374e-8 * pow(t, 4) * a6 / planck(L6, t) * APIX / 1e6, n,
-      x->ok[l] || h, !!sat, wj / w - x->to[1]};
+    x->d[x->nd++] = (h3){lon, lat, a5, a6, t, rh, n, x->ok[l] || h, !!sat,
+      wj / w - x->to[1], pj};
   }
   return NULL;
 }
@@ -805,7 +829,7 @@ static int bydir(const void *a, const void *b) {
   return c ? c : (i > k) - (i < k);
 }
 
-#define NH 10  // a hotspot's fields
+#define NH 11  // a hotspot's fields
 #define NQ 4   // a square's
 static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
                       duckdb_vector out) {
@@ -912,6 +936,9 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
         if (z == 2) ((int32_t *)d[z])[o] = h->px;
         else if (z == 7 || z == 8)
           ((bool *)d[z])[o] = z == 7 ? h->conf : h->sat;
+        else if (z == 10)
+          duckdb_vector_assign_string_element(duckdb_struct_vector_get_child(
+            f, z), o, h->pj), free(h->pj);
         else ((double *)d[z])[o] = y[q++];
     }
     le[i].length = o - le[i].offset;
@@ -930,7 +957,7 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
 
 static duckdb_state s3_register(duckdb_connection con) {
   const char *hn[] = {"lon", "lat", "pixels", "s5", "s6", "temperature", "rh",
-                      "confirmed", "saturated", "track"},
+                      "confirmed", "saturated", "track", "px"},
              *sn[] = {"sza", "clear", "error", "hotspots", "squares"},
              *qn[] = {"lon", "lat", "pixels", "clear"};
   duckdb_logical_type ht[NH], st[5], qt[NQ], dbl = type(DUCKDB_TYPE_DOUBLE),
@@ -941,7 +968,7 @@ static duckdb_state s3_register(duckdb_connection con) {
   for (int k = 0; k < NH; k++)
     ht[k] = type(k == 2 ? DUCKDB_TYPE_INTEGER
                  : k == 7 || k == 8 ? DUCKDB_TYPE_BOOLEAN
-                 : DUCKDB_TYPE_DOUBLE);
+                 : k == 10 ? DUCKDB_TYPE_VARCHAR : DUCKDB_TYPE_DOUBLE);
   duckdb_logical_type hs = duckdb_create_struct_type(ht, hn, NH);
   st[0] = st[1] = dbl, st[2] = vc, st[3] = duckdb_create_list_type(hs);
   st[4] = duckdb_create_list_type(qs);

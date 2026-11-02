@@ -59,11 +59,17 @@ CREATE MACRO s3m(c, t) AS c[1] + c[2] * t + c[3] * t * t;
 CREATE MACRO s3lon(g, tr, lon, lat) AS lon - s3m(s3c(g)[1], tr / 1000)
   / (111320 * cos(radians(lat)));
 CREATE MACRO s3lat(g, tr, lat) AS lat - s3m(s3c(g)[2], tr / 1000) / 110540;
+-- and its pixels moved as its place is, each [rh, lon, lat × 4 corners]
+CREATE MACRO s3px(g, tr, lon, lat, px) AS list_transform(from_json(px,
+  '[["DOUBLE"]]'), lambda p: list_transform(p, lambda v, k: if(k = 1, v,
+  round(v + if(k % 2 = 0, s3lon(g, tr, lon, lat) - lon,
+               s3lat(g, tr, lat) - lat), 6))));
 -- a request's hotspots as placed: the store's, of the current detector,
 -- within 0.05° (more than any correction) of the box, and what it read (h)
 CREATE MACRO s3at(h) AS TABLE
 SELECT * REPLACE (s3lon(granule, track, lon, lat) AS lon,
-                  s3lat(granule, track, lat) AS lat)
+                  s3lat(granule, track, lat) AS lat,
+                  s3px(granule, track, lon, lat, px) AS px)
 FROM (SELECT * EXCLUDE (v) FROM db.s3_hotspots WHERE v = getvariable('v')
         AND lat BETWEEN getvariable('s') - .05 AND getvariable('n') + .05
       UNION ALL BY NAME FROM query_table(h));
