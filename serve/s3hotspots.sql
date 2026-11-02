@@ -99,7 +99,8 @@ WHERE d.r.error IS NULL GROUP BY ALL;
 CREATE OR REPLACE TEMP TABLE det AS
 SELECT x.granule, x.t, floor(round(h.lon * 10, 6))::INT AS i,
        floor(round(h.lat * 10, 6))::INT AS j, h.lon, h.lat, h.pixels, h.s5,
-       h.s6, h.temperature, h.rh, h.confirmed, h.saturated
+       h.s6, h.temperature, h.rh, h.confirmed, h.saturated,
+       h.track
 FROM (SELECT granule, t, unnest(r.hotspots) AS h FROM rd
       WHERE r.error IS NULL) x
 SEMI JOIN miss ON miss.granule = x.granule

@@ -23,7 +23,5 @@ SET VARIABLE m = .01;
 CREATE OR REPLACE TEMP TABLE spots AS
 SELECT s.*, strptime(s.t, '%Y%m%dT%H%M%S') AS datetime,
        s3night(s.t, s.lon) AS date
-FROM (SELECT DISTINCT * EXCLUDE (v) FROM db.s3_hotspots
-      SEMI JOIN held USING (granule, i, j) WHERE v = getvariable('v')
-      UNION ALL BY NAME FROM det) s
+FROM (SELECT DISTINCT * FROM s3at('det') SEMI JOIN c3 USING (granule, i, j)) s
 WHERE near(lon, lat);

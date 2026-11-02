@@ -3,7 +3,8 @@
 //   s3_detect(dir VARCHAR, w DOUBLE, s DOUBLE, e DOUBLE, n DOUBLE
 //             [, thresholds VARCHAR])
 //   → STRUCT(sza DOUBLE, clear DOUBLE, error VARCHAR, hotspots STRUCT(lon,
-//            lat, pixels, s5, s6, temperature, rh, confirmed, saturated)[],
+//            lat, pixels, s5, s6, temperature, rh, confirmed, saturated,
+//            track)[],
 //            squares STRUCT(lon, lat, pixels, clear)[])
 // dir is a granule's .SEN3 directory, the box lon/lat degrees.
 //
@@ -77,10 +78,12 @@ typedef struct {
 } var;
 
 // one hotspot: its place, swir excess radiances summed, planck's
-// temperature (K) and radiant heat (MW), and pixels
+// temperature (K) and radiant heat (MW), pixels, and its column from the
+// sub-satellite track (500 m pixels, excess-weighted)
 typedef struct {
   double lon, lat, s5, s6, temp, rh;
   int px, conf, sat;
+  double track;
 } h3;
 
 // a job's own: the granule, its variables, its grids' columns from the
@@ -765,7 +768,7 @@ static const char *s3dets(job *j) {
       x->d = realloc(x->d, (x->cap = 2 * x->cap + 8) * sizeof *x->d);
     x->d[x->nd++] = (h3){lon, lat, a5, a6, t,
       5.670374e-8 * pow(t, 4) * a6 / planck(L6, t) * APIX / 1e6, n,
-      x->ok[l] || h, !!sat};
+      x->ok[l] || h, !!sat, wj / w - x->to[1]};
   }
   return NULL;
 }
@@ -802,7 +805,7 @@ static int bydir(const void *a, const void *b) {
   return c ? c : (i > k) - (i < k);
 }
 
-#define NH 9   // a hotspot's fields
+#define NH 10  // a hotspot's fields
 #define NQ 4   // a square's
 static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
                       duckdb_vector out) {
@@ -904,10 +907,11 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
     free(x->qn), free(x->qc);
     for (int k = 0; !w->e && k < x->nd; k++, o++) {
       h3 *h = &x->d[k];
-      double y[] = {h->lon, h->lat, h->s5, h->s6, h->temp, h->rh};
+      double y[] = {h->lon, h->lat, h->s5, h->s6, h->temp, h->rh, h->track};
       for (int z = 0, q = 0; z < NH; z++)
         if (z == 2) ((int32_t *)d[z])[o] = h->px;
-        else if (z >= 7) ((bool *)d[z])[o] = z == 7 ? h->conf : h->sat;
+        else if (z == 7 || z == 8)
+          ((bool *)d[z])[o] = z == 7 ? h->conf : h->sat;
         else ((double *)d[z])[o] = y[q++];
     }
     le[i].length = o - le[i].offset;
@@ -926,7 +930,7 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
 
 static duckdb_state s3_register(duckdb_connection con) {
   const char *hn[] = {"lon", "lat", "pixels", "s5", "s6", "temperature", "rh",
-                      "confirmed", "saturated"},
+                      "confirmed", "saturated", "track"},
              *sn[] = {"sza", "clear", "error", "hotspots", "squares"},
              *qn[] = {"lon", "lat", "pixels", "clear"};
   duckdb_logical_type ht[NH], st[5], qt[NQ], dbl = type(DUCKDB_TYPE_DOUBLE),
@@ -936,7 +940,8 @@ static duckdb_state s3_register(duckdb_connection con) {
   duckdb_logical_type qs = duckdb_create_struct_type(qt, qn, NQ);
   for (int k = 0; k < NH; k++)
     ht[k] = type(k == 2 ? DUCKDB_TYPE_INTEGER
-                 : k >= 7 ? DUCKDB_TYPE_BOOLEAN : DUCKDB_TYPE_DOUBLE);
+                 : k == 7 || k == 8 ? DUCKDB_TYPE_BOOLEAN
+                 : DUCKDB_TYPE_DOUBLE);
   duckdb_logical_type hs = duckdb_create_struct_type(ht, hn, NH);
   st[0] = st[1] = dbl, st[2] = vc, st[3] = duckdb_create_list_type(hs);
   st[4] = duckdb_create_list_type(qs);

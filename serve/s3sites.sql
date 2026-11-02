@@ -6,8 +6,8 @@
 -- 750 m are linked, shortest first (ties by place), each link joining two
 -- sites unless they hold two pebbles of one granule, two flares lit at
 -- once (a granule's hotspots are its 8-connected clusters, so a flare is
--- one of them). 750 m, as the l1b puts s3a ~250 m east of a flare and s3b
--- ~350 m west. a site is named by its pebbles' mean place rounded to
+-- one of them). 750 m, as a hotspot's corrected place (api.sql's s3at)
+-- is still within ~500 m of its flare 9 times in 10. a site is named by its pebbles' mean place rounded to
 -- 250 m (s3:<lat>,<lon>). the box's sites with a detection in the window:
 -- looks, [[date, cloud], …], the obscured share of the 0.02° square under
 -- the site, its clearest granule a night; and each night's detection, the
@@ -15,10 +15,7 @@
 CREATE OR REPLACE TEMP TABLE pb AS
 SELECT cm(lon, lat) AS c, {z: cm(lon, lat).z, x: cm(lon, lat).x // 25000,
          y: cm(lon, lat).y // 25000} AS p, granule AS d
-FROM (SELECT granule, lon, lat FROM db.s3_hotspots
-      WHERE v = getvariable('v') AND lat BETWEEN getvariable('s')
-        - 1.5 * getvariable('m') AND getvariable('n') + 1.5 * getvariable('m')
-      UNION SELECT granule, lon, lat FROM det)
+FROM (SELECT DISTINCT granule, lon, lat FROM s3at('det'))
 WHERE near(lon, lat);
 CREATE OR REPLACE TEMP TABLE nd AS
 SELECT row_number() OVER (ORDER BY p.z, p.x, p.y) AS n, p,

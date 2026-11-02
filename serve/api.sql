@@ -46,6 +46,27 @@ CREATE MACRO clash(u, v) AS list_bool_or(list_transform(u, lambda a:
 CREATE MACRO s3night(t, lon) AS (strptime(t, '%Y%m%dT%H%M%S')
   + to_microseconds((lon / 15 * 3600e6)::BIGINT) - INTERVAL 12 HOUR)::DATE;
 CREATE MACRO s3url(dir) AS dir;
+-- a hotspot's place, corrected: the l1b puts a flare off by its platform
+-- and its column from the sub-satellite track (s3_detect's track, 500 m
+-- pixels), east and north by a + b t + c t² m, t = track / 1000, as fitted
+-- to 60 isolated, persistent s2 flares over 2023-2026 (AGENTS.md); in t
+-- s3a turns ~0.14° (1.9 km north at one edge to 0.45 km south at the other)
+CREATE MACRO s3c(g) AS CASE g[1:3]
+  WHEN 'S3A' THEN [[153.7, 377.3, 573.6], [271.4, -1276.1, 17.9]]
+  WHEN 'S3B' THEN [[-298.2, 6.8, -231.9], [309.3, 226.6, 71.0]]
+  ELSE [[0, 0, 0], [0, 0, 0]] END;
+CREATE MACRO s3m(c, t) AS c[1] + c[2] * t + c[3] * t * t;
+CREATE MACRO s3lon(g, tr, lon, lat) AS lon - s3m(s3c(g)[1], tr / 1000)
+  / (111320 * cos(radians(lat)));
+CREATE MACRO s3lat(g, tr, lat) AS lat - s3m(s3c(g)[2], tr / 1000) / 110540;
+-- a request's hotspots as placed: the store's, of the current detector,
+-- within 0.05° (more than any correction) of the box, and what it read (h)
+CREATE MACRO s3at(h) AS TABLE
+SELECT * REPLACE (s3lon(granule, track, lon, lat) AS lon,
+                  s3lat(granule, track, lat) AS lat)
+FROM (SELECT * EXCLUDE (v) FROM db.s3_hotspots WHERE v = getvariable('v')
+        AND lat BETWEEN getvariable('s') - .05 AND getvariable('n') + .05
+      UNION ALL BY NAME FROM query_table(h));
 -- s3sites.sql's: two sites holding pebbles of one granule, two flares lit
 -- at once
 CREATE MACRO clash3(u, v) AS list_bool_or(list_transform(u, lambda a:
@@ -58,7 +79,8 @@ CREATE MACRO clash3(u, v) AS list_bool_or(list_transform(u, lambda a:
 -- sites.sql, over those, or of s3_hotspots or s3_sites, run as s3args.sql,
 -- s3hotspots.sql, s3box.sql and s3geojson.sql or s3sites.sql; anything
 -- else refused
-CREATE TABLE cfg AS SELECT getenv('KEY') AS k, getenv('V') AS v;
+CREATE TABLE cfg AS
+SELECT getenv('KEY') AS k, getenv('V') AS v, getenv('V3') AS v3;
 SELECT error('KEY unset or short') FROM cfg WHERE coalesce(len(k), 0) < 16;
 CREATE TABLE api AS
 SELECT f, string_agg(content, chr(10) ORDER BY o) AS body
@@ -81,5 +103,5 @@ CREATE MACRO gate(sid, q) AS CASE
   WHEN call(q).f <> '' THEN (SELECT printf('SET VARIABLE v = ''%s'';
 SET VARIABLE w = %s; SET VARIABLE s = %s; SET VARIABLE e = %s;
 SET VARIABLE n = %s; SET VARIABLE a = ''%s''; SET VARIABLE b = ''%s'';
-', v, c.w, c.s, c.e, c.n, c.a, c.b) || body
+', if(c.f[:2] = 's3', v3, v), c.w, c.s, c.e, c.n, c.a, c.b) || body
     FROM cfg, api, (SELECT call(q) AS c) WHERE api.f = c.f) END;

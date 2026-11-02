@@ -42,3 +42,4 @@ CREATE TABLE IF NOT EXISTS db.s3_hotspots (
   t VARCHAR, granule VARCHAR, i INTEGER, j INTEGER, lon DOUBLE, lat DOUBLE,
   pixels INTEGER, s5 DOUBLE, s6 DOUBLE, temperature DOUBLE, rh DOUBLE,
   confirmed BOOLEAN, saturated BOOLEAN, v VARCHAR);
+ALTER TABLE db.s3_hotspots ADD COLUMN IF NOT EXISTS track DOUBLE;

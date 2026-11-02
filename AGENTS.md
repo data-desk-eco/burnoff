@@ -132,7 +132,11 @@ on localhost:9494, at `https://dev.datadesk.eco/quack`.
   connection); per-request tables are `CREATE OR REPLACE TEMP`.
 - Cells come from the store, else one `s2_detect` of those missing; new
   cells and their hotspots are added in one transaction, keyed by the
-  detector's digest `v`.
+  detector's digest `v`: deploy.sh's `V` (s2: `burnoff.c`, `j2k.c`) and
+  `V3` (s3: `burnoff.c`, `slstr.c`), which the gate sets as `v`, so a
+  change to one detector keeps the other's store. (A digest of the whole
+  extension, as before 2026-11-02, made an s3 deploy drop 8.77M s2 cells;
+  they were relabelled, s2's output unchanged since eba95b1.)
   `sites.sql` links every date's detections within 550 m of the box
   (`m`) by constrained single linkage (40 m, never two of one date over
   30 m apart in a site) and names a site by its mean place rounded to
@@ -165,7 +169,9 @@ on localhost:9494, at `https://dev.datadesk.eco/quack`.
   under `v`; a request reads, a granule, one s3_detect over the box of the
   cells it lacks and splits the answer by cell. `s3sites.sql` is
   `sites.sql`'s linkage at 250 m pixels, 750 m links, `clash3` (two
-  hotspots of one granule). `s3url` maps a granule's eodata dir to what is
+  hotspots of one granule). Places are corrected at read (`s3at`, api.sql;
+  the store keeps the l1b's and `track`): see the night detector's
+  geolocation below. `s3url` maps a granule's eodata dir to what is
   read: itself; a local test reads MEEO's mirror instead. Not exported to
   the archive yet. Measured locally off the mirror (eu-central-1, ~0.3 s a
   round): Ras Laffan 0.6° × 0.4° for 2023 Q1, 180 granules, 13.4 s cold, 185
@@ -230,6 +236,26 @@ errors. Radiant heat at 432 sites both saw: 0.87 of VNF's (log r 0.88).
 Nights caught of those VNF saw lit, both clear: 7% under 0.5 MW, 40% at
 1-2, 55% at 2-3, 74% at 5-10, 79% over 20. The L1B's geolocation puts
 S3A +261 m E, +264 m N of VNF sites and S3B -371 m E, +252 m N (S2 sites
-and ESA's SL_2_FRP agree). ESA's SL_2_FRP has no fire in the Bakken or
+and ESA's SL_2_FRP agree).
+
+Night geolocation against S2, 2026-11-02: 60 isolated, persistent S2
+flares (10+ dates, no other within 4 km; 34 in the Permian, 9 at 60°N),
+every night granule over them in a month of 2017, 2019, 2020, 2022-2026
+(65,291 looks, 0 errors, 3,760 hotspots within 2.5 km). The offset is
+steady over the years and baselines 003-005 (S3A +250-330 m E, S3B -350
+to -420 m E) but not a constant: it is a smooth function of the column
+from the track (`track`). S3A's north offset runs from +1.9 km at track
+-1400 to -0.45 km at +500 (a turn of ~0.14°), S3B's from +0.1 to +0.5
+km, and within 100 px bins the spread is ~200 m (IQR). ESA's product
+notices claim nadir geolocation within 0.1 pixel and name no such error.
+A quadratic in track per platform (`s3c`), fitted on two years of
+2023-2026 and tested on the other two: S3A's median distance to its
+flare 830-890 m raw, 750-790 with one constant shift, ~200 corrected (p90
+1.8 km to 420-500 m); S3B's 560, 230-260, 160-190 (p90 ~1 km to 475-670
+m). Residuals by latitude (30°, 60°N) are under 135 m. Out of sample at
+Ras Laffan (to the nearest of 51 S2 sites): S3A 587 m to 182 (p90 1,347
+to 416), S3B 425 to 157 (802 to 375). Only ascending (night) passes are
+fitted. Pre-2023 granules lie at other eodata paths than the store's
+`dir` form. ESA's SL_2_FRP has no fire in the Bakken or
 West Siberia that quarter; this detector finds 802 and 294 hotspots
 there.

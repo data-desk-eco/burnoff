@@ -85,8 +85,9 @@ and `detection_count`.
   Sentinel-2 but at 750 m: a join is not made if it would put two
   hotspots of the same granule in one site. The `id` is the mean place
   rounded to 250 m (`s3:<lat>,<lon>`). It moves more than Sentinel-2's as
-  nights are added (Sentinel-3A places a flare about 250 m east and 3B
-  about 350 m west), so join a site that comes back within about 600 m.
+  nights are added (a corrected place is still within about 500 m of its
+  flare 9 times in 10), so join a site that comes back within about
+  600 m.
   `looks` is `[[date, cloud], …]` for the 0.02° square under the site, the
   clearest granule a night; `detections`, a night's hotspots of the site in
   its brightest granule, summed (`rh`, `pixels`, `hotspots`).
@@ -112,8 +113,9 @@ uses only this extension, DuckDB 2.0 and systemd. The files are in
   runs `s2_detect` on the cells that are missing. `sites.sql` groups the
   result into sites.
 - The store is one DuckDB file. A request writes new cells and their
-  hotspots in one transaction, under a digest of the extension that made
-  them. A new detector therefore reads the cells again.
+  hotspots in one transaction, under a digest of the detector's sources
+  (Sentinel-2's and Sentinel-3's apart). A new detector therefore reads
+  its cells again, and leaves the other's.
 - systemd timers update the scene index each day (`index.sh`) and merge
   the store into the Data Desk archive each hour (`export.sh`). The
   archive is the record. The export replaces only the cells that the
@@ -210,6 +212,8 @@ hotspot. Each hotspot has:
   is a few hundred metres off on flat ground and up to 2 km off over
   hills, but it saves 2.7 MB of reads for each 400 by 500 km of image
   with a hotspot in it.
+- `track`: its column from the sub-satellite track, in 500 m pixels,
+  weighted as its place is.
 - `pixels`, and `s5`, `s6`: the sums of its S5 and S6 radiance over the
   background (the median of the pixels two beyond it), scaled by 0.89 and
   0.80 for the bands' known overestimate (`s5_gain`, `s6_gain`).
@@ -313,9 +317,10 @@ and this build only when the API fails.
   term. At Caseiro et al.'s 2017 flares, the median of its mean
   temperatures is 1964 K. Their modes are near 1200 and 1750 K.
 - A large box holds about 250 MB a granule in memory.
-- It places hotspots by the product's own geolocation, which in 2023's
-  baseline 004 puts Sentinel-3A about 250 m east of a flare and
-  Sentinel-3B about 350 m west (against VIIRS Nightfire and Sentinel-2
-  sites; ESA's SL_2_FRP shows the same).
+- It places hotspots by the product's own geolocation, which is off by
+  the platform and the column (`track`): against Sentinel-2 flares,
+  Sentinel-3A's ranges from 1.9 km north at one edge of the swath to
+  0.45 km south at the other, and Sentinel-3B's sits 300-500 m west. The
+  service corrects for it; `s3_detect` does not.
 - It finds a flare on about half the nights VIIRS Nightfire sees it at
   2-3 MW, and few under 1 MW.

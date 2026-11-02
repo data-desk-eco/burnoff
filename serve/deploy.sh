@@ -25,8 +25,11 @@ $O/duckdb -c "INSTALL spatial; INSTALL h3 FROM community; INSTALL quack;"
 rm -f $O/hotspots.cgi $O/query
 old=$(cat $O/*.sql $O/*.sh $O/q $O/*.duckdb_extension 2>/dev/null | sha1sum)
 install -C -m 755 ~/burnoff/ext/burnoff.duckdb_extension ~/burnoff/serve/* $O/
-# the detector's digest: what a cell is kept under (schema.sql's v)
-V=$(sha1sum < $O/burnoff.duckdb_extension | cut -c1-12)
+# the detectors' digests, what a cell is kept under (schema.sql's v): s2's
+# of its sources, s3's of its own, so a change to one keeps the other's
+s=~/burnoff/src
+V=$(cat $s/burnoff.c $s/j2k.c | sha1sum | cut -c1-12)
+V3=$(cat $s/burnoff.c $s/slstr.c | sha1sum | cut -c1-12)
 # the gate's key (api.sql), for the box's own scripts alone
 [ -s $D/env ] || (umask 077; echo "KEY=$(openssl rand -hex 16)" > $D/env)
 [ -s $O/seeds.txt ] || $O/duckdb < $O/seeds.sql > $O/seeds.txt
@@ -45,7 +48,7 @@ unit() {   # name, description, command, then [Unit], [Service], [Install]
   printf '[Unit]\nDescription=burnoff: %s\nAfter=network-online.target\n'"\
 OnFailure=data-desk-failed@burnoff-$1.service\n%b\n[Service]\nUser=eouser\n\
 WorkingDirectory=$O\nSyslogIdentifier=burnoff-$1\nEnvironmentFile=$D/env\n\
-Environment=ARC=$ARC V=$V\nExecStart=%s\n%b\n" "$2" "$4" "$3" "$5" |
+Environment=ARC=$ARC V=$V V3=$V3\nExecStart=%s\n%b\n" "$2" "$4" "$3" "$5" |
     sudo tee /etc/systemd/system/burnoff-$1.service >/dev/null
 }
 unit serve "the store, served over quack" "/bin/bash -c '. \
