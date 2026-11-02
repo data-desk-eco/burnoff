@@ -1,17 +1,17 @@
--- s3box.sql's spots as sites, one geojson feature a site, from every
--- hotspot the store holds within m of the box (pebbles), so the same
--- pebbles give the same sites whatever box or window asks: sites.sql's
--- constrained single linkage at slstr's scale. a pebble sits on its
--- 250 m pixel, in its longitude's utm zone, in whole cm; pixels within
--- 750 m are linked, shortest first (ties by place), each link joining two
--- sites unless they hold two pebbles of one granule, two flares lit at
--- once (a granule's hotspots are its 8-connected clusters, so a flare is
--- one of them). 750 m, as a hotspot's corrected place (api.sql's s3at)
--- is still within ~500 m of its flare 9 times in 10. a site is named by
--- its pebbles' mean place rounded to 250 m (s3:<lat>,<lon>). the box's sites with a detection in the window:
--- looks, [[date, cloud], …], the obscured share of the 0.02° square under
--- the site, its clearest granule a night; and each night's detection, the
--- site's hotspots in its brightest granule, summed
+-- s3box.sql's spots as sites, one geojson feature a site, from every hotspot
+-- the store holds within m of the box (pebbles), so the same pebbles give the
+-- same sites whatever box or window asks: sites.sql's constrained single
+-- linkage at slstr's scale. a pebble sits on its 250 m pixel, in its
+-- longitude's utm zone, in whole cm; pixels within 750 m are linked, shortest
+-- first (ties by place), each link joining two sites unless they hold two
+-- pebbles of one granule, two flares lit at once (a granule's hotspots are its
+-- 8-connected clusters, so a flare is one of them). 750 m, as a hotspot's
+-- corrected place (api.sql's s3at) is still within ~500 m of its flare 9 times
+-- in 10. a site is named by its pebbles' mean place rounded to 250 m
+-- (s3:<lat>,<lon>). the box's sites with a detection in the window: looks,
+-- [[date, cloud], …], the obscured share of the 0.02° square under the site,
+-- its clearest granule a night; and each night's detection, the site's hotspots
+-- in its brightest granule, summed
 CREATE OR REPLACE TEMP TABLE pb AS
 SELECT cm(lon, lat) AS c, {z: cm(lon, lat).z, x: cm(lon, lat).x // 25000,
          y: cm(lon, lat).y // 25000} AS p, granule AS d
