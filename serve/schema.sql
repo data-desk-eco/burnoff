@@ -52,3 +52,9 @@ UPDATE db.cells SET v = 'ae8bdad0ae4e' WHERE v = '115a56d3fb7a';
 UPDATE db.hotspots SET v = 'ae8bdad0ae4e' WHERE v = '115a56d3fb7a';
 UPDATE db.s3_cells SET v = 'bd6320798d35' WHERE v = 'cc7c2f6a4d53';
 UPDATE db.s3_hotspots SET v = 'bd6320798d35' WHERE v = 'cc7c2f6a4d53';
+-- 2026-11-05: s2.c and s3.c split from burnoff.c, each digest of its own
+-- detector's sources; every s2 and s3 answer the same, field for field
+UPDATE db.cells SET v = '8e97e7784731' WHERE v = 'ae8bdad0ae4e';
+UPDATE db.hotspots SET v = '8e97e7784731' WHERE v = 'ae8bdad0ae4e';
+UPDATE db.s3_cells SET v = '306ab14bb183' WHERE v = 'bd6320798d35';
+UPDATE db.s3_hotspots SET v = '306ab14bb183' WHERE v = 'bd6320798d35';
