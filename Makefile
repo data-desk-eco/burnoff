@@ -34,7 +34,8 @@ ext/burnoff.sql.h: src/burnoff.sql
 # a day granule is read not at all; and a granule's boxes in one chunk
 # each get their own answer
 test: $(E)
-	duckdb -unsigned -c "install spatial; load spatial; load '$(CURDIR)/$(E)'; select \
+	duckdb -unsigned -c "install spatial; load spatial; \
+	  load '$(CURDIR)/$(E)'; select \
 	  coalesce(s2_detect('file:///none', 0, 0, 1, 1).error, error('no error')), \
 	  if((select count(s2_detect(d, 0, 0, 1, 1).error) from (values (null)) \
 	    t(d)) = 0, 'null', error('a null row has an error')), \

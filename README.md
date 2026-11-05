@@ -10,7 +10,8 @@ same way from the netCDF files.
 You can use burnoff in two ways:
 
 - **The hosted API.** Send a bounding box and a date range over DuckDB's
-  Quack protocol and get GeoJSON. The service keeps every result, so a repeated area is fast.
+  Quack protocol and get GeoJSON. The service keeps every result, so a
+  repeated area is fast.
 - **The DuckDB extension.** Download it and run the detector on your own
   computer, over any area, in SQL.
 
@@ -65,11 +66,11 @@ finds sites from all the detections it holds, on all dates:
    30 m apart, in one site: those are two flares that burned at the same
    time.
 
-The same detections always give the same sites, for any box or dates. The `id` is the mean place of the site's detections, rounded
-to 40 m (`live:<lat>,<lon>`). The mean changes little as detections are
-added, so the `id` usually stays the same. The dates select only the
-dates in each site. Its properties are `id`,
-`looks` (`[[date, cloud], …]` for the 640 m square under the site),
+The same detections always give the same sites, for any box or dates.
+The `id` is the mean place of the site's detections, rounded to 40 m
+(`live:<lat>,<lon>`). The mean changes little as detections are added,
+so the `id` usually stays the same. The dates select only the dates in
+each site. Its properties are `id`, `looks` (`[[date, cloud], …]` for the 640 m square under the site),
 `detections` (the brightest detection of each date, with its pixels)
 and `detection_count`.
 
@@ -161,10 +162,11 @@ from aois, lateral s2_hotspots(aois.geom, '2025-01-01');
   data, or a background cell too cloudy to read) of each 640 m square of
   the box. A look at a site is clear when its square's `cloud` is low.
 
-An optional `source` is `'eodata'` (CDSE's S3, which needs `AWS_ACCESS_KEY_ID`,
-`AWS_SECRET_ACCESS_KEY` and `AWS_S3_ENDPOINT`, as on CloudFerro machines)
-or `'gcp'` (Google's public mirror, with no credentials). The default, `'auto'`, uses
-eodata when `AWS_ACCESS_KEY_ID` is set and gcp when it is not.
+An optional `source` is `'eodata'` (CDSE's S3, which needs
+`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_S3_ENDPOINT`, as on
+CloudFerro machines) or `'gcp'` (Google's public mirror, with no
+credentials). The default, `'auto'`, uses eodata when
+`AWS_ACCESS_KEY_ID` is set and gcp when it is not.
 `thresholds` is `'name=value,...'` over the defaults in `src/burnoff.c`.
 One of them, `nir_excess` (0.1), drops a peak whose rise in B8A over its
 surroundings is a tenth or more of its rise in B12: sunlight reflected
@@ -190,9 +192,9 @@ from s3_hotspots(ST_MakeEnvelope(51.4, 25.8, 51.7, 26.0), '2025-01-01',
   twice gives only the granules of its newest baseline.
 - `s3_detect(dir, w, s, e, n [, thresholds])` detects in one granule (its
   `.SEN3` directory) over a lon/lat box. It gives `sza`, `clear`, an
-  `error`, the `hotspots` and the `squares`. A granule where the sun is up at the box
-  (`sza` under `sza_min`, 90°) has no hotspots and no `clear`. For a box
-  under 10° it is not read at all.
+  `error`, the `hotspots` and the `squares`. A granule where the sun is
+  up at the box (`sza` under `sza_min`, 90°) has no hotspots and no
+  `clear`. For a box under 10° it is not read at all.
 - `s3_flares(g, t0, t1 := today, t_min := 1500, min_passes := 5)` gives
   Caseiro et al.'s flares: the 0.025° cells where the hotspots reach over
   `t_min` K and are confirmed on more than `min_passes` passes (one
