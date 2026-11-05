@@ -1,7 +1,7 @@
 # burnoff
 
 Hotspot detection for the Data Desk [Aerial](https://github.com/data-desk-eco/aerial)
-map: Sentinel-2 by day and Sentinel-3 by night. Available as a hosted API
+map: Sentinel-2 by day and Sentinel-3 by night. Available as a hosted server
 and a DuckDB extension. Both detectors read only the parts of the source
 imagery they need.
 
@@ -11,10 +11,10 @@ imagery they need.
 | Detection | Daytime SWIR hotspots, with a near-infrared test to reject reflected sunlight | Night-time SWIR hotspots, confirmed in other infrared bands |
 | Results | Position, brightness, radiance and pixel outlines | Position, temperature, radiant heat and pixel count |
 
-## Hosted API
+## Hosted server
 
 Connect with DuckDB 2.0's [Quack](https://duckdb.org/docs/2.0/quack/overview)
-protocol at `quack:dev.datadesk.eco:443`, token `burnoff`. The public API
+protocol at `quack:dev.datadesk.eco:443`, token `burnoff`. The server
 accepts four queries, each returning one `geojson` column in one row:
 
 ```sql
@@ -98,7 +98,7 @@ FROM s3_hotspots(ST_MakeEnvelope(51.4, 25.8, 51.7, 26.0),
                 '2025-01-01', t1 := '2025-01-31');
 ```
 
-Unlike the hosted API, these functions return detection rows, not GeoJSON.
+Unlike the hosted server, these functions return detection rows, not GeoJSON.
 `g` is a lon/lat geometry (buffer points to give them area); `t1` defaults
 to today. Use a lateral join to query a table of areas:
 
@@ -123,7 +123,7 @@ The detector reads the cloud mask and B12, then B11 and B8A around
 candidates. The `nir_excess` test rejects peaks whose B8A rise is at
 least 0.1 of their B12 rise, to remove reflected sunlight.
 `thresholds` accepts `'name=value,...'`; defaults are in
-[`src/burnoff.c`](src/burnoff.c).
+[`src/s2.c`](src/s2.c).
 
 Requires baseline N0400 or later. Searches that fill the catalogue's
 1,000-scene page fail rather than return partial results. Detections in
@@ -149,7 +149,7 @@ background-subtracted radiance sums `s5` and `s6`, `temperature` (K),
 `rh` (radiant heat, MW), `saturated` and `confirmed`. Temperature and heat
 are derived from S5 and S6 without atmospheric correction; saturated
 hotspots have no temperature. `clear` excludes hot pixels, and clouds
-do not remove detections. Defaults are in [`src/slstr.c`](src/slstr.c).
+do not remove detections. Defaults are in [`src/s3.c`](src/s3.c).
 
 The extension uses product geolocation without the service's correction:
 systematic errors can approach 2 km. `exact=0` uses the less accurate

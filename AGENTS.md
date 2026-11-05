@@ -8,10 +8,10 @@ that the extension loads, offline.
 
 ## Layout
 
-- `src/burnoff.c`: the Sentinel-2 detector and its DuckDB and curl host.
+- `src/burnoff.c`, `src/burnoff.h`: shared DuckDB bindings, reads and workers.
+- `src/s2.c`: the Sentinel-2 detector and its DuckDB result binding.
 - `src/j2k.c`: the JPEG 2000 decoder.
-- `src/slstr.c`: the Sentinel-3 SLSTR night detector (`s3_detect`), on
-  the same jobs and host.
+- `src/s3.c`: the Sentinel-3 SLSTR night detector and its result binding.
 - `src/burnoff.sql`: macros run on load (`s2_scenes`, `s2_hotspots`,
   `s3_scenes`, `s3_hotspots`, `s3_flares`).
 - `serve/`: the service (`serve/deploy.sh`).
@@ -22,11 +22,11 @@ data-desk ETL (`etl/providers/data-desk/burnoff/`), which pins the
 
 ## The detector
 
-A detection is a job (`step()`) in stages: headers and the 60 m cloud
-mask; B12; background, candidates and windows; B11 and B8A around the
+The S2 detector runs in stages: headers and the 60 m cloud mask; B12;
+background, candidates and windows; B11 and B8A around the
 candidates; detections. Each stage names all its byte-range reads before
 any is made (a round), then its decodes. The host makes the reads at
-once (curl multi) and steps again.
+once (curl multi). The detector then resumes its stage.
 
 - With a TLM (N0512 on), PLTs give packet lengths and only the packets
   a window needs are read. Without one, an SOT search with learned
@@ -51,14 +51,15 @@ L1C baselines do not use. Over file://, run each date's boxes in its
 own process: a header cached from another date can give `tile-part not
 found`.
 
-A change to `burnoff.c`, `j2k.c` or `slstr.c` changes the store's
-digests (deploy.sh's `V`, `V3`), and the service reads every cell
-again. Where the output is unchanged, relabel the store's rows in
+The store digests (`deploy.sh`'s `V`, `V3`) include the shared host and
+header, plus each detector's sources. An S2-only change leaves S3
+unchanged, and conversely. A changed digest makes the service read its
+cells again. Where the output is unchanged, relabel the store's rows in
 `schema.sql`.
 
 ## The night detector
 
-`slstr.c` reads SLSTR L1B (`SL_1_RBT`) granules, netCDF-4 files of a
+`s3.c` reads SLSTR L1B (`SL_1_RBT`) granules, netCDF-4 files of a
 few deflated chunks per variable, with its own reader of the HDF5 they
 use: superblock v2, v2 object headers, compact or heap links and
 attributes, v3 chunked layout, a v1 B-tree leaf, shuffle and deflate.
@@ -112,7 +113,8 @@ Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
   constrained single linkage (40 m, never two of one date over 30 m
   apart) and names a site by its mean place rounded to 40 m, so a site
   and its id depend on the store alone. Keep its sums integer (whole
-  cm). `s3sites.sql` is the same at 750 m links, 250 m ids.
+  cm). `s3sites.sql` is the same at 750 m links, 250 m ids. Both use
+  `api.sql`'s `linked` macro for constrained single linkage.
 - The store (`/data/burnoff/store.duckdb`, `schema.sql`) is a cache of
   eodata. It has no keys: concurrent appends of one key conflict in
   DuckDB, so readers take distinct rows. Cells lead with tile and

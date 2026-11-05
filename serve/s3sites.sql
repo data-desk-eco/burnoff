@@ -27,30 +27,8 @@ FROM nd a JOIN nd b ON b.p.z = a.p.z AND b.n > a.n
   AND abs(b.p.x - a.p.x) <= 3 AND abs(b.p.y - a.p.y) <= 3,
 LATERAL (SELECT (b.p.x - a.p.x) ** 2 + (b.p.y - a.p.y) ** 2 AS l)
 WHERE l <= 9;
-CREATE OR REPLACE TEMP TABLE cn AS
-WITH RECURSIVE w(n, c) USING KEY (n) AS (
-  SELECT n, n FROM nd
-  UNION ALL
-  SELECT e.y, min(w.c) FROM w JOIN (SELECT a AS x, b AS y FROM ln
-    UNION ALL SELECT b, a FROM ln) e ON e.x = w.n
-  JOIN recurring.w o ON o.n = e.y WHERE w.c < o.c GROUP BY e.y)
-SELECT n, c, row_number() OVER (PARTITION BY c ORDER BY n) AS i FROM w;
-CREATE OR REPLACE TEMP TABLE lc AS
-SELECT x.c, row_number() OVER (PARTITION BY x.c ORDER BY r) AS r,
-       x.i AS a, y.i AS b
-FROM ln JOIN cn x ON x.n = ln.a JOIN cn y ON y.n = ln.b;
 CREATE OR REPLACE TEMP TABLE gs AS
-WITH RECURSIVE k(c, r, q, g) USING KEY (c) AS (
-  SELECT c, 0, list(q ORDER BY i), range(1, count(*) + 1)
-  FROM cn JOIN nd USING (n) GROUP BY c
-  UNION ALL
-  SELECT k.c, k.r + 1, k.q, if(i <> j AND NOT coalesce(clash3(grp(k.q, k.g,
-           i), grp(k.q, k.g, j)), false), list_transform(k.g, lambda x:
-           if(x = j, i, x)), k.g)
-  FROM k JOIN lc ON lc.c = k.c AND lc.r = k.r + 1,
-  LATERAL (SELECT least(k.g[a], k.g[b]) AS i, greatest(k.g[a], k.g[b]) AS j))
-SELECT x.n, y.n AS s FROM k JOIN cn x USING (c) JOIN cn y
-  ON y.c = k.c AND y.i = k.g[x.i];
+FROM linked('nd', 'ln', true);
 CREATE OR REPLACE TEMP TABLE nds AS SELECT nd.p, gs.s FROM nd JOIN gs USING (n);
 -- a site's place: its pebbles' mean, rounded to 250 m, in lon/lat
 CREATE OR REPLACE TEMP TABLE st AS

@@ -35,9 +35,39 @@ CREATE MACRO near(lon, lat) AS lat BETWEEN getvariable('s') - getvariable('m')
 CREATE MACRO ll(q, c, crs) AS ST_Transform(ST_Point(q.x + c[1], q.y + c[2]),
   crs, 'EPSG:4326', always_xy := true);
 CREATE MACRO grp(q, g, i) AS flatten(list_filter(q, lambda x, j: g[j] = i));
-CREATE MACRO clash(u, v) AS list_bool_or(list_transform(u, lambda a:
-  list_bool_or(list_transform(v, lambda b: a.d = b.d
-    AND (a.x - b.x) ** 2 + (a.y - b.y) ** 2 > 3000 ** 2))));
+CREATE MACRO clash(u, v, same_granule) AS
+  list_bool_or(list_transform(u, lambda a:
+  list_bool_or(list_transform(v, lambda b: a.d = b.d AND (same_granule
+    OR (a.x - b.x) ** 2 + (a.y - b.y) ** 2 > 3000 ** 2)))));
+
+-- Constrained single linkage over ordered nodes and links. S2 rejects
+-- same-date pairs over 30 m apart; S3 rejects every same-granule pair.
+CREATE MACRO linked(nodes, links, same_granule) AS TABLE
+WITH RECURSIVE
+nd AS (FROM query_table(nodes)), ln AS (FROM query_table(links)),
+w(n, c) USING KEY (n) AS (
+  SELECT n, n FROM nd
+  UNION ALL
+  SELECT e.y, min(w.c) FROM w JOIN (SELECT a AS x, b AS y FROM ln
+    UNION ALL SELECT b, a FROM ln) e ON e.x = w.n
+  JOIN recurring.w o ON o.n = e.y WHERE w.c < o.c GROUP BY e.y),
+cn AS (
+  SELECT n, c, row_number() OVER (PARTITION BY c ORDER BY n) AS i FROM w),
+lc AS (
+  SELECT x.c, row_number() OVER (PARTITION BY x.c ORDER BY r) AS r,
+         x.i AS a, y.i AS b
+  FROM ln JOIN cn x ON x.n = ln.a JOIN cn y ON y.n = ln.b),
+k(c, r, q, g) USING KEY (c) AS (
+  SELECT c, 0, list(q ORDER BY i), range(1, count(*) + 1)
+  FROM cn JOIN nd USING (n) GROUP BY c
+  UNION ALL
+  SELECT k.c, k.r + 1, k.q, if(i <> j AND NOT coalesce(clash(grp(k.q, k.g,
+           i), grp(k.q, k.g, j), same_granule), false),
+           list_transform(k.g, lambda x: if(x = j, i, x)), k.g)
+  FROM k JOIN lc ON lc.c = k.c AND lc.r = k.r + 1,
+  LATERAL (SELECT least(k.g[a], k.g[b]) AS i, greatest(k.g[a], k.g[b]) AS j))
+SELECT x.n, y.n AS s FROM k JOIN cn x USING (c) JOIN cn y
+  ON y.c = k.c AND y.i = k.g[x.i];
 
 -- sentinel-3's: the local evening a granule's look falls in, at lon (its
 -- local solar time less 12 h: slstr passes at about 22:00), from its
@@ -80,11 +110,6 @@ SELECT * REPLACE (s3lon(granule, track, lon, lat) AS lon,
 FROM (SELECT * EXCLUDE (v) FROM db.s3_hotspots WHERE v = getvariable('v')
         AND lat BETWEEN getvariable('s') - .05 AND getvariable('n') + .05
       UNION ALL BY NAME FROM query_table(h));
--- s3sites.sql's: two sites holding pebbles of one granule, two flares lit
--- at once
-CREATE MACRO clash3(u, v) AS list_bool_or(list_transform(u, lambda a:
-  list_contains(list_transform(v, lambda b: b.d), a.d)));
-
 -- the gate (quack_authorization_function), on each query: a script of
 -- bulk, index or export (q) after 'admin <key>' and a line, run as it is;
 -- a public one only as `FROM s2_hotspots(w, s, e, n[, 'a', 'b'])` or the

@@ -1,12 +1,10 @@
-# one c file over libcurl and zlib, with its own jpeg 2000 decoder
-# (src/j2k.c) and netcdf reader (src/slstr.c). src/ holds duckdb v2.0.0's c
-# extension headers; the extension targets the stable c api v1.2.0, so it
-# loads in any duckdb from 1.2 on
+# DuckDB's stable C API (1.2+), libcurl and zlib. The detectors compile
+# separately; S2 owns the JPEG 2000 decoder in src/j2k.c.
 PKGS = libcurl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
 CFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDLIBS = $(shell pkg-config --libs $(PKGS)) -lz -lpthread -lm
-SRC = src/burnoff.c
+SRC = src/burnoff.c src/s2.c src/s3.c
 PLATFORM ?= $(shell uname -sm | awk '{ \
 	os = $$1 == "Darwin" ? "osx" : tolower($$1); \
 	arch = $$2 ~ /^(x86_64|amd64)$$/ ? "amd64" : "arm64"; \
@@ -17,8 +15,10 @@ E = ext/burnoff.duckdb_extension
 # the shared library plus duckdb's metadata footer: a wasm-style custom
 # section header, eight 32-byte fields (last first) and 256 bytes left for a
 # signature
-$(E): src/burnoff.c src/j2k.c src/slstr.c ext/burnoff.sql.h
-	$(CC) $(CFLAGS) -Iext -shared -fPIC $(SRC) $(LDLIBS) -o ext/burnoff.so
+$(E): $(SRC) src/burnoff.h src/j2k.c src/duckdb.h \
+      src/duckdb_extension.h ext/burnoff.sql.h
+	$(CC) $(CFLAGS) -Iext -shared -fPIC -fvisibility=hidden $(SRC) $(LDLIBS) \
+	  -o ext/burnoff.so
 	{ cat ext/burnoff.so; printf '\000\223\004\020duckdb_signature\200\004'; \
 	  for f in "" "" "" C_STRUCT $(VERSION) v1.2.0 $(PLATFORM) 4; do \
 	    printf '%s' "$$f"; head -c $$((32 - $${#f})) /dev/zero; done; \
@@ -49,6 +49,11 @@ test: $(E)
 	    from (values ('file:///S3A_SL_1_RBT____20250115T210000_x.SEN3'), \
 	    ('file:///S3A_SL_1_RBT____20250115T210000_x.SEN3'), (null), \
 	    ('file:///S3A_SL_1_RBT____20250115T210000_x.SEN3')) t(d))"
+	duckdb -unsigned -c "load spatial; load '$(CURDIR)/$(E)'; select \
+	  if(s2_detect('file:///none', 0, 0, 1, 1, 'b12_min=oops').error \
+	    = 'invalid threshold value', 'numeric thresholds', error('bad number')), \
+	  if(s3_detect('file:///none', 0, 0, 1, 1, 'exact=2').error \
+	    = 'exact must be 0 or 1', 'threshold bounds', error('bad flag'))"
 
 # into ~/.duckdb/extensions, so `load burnoff` works from any directory
 install: $(E)

@@ -27,8 +27,8 @@ install -C -m 755 ~/burnoff/ext/burnoff.duckdb_extension ~/burnoff/serve/* $O/
 # the detectors' digests, what a cell is kept under (schema.sql's v): s2's
 # of its sources, s3's of its own, so a change to one keeps the other's
 s=~/burnoff/src
-V=$(cat $s/burnoff.c $s/j2k.c | sha1sum | cut -c1-12)
-V3=$(cat $s/burnoff.c $s/slstr.c | sha1sum | cut -c1-12)
+V=$(cat $s/burnoff.h $s/burnoff.c $s/s2.c $s/j2k.c | sha1sum | cut -c1-12)
+V3=$(cat $s/burnoff.h $s/burnoff.c $s/s3.c | sha1sum | cut -c1-12)
 # the gate's key (api.sql), for the box's own scripts alone
 [ -s $D/env ] || (umask 077; echo "KEY=$(openssl rand -hex 16)" > $D/env)
 [ -s $O/seeds.txt ] || $O/duckdb < $O/seeds.sql > $O/seeds.txt

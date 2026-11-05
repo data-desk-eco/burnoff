@@ -28,12 +28,26 @@
 // the thresholds are over the chunks read, a quarter of the granule or
 // more, not over all of it. a small box takes four rounds: 3.8 MB of a
 // night with nothing in it, 6-8 MB with a flare.
+#include "burnoff.h"
 #include <zlib.h>
+#include <limits.h>
 
 static const char *TK3[] = {"s5_gain", "s6_gain", "sza_min", "cloud_bits",
   "t_min", "t_max", "exact", "square"};
 static const double TD3[] = {.89, .80, 90, 0x3fc0, 500, 5000, 1, .02};
 enum { G5, G6, SZAMIN, CBITS, TMIN, TMAX, EXACT, SQ, NT3 };
+
+static const char *thresholds(const double *t) {
+  if (t[G5] <= 0 || t[G6] <= 0) return "nonpositive gain";
+  if (t[SZAMIN] < 0 || t[SZAMIN] > 180) return "sza_min outside 0..180";
+  if (t[CBITS] < 0 || t[CBITS] > INT_MAX || t[CBITS] != floor(t[CBITS]))
+    return "invalid cloud_bits";
+  if (t[TMIN] <= 0 || t[TMAX] <= t[TMIN]) return "invalid temperature range";
+  if (t[EXACT] != 0 && t[EXACT] != 1) return "exact must be 0 or 1";
+  // Zero disables squares; finer than the output's 1e-6 degrees is not useful.
+  if (t[SQ] != 0 && (t[SQ] < 1e-6 || t[SQ] > 360)) return "invalid square size";
+  return NULL;
+}
 
 // a file's head: superblock, object headers, heaps. geodetic_an's links lie
 // past 27 KB, so 24 KB took a second round on every granule
@@ -79,20 +93,21 @@ typedef struct {
 
 // one hotspot: its place, swir excess radiances summed, planck's
 // temperature (K) and radiant heat (MW), pixels, and its column from the
-// sub-satellite track (500 m pixels, excess-weighted); and its pixels as
-// json, [[rh, then each corner's lon and lat], …], each pixel's share of
-// the heat by its s6 excess (null when saturated)
+// sub-satellite track (500 m pixels, excess-weighted). Each pixel retains
+// [rh, then each corner's lon and lat], its heat weighted by S6 excess.
 typedef struct {
   double lon, lat, s5, s6, temp, rh;
   int px, conf, sat;
   double track;
-  char *pj;
+  double (*corners)[9];
 } h3;
 
 // a job's own: the granule, its variables, its grids' columns from the
 // sub-satellite track, the window (in the 500 m grid, and each raster's
 // own: rows, columns, origin), the bands' thresholds in dn, the hotspots
-typedef struct sj {
+typedef struct {
+  job *io;
+  struct s3k *chunks;
   char *dir, *u[NF];
   double box[4], t[NT3], sza, clear, s;
   var v[NV];
@@ -114,38 +129,41 @@ typedef struct sj {
   // (qn) and the clear among them (qc), as `clear` counts the box's
   int *qn, *qc, qw, qh;
   long qx, qy;
-} sj;
+} s3;
 
 // a pixel at lon, lat into its square, clear or not; none past the grid
-static void square(sj *x, double lon, double lat, int ok) {
+static void square(s3 *x, double lon, double lat, int ok) {
+  if (!x->qn) return;
   double q = x->t[SQ];
   long w = lround(360 / q), dx = ((long)floor(lon / q) - x->qx) % w,
        dy = (long)floor(lat / q) - x->qy;
   if (dx < 0) dx += w;
-  if (!x->qn || dx >= x->qw || dy < 0 || dy >= x->qh) return;
+  if (dx >= x->qw || dy < 0 || dy >= x->qh) return;
   x->qn[dy * x->qw + dx]++, x->qc[dy * x->qw + dx] += ok;
 }
 
 // file f done with, unless another box of the granule will read it again
-static void drop3(job *j, int f) {
-  if (!j->x->keep) forget(j, j->x->u[f]);
+static void drop3(s3 *x, int f) {
+  if (!x->keep) forget(x->io, x->u[f]);
 }
 
 // an attribute message's value, if it is named nm: v1 pads its parts to 8
 // bytes, v2 does not, v3 adds an encoding byte
 static int attr(const unsigned char *a, const unsigned char *end,
                 const char *nm, double *x) {
+  if (end - a < 8) return 0;
   int v = a[0], ns = le(a + 2, 2), ts = le(a + 4, 2), ss = le(a + 6, 2);
-  const unsigned char *p = a + (v == 3 ? 9 : 8), *t, *s, *d;
-#define PAD(n) (v == 1 ? ((n) + 7) & ~7 : (n))
-  if (v < 1 || v > 3 || p + ns > end || strlen(nm) + 1 != (size_t)ns ||
-      memcmp(p, nm, ns))
-    return 0;
-  t = p + PAD(ns), s = t + PAD(ts), d = s + PAD(ss);
-#undef PAD
-  if (t + 8 > end) return 0;
+  int head = v == 3 ? 9 : 8;
+  if (v < 1 || v > 3 || end - a < head + ns ||
+      strlen(nm) + 1 != (size_t)ns || memcmp(a + head, nm, ns)) return 0;
+  int tn = v == 1 ? (ns + 7) & ~7 : ns,
+      sn = v == 1 ? (ts + 7) & ~7 : ts,
+      dn = v == 1 ? (ss + 7) & ~7 : ss;
+  if (ts < 8 || end - a < head + tn + sn + dn) return 0;
+  const unsigned char *t = a + head + tn, *d = t + sn + dn;
   int c = t[0] & 15, sz = le(t + 4, 4);
-  if (d + sz > end || c > 1 || sz > 8) return 0;
+  if (sz < 1 || sz > 8 || end - d < sz || c > 1 ||
+      (c && sz != 4 && sz != 8)) return 0;
   if (c) *x = real(d, sz);
   else {
     long long u = le(d, sz);
@@ -176,28 +194,58 @@ static void pack(const unsigned char *d, const unsigned char *e, var *v) {
 // one message of a variable's object header
 static const char *msg(int t, const unsigned char *d, const unsigned char *e,
                        var *v) {
+  size_t n = e - d;
   if (t == 1) {   // dataspace
+    if (n < 4) return "short dataspace";
     int k = d[0] == 1 ? 8 : 4;
-    if (d[1] != 2) return "not a 2-d variable";
-    v->h = le(d + k, 8), v->w = le(d + k + 8, 8);
+    if (d[0] < 1 || d[0] > 2 || d[1] != 2) return "not a 2-d variable";
+    if (n < (size_t)k + 16) return "short dataspace";
+    long long h = le(d + k, 8), w = le(d + k + 8, 8);
+    if (h <= 0 || w <= 0 || h > INT_MAX || w > INT_MAX)
+      return "invalid variable dimensions";
+    v->h = h, v->w = w;
   } else if (t == 3) {   // datatype
+    if (n < 8) return "short datatype";
     v->fl = (d[0] & 15) == 1, v->sg = d[1] & 8, v->es = le(d + 4, 4);
-    if ((d[0] & 15) > 1 || v->es > 8) return "not a number";
+    if ((d[0] & 15) > 1 || v->es < 1 || v->es > 8 ||
+        (v->fl && v->es != 4 && v->es != 8)) return "not a supported number";
   } else if (t == 8) {   // layout: v3, chunked, a v1 b-tree
+    if (n < 19) return "short layout";
     if (d[0] != 3 || d[1] != 2 || d[2] != 3) return "not chunked";
     v->bt = le(d + 3, 8), v->ch = le(d + 11, 4), v->cw = le(d + 15, 4);
+    if (v->bt < 0 || v->ch <= 0 || v->cw <= 0) return "invalid chunk layout";
   } else if (t == 11) {   // filters: shuffle and deflate alone
+    if (n < 2) return "short filters";
     int ver = d[0], o = ver == 1 ? 8 : 2;
+    if (ver < 1 || ver > 2) return "unknown filter version";
+    if (n < (size_t)o) return "short filters";
     for (int f = 0; f < d[1]; f++) {
-      int id = le(d + o, 2), nm = ver == 1 || id >= 256,
-          nl = nm ? le(d + o + 2, 2) : 0, nv = le(d + o + (nm ? 6 : 4), 2);
+      if (n - o < 6) return "short filter";
+      int id = le(d + o, 2), nm = ver == 1 || id >= 256;
+      if (nm && n - o < 8) return "short filter";
+      int nl = nm ? le(d + o + 2, 2) : 0,
+          nv = le(d + o + (nm ? 6 : 4), 2);
       o += ver == 1 ? 8 + ((nl + 7) & ~7) + ((4 * nv + 7) & ~7)
                     : (nm ? 8 : 6) + nl + 4 * nv;
+      if ((size_t)o > n) return "short filter values";
       if (id == 2) v->sh = 1;
       else if (id != 1) return "an unknown filter";
     }
-  } else if (t == 12) pack(d, e, v);
-  else if (t == 21) v->hp = le(d + 2 + (d[1] & 1 ? 2 : 0), 8);   // dense
+  } else if (t == 12) {
+    if (n < 8) return "short attribute";
+    int ver = d[0], head = ver == 3 ? 9 : 8;
+    if (ver < 1 || ver > 3) return "unknown attribute version";
+    for (int k = 2; k < 8; k += 2) {
+      int size = le(d + k, 2);
+      head += ver == 1 ? (size + 7) & ~7 : size;
+    }
+    if (n < (size_t)head) return "short attribute";
+    pack(d, e, v);
+  } else if (t == 21) {   // dense attributes
+    if (n < 2 || n < (size_t)(10 + (d[1] & 1 ? 2 : 0)))
+      return "short attribute info";
+    v->hp = le(d + 2 + (d[1] & 1 ? 2 : 0), 8);
+  }
   return NULL;
 }
 
@@ -224,25 +272,34 @@ static long long h5var(const unsigned char *p, size_t n, const char *nm,
   q[0] = a + o + (1 << (fl & 3)), q[1] = q[0] + le(p + a + o, 1 << (fl & 3));
   *v = (var){.sc = 1, .fill = NAN}, nq = 2;
   for (int b = 0; b < nq; b += 2) {
+    if (q[b] < 0 || q[b + 1] < q[b] || q[b + 1] > (1ll << 40))
+      return *e = "invalid object header size", -1;
     if (q[b + 1] + 4 > (long long)n) return q[b + 1] + 4096;
-    for (long long k = q[b]; k + 4 <= q[b + 1];) {
+    for (long long k = q[b]; k + (fl & 4 ? 6 : 4) <= q[b + 1];) {
       int t = p[k], s = le(p + k + 1, 2);
       k += 4 + (fl & 4 ? 2 : 0);
-      if (k + s > q[b + 1]) break;
-      if (t == 16 && nq < 16)   // a continuation: OCHK, messages, checksum
-        q[nq] = le(p + k, 8) + 4, q[nq + 1] = q[nq] - 8 + le(p + k + 8, 8),
-        nq += 2;
-      if ((*e = msg(t, p + k, p + q[b + 1], v))) return -1;
+      if (k + s > q[b + 1]) return *e = "short object message", -1;
+      if (t == 16) {   // a continuation: OCHK, messages, checksum
+        if (s != 16 || nq == 16) return *e = "invalid header continuation", -1;
+        long long at = le(p + k, 8), len = le(p + k + 8, 8);
+        if (at < 0 || at > (1ll << 40) || len < 8 || len > (1ll << 30))
+          return *e = "invalid header continuation", -1;
+        q[nq] = at + 4, q[nq + 1] = at + len - 4, nq += 2;
+      }
+      if ((*e = msg(t, p + k, p + k + s, v))) return -1;
       k += s;
     }
   }
   // more attributes than fit lie in a fractal heap of one direct block
   if (v->hp > 0) {   // all ones: none
     long long a = v->hp, r, z;
+    if (a > (1ll << 40)) return *e = "invalid attribute heap", -1;
     if (a + 160 > (long long)n) return a + 4096;
     if (memcmp(p + a, "FRHP", 4) || le(p + a + 140, 2))
       return *e = "attributes in an indirect heap", -1;
     r = le(p + a + 132, 8), z = le(p + a + 112, 8);
+    if (r < 0 || r > (1ll << 40) || z < 0 || z > (1ll << 30))
+      return *e = "invalid attribute heap", -1;
     if (r + z > (long long)n) return r + z + 4096;
     for (long long i = r; i < r + z - 9; i++) pack(p + i, p + r + z, v);
   }
@@ -275,22 +332,16 @@ typedef struct s3k {
   int counted;    // once h is made
 } s3k;
 
-static void s3kfree(job *j) {
-  for (s3k *c = j->k3, *n; c; c = n)
-    n = c->next, free(c->b), free(c->h), free(c);
-  j->k3 = NULL;
-}
-
 // chunk i of v (variable k) from its bytes z into raster o (rows [r0, r1),
 // columns [c0, c1)), unpacked, its fill NAN; and, with h, a count of the
 // chunk's dn (as unsigned shorts), all of it, for the band's threshold
-static const char *unchunk(job *j, int k, const var *v, int i,
+static const char *unchunk(s3 *x, int k, const var *v, int i,
                            const unsigned char *z, float *o, int r0, int r1,
                            int c0, int c1, unsigned *h) {
   uLongf n = (uLongf)v->ch * v->cw * v->es, m = n / v->es;
   const char *e = NULL;
   unsigned char *a = NULL, *b = NULL;
-  s3k *held = j->k3;
+  s3k *held = x->chunks;
   while (held && (held->k != k || held->at != v->ka[i])) held = held->next;
   if (held) b = held->b;
   else {
@@ -300,11 +351,11 @@ static const char *unchunk(job *j, int k, const var *v, int i,
     if (!e && v->sh)   // byte k of every element, then byte k + 1
       for (size_t q = 0; q < m; q++)
         for (int c = 0; c < v->es; c++) b[q * v->es + c] = a[c * m + q];
-    if (!e && j->x->keep) {
+    if (!e && x->keep) {
       s3k *c = malloc(sizeof *c);
-      *c = (s3k){j->k3, v->ka[i], k, b, h ? calloc(65536, sizeof *h) : NULL,
+      *c = (s3k){x->chunks, v->ka[i], k, b, h ? calloc(65536, sizeof *h) : NULL,
                  0};
-      j->k3 = held = c;
+      x->chunks = held = c;
       if (b != a) free(a);
       a = NULL;
     }
@@ -345,8 +396,7 @@ static const char *unchunk(job *j, int k, const var *v, int i,
 // v (variable k of file f) over rows [r0, r1) and columns [c0, c1) into
 // its raster, clipped to v: LACK until the chunks under it, read as runs,
 // are in hand
-static const char *grab(job *j, int k, int r0, int r1, int c0, int c1) {
-  sj *x = j->x;
+static const char *grab(s3 *x, int k, int r0, int r1, int c0, int c1) {
   var *v = &x->v[k];
   const char *e = NULL, *u = x->u[FV[k]];
   long long q[128];
@@ -358,10 +408,10 @@ static const char *grab(job *j, int k, int r0, int r1, int c0, int c1) {
                   (!x->km[k] || x->km[k] >> i & 1))
   for (int i = 0; i < v->nk; i++)
     if (UNDER(i)) q[2 * n] = v->ka[i], q[2 * n + 1] = v->ka[i] + v->kn[i], n++;
-  n = merge(q, n, j->gap, 0);
+  n = merge(q, n, x->io->gap, 0);
   for (int i = 0; i < n; i++)
-    if (!got(j, u, q[2 * i], q[2 * i + 1]) &&
-        (e = want(j, u, q[2 * i], q[2 * i + 1])) != LACK)
+    if (!got(x->io, u, q[2 * i], q[2 * i + 1]) &&
+        (e = want(x->io, u, q[2 * i], q[2 * i + 1])) != LACK)
       return e;
   if (e == LACK) return e;
   size_t m = (size_t)(r1 - r0) * (c1 - c0);
@@ -372,8 +422,8 @@ static const char *grab(job *j, int k, int r0, int r1, int c0, int c1) {
     x->hist[k] = calloc(65536, sizeof *x->hist[k]);
   for (int i = 0; i < v->nk; i++)
     if (UNDER(i)) {
-      rd *r = got(j, u, v->ka[i], v->ka[i] + v->kn[i]);
-      if ((e = unchunk(j, k, v, i, r->b.p + v->ka[i] - r->lo, x->b[k], r0,
+      rd *r = got(x->io, u, v->ka[i], v->ka[i] + v->kn[i]);
+      if ((e = unchunk(x, k, v, i, r->b.p + v->ka[i] - r->lo, x->b[k], r0,
                        r1, c0, c1, x->hist[k])))
         return e;
     }
@@ -396,14 +446,14 @@ static const char *grab(job *j, int k, int r0, int r1, int c0, int c1) {
 }
 
 // a raster's value at its band's row r, column c, or NAN off it
-static float px(const sj *x, int k, int r, int c) {
+static float px(const s3 *x, int k, int r, int c) {
   r -= x->wr[k], c -= x->wc[k];
   return x->b[k] && r >= 0 && c >= 0 && r < x->wh[k] && c < x->ww[k]
            ? x->b[k][(size_t)r * x->ww[k] + c] : NAN;
 }
 
 // whether a value of variable k is above its band's threshold in dn
-static int hot(const sj *x, int k, float y) {
+static int hot(const s3 *x, int k, float y) {
   return y > x->th[k] * x->v[k].sc + x->v[k].of;
 }
 
@@ -439,8 +489,7 @@ static double sensed(const char *d) {
 
 // stage 0: the sun, then each file's head, its variables' headers, and its
 // grid's offsets
-static const char *s3heads(job *j) {
-  sj *x = j->x;
+static const char *s3heads(s3 *x) {
   const char *e = NULL;
   double *b = x->box, s = sensed(x->dir);
   if (isnan(s)) return "not an SL_1_RBT granule";
@@ -449,8 +498,8 @@ static const char *s3heads(job *j) {
   x->sza = zenith(b[0] + span(b) / 2, (b[1] + b[3]) / 2, x->s = s);
   if (x->sza < x->t[SZAMIN] && span(b) < 10 && b[3] - b[1] < 10) return FIN;
   for (int f = 0; f < NF; f++)
-    if (!got(j, x->u[f], 0, x->hn[f]) &&
-        (e = want(j, x->u[f], 0, x->hn[f])) != LACK) {
+    if (!got(x->io, x->u[f], 0, x->hn[f]) &&
+        (e = want(x->io, x->u[f], 0, x->hn[f])) != LACK) {
       if (f != 3 || x->in || !strcmp(e, "fetch failed after retries"))
         return e;
       // before baseline 004 F1 is on the 1 km 'in' grid, beside S7
@@ -459,14 +508,14 @@ static const char *s3heads(job *j) {
     }
   if (e == LACK) return e;
   for (int k = 0, f; k < NV; k++) {
-    rd *r = got(j, x->u[f = FV[k]], 0, x->hn[FV[k]]);
+    rd *r = got(x->io, x->u[f = FV[k]], 0, x->hn[FV[k]]);
     long long need = h5var(r->b.p, r->b.n, k == F1 && x->in ? "F1_BT_in"
                            : V3[k], &x->v[k], &e);
-    if (need > 0) return x->hn[f] = need, want(j, x->u[f], 0, need);
+    if (need > 0) return x->hn[f] = need, want(x->io, x->u[f], 0, need);
     if (need < 0) return e;
   }
   for (int f = 0; f < NF; f++) {
-    rd *r = got(j, x->u[f], 0, x->hn[f]);
+    rd *r = got(x->io, x->u[f], 0, x->hn[f]);
     double to;
     if (!gattr(r->b.p, r->b.n, "track_offset", &to)) return "no track offset";
     x->to[f] = to;
@@ -477,20 +526,19 @@ static const char *s3heads(job *j) {
 
 // stage 1: every chunk index, and the tie-point grid (whose index the head
 // nearly always holds), as doubles
-static const char *s3trees(job *j) {
-  sj *x = j->x;
+static const char *s3trees(s3 *x) {
   const char *e = NULL, *l = NULL;
   for (int k = 0; k < NV; k++) {
     var *v = &x->v[k];
-    rd *r = got(j, x->u[FV[k]], v->bt, v->bt + TREE3);
-    if (!r) e = want(j, x->u[FV[k]], v->bt, v->bt + TREE3);
+    rd *r = got(x->io, x->u[FV[k]], v->bt, v->bt + TREE3);
+    if (!r) e = want(x->io, x->u[FV[k]], v->bt, v->bt + TREE3);
     else if (!v->ok) e = btree(r->b.p + v->bt - r->lo, v);
     if (e && e != LACK) return e;
     l = l ? l : e, e = NULL;
   }
   for (int k = LAT; k <= LON; k++)
     if (x->v[k].ok && !x->ll[k]) {
-      if ((e = grab(j, k, 0, x->v[k].h, 0, x->v[k].w)) == LACK) l = e;
+      if ((e = grab(x, k, 0, x->v[k].h, 0, x->v[k].w)) == LACK) l = e;
       else if (e) return e;
       else {
         size_t m = (size_t)x->wh[k] * x->ww[k];
@@ -505,7 +553,7 @@ static const char *s3trees(job *j) {
 // grid: row i is tie row i/2 and column j tie column j/32 from their track
 // offsets. a few hundred metres off on flat ground, the terrain's parallax
 // more over hills: for the window alone
-static void place(const sj *x, double i, double j, double *lon,
+static void place(const s3 *x, double i, double j, double *lon,
                   double *lat) {
   int th = x->v[LAT].h, tw = x->v[LAT].w;
   double r = i / 2, c = x->to[0] - (x->to[1] - j) / 32;
@@ -530,17 +578,16 @@ static int inbox(const double *b, double lon, double lat) {
 }
 
 // file f's 1 km row and column under 500 m pixel i, j
-static void km(const sj *x, int f, int i, int j, int *r, int *c) {
+static void km(const s3 *x, int f, int i, int j, int *r, int *c) {
   *r = (int)floor(i / 2.);
   *c = x->to[f] - (int)floor((x->to[1] - j + 1) / 2.);
 }
 
 // stage 2: the box in the image, from the tie-point cells over it, widened
 // for the background; S5, its exception flags and the cloud mask over it
-static const char *s3window(job *j) {
-  sj *x = j->x;
+static const char *s3window(s3 *x) {
   int th = x->v[LAT].h, tw = x->v[LAT].w;
-  drop3(j, 0);   // each stage drops the files it is done with
+  drop3(x, 0);   // each stage drops the files it is done with
   if (!x->r1) {
     double *la = x->ll[0], *lo = x->ll[1], *b = x->box;
     int r0 = x->H, r1 = 0, c0 = x->W, c1 = 0;
@@ -572,7 +619,7 @@ static const char *s3window(job *j) {
   int ks[] = {S5, X5, CLD};
   for (int k = 0; k < 3; k++)
     if (!x->b[ks[k]] &&
-        (e = grab(j, ks[k], x->r0, x->r1, x->c0, x->c1)) && (l = e) != LACK)
+        (e = grab(x, ks[k], x->r0, x->r1, x->c0, x->c1)) && (l = e) != LACK)
       return e;
   return l;
 }
@@ -584,12 +631,11 @@ static const char *s3window(job *j) {
 // box's clear share: of the rest, those where no cloud test of cloud_bits
 // fired (the night's mid-infrared tests take most hot pixels for cloud);
 // then, if any are hot, S6 and the pixels' places
-static const char *s3cands(job *j) {
-  sj *x = j->x;
+static const char *s3cands(s3 *x) {
   int ww = x->c1 - x->c0;
   size_t m = (size_t)(x->r1 - x->r0) * ww;
   float *s5 = x->b[S5], *xc = x->b[X5], *cl = x->b[CLD];
-  drop3(j, 1), drop3(j, 5);
+  drop3(x, 1), drop3(x, 5);
   if (!x->cd) {
     double lon, lat;
     long in = 0, clr = 0;
@@ -635,7 +681,7 @@ static const char *s3cands(job *j) {
       a += x->cd[0] / ww, b = x->r0 + x->cd[x->nc - 1] / ww + 1, c += c0,
       d = x->c0 + c1;
     if ((k == S6 || (k >= LA5 && x->t[EXACT])) && !x->b[k] &&
-        (e = grab(j, k, a, b, c, d)) && (l = e) != LACK)
+        (e = grab(x, k, a, b, c, d)) && (l = e) != LACK)
       return e;
   }
   return l;
@@ -665,12 +711,11 @@ static double median(float *a, int n) {
 // together (x->mb[x->at[l]..x->at[l + 1]) for root l). one is confirmed if
 // it is saturated or S6 is hot within a pixel of it; else S7 (F1 where S7
 // saturates) is read over the window, to be hot within a 1 km pixel
-static const char *s3clus(job *j) {
-  sj *x = j->x;
+static const char *s3clus(s3 *x) {
   int nc = x->nc, *cd = x->cd, ww = x->c1 - x->c0, need = 0;
   if (!x->mb) {
     int *par = malloc(nc * 4), *p;
-    for (int f = 0; f < NF; f++) drop3(j, f);
+    for (int f = 0; f < NF; f++) drop3(x, f);
     for (int k = 0; k < nc; k++) {
       par[k] = k;
       for (int q = k - 1; q >= 0 && cd[k] - cd[q] <= ww + 1; q--)
@@ -697,7 +742,7 @@ static const char *s3clus(job *j) {
   for (int k = F1; need && k <= S7; k++) {
     int a, b, c, d;
     km(x, FV[k], x->r0, x->c0, &a, &c), km(x, FV[k], x->r1, x->c1, &b, &d);
-    if (!x->b[k] && (e = grab(j, k, a - 2, b + 2, c - 2, d + 2)) &&
+    if (!x->b[k] && (e = grab(x, k, a - 2, b + 2, c - 2, d + 2)) &&
         (r = e) != LACK)
       return e;
   }
@@ -708,8 +753,7 @@ static const char *s3clus(job *j) {
 // what lies two pixels beyond its box) its swir sums, whose ratio gives
 // planck's temperature, and S6 at that temperature the fire's area and so
 // its radiant heat
-static const char *s3dets(job *j) {
-  sj *x = j->x;
+static const char *s3dets(s3 *x) {
   int ww = x->c1 - x->c0;
   for (int l = 0; l < x->nc; l++) {
     int n = x->at[l + 1] - x->at[l], *m = x->mb + x->at[l], sat = 0, h = 0,
@@ -770,9 +814,7 @@ static const char *s3dets(job *j) {
     double rh = 5.670374e-8 * pow(t, 4) * a6 / planck(L6, t) * APIX / 1e6;
     // each pixel's corners off the tie points, moved by what its own place
     // (the terrain's parallax) moves its centre
-    char *pj;
-    size_t pn;
-    FILE *fp = open_memstream(&pj, &pn);
+    double (*corners)[9] = malloc(n * sizeof *corners);
     for (int q = 0; q < n; q++) {
       int i = x->r0 + m[q] / ww, jj = x->c0 + m[q] % ww;
       float la = px(x, LA5, i, jj), lo = px(x, LO5, i, jj),
@@ -781,43 +823,60 @@ static const char *s3dets(job *j) {
       place(x, i, jj, &b, &a);
       double dy = isfinite(la + lo) ? la - a : 0, dx = isfinite(la + lo)
         ? lo - b - 360 * round((lo - b) / 360) : 0;
-      fprintf(fp, isfinite(v) ? "%s[%.4g" : "%s[null", q ? "," : "[", v);
+      corners[q][0] = v;
       for (int z = 0; z < 4; z++) {
         place(x, i + (z < 2 ? -.5 : .5), jj + (z % 3 ? .5 : -.5), &b, &a);
-        fprintf(fp, ",%.6f,%.6f", fmod(b + dx + 540, 360) - 180, a + dy);
+        corners[q][1 + 2 * z] = fmod(b + dx + 540, 360) - 180;
+        corners[q][2 + 2 * z] = a + dy;
       }
-      fputc(']', fp);
     }
-    fputc(']', fp), fclose(fp);
     if (x->nd == x->cap)
       x->d = realloc(x->d, (x->cap = 2 * x->cap + 8) * sizeof *x->d);
     x->d[x->nd++] = (h3){lon, lat, a5, a6, t, rh, n, x->ok[l] || h, !!sat,
-      wj / w - x->to[1], pj};
+      wj / w - x->to[1], corners};
   }
   return NULL;
 }
 
-static const char *s3stage(job *j) {
-  static const char *(*const s[NS3])(job *) = {s3heads, s3trees, s3window,
-                                               s3cands, s3clus, s3dets};
-  return s[j->st](j);
-}
-
-static void s3start(job *j, sj *x) {
-  j->x = x, j->gap = 1 << 20, x->clear = x->sza = NAN;
+static void s3start(s3 *x) {
+  x->clear = x->sza = NAN;
   for (int f = 0; f < NF; f++)
     if (x->hn[f] = HEAD3[f], asprintf(&x->u[f], "%s/%s.nc", x->dir, F3[f]) < 0)
       x->u[f] = NULL;
 }
 
 // all but its result and granule, once it is done
-static void s3end(sj *x) {
+static void s3end(s3 *x) {
   for (int f = 0; f < NF; f++) free(x->u[f]), x->u[f] = NULL;
   for (int k = 0; k < NV; k++)
     free(x->b[k]), free(x->hist[k]), x->b[k] = NULL, x->hist[k] = NULL;
   free(x->ll[0]), free(x->ll[1]), free(x->cd), free(x->at), free(x->mb);
   free(x->ok);
   x->ll[0] = x->ll[1] = NULL, x->cd = x->at = x->mb = NULL, x->ok = NULL;
+}
+
+static void s3_work(row *w, job *io) {
+  static const char *(*const stages[])(s3 *) = {s3heads, s3trees, s3window,
+                                               s3cands, s3clus, s3dets};
+  s3k *chunks = NULL;
+  io->gap = 1 << 20;
+  for (row *v = w; v; v = v->same) {
+    if (v->e) continue;
+    s3 *x = v->data;
+    x->io = io, x->chunks = chunks;
+    s3start(x);
+    for (size_t st = 0; st < sizeof stages / sizeof *stages;) {
+      const char *e = stages[st](x);
+      if (e == LACK) { read_round(io); continue; }
+      if (e == FIN) break;
+      if (e) { v->e = e; break; }
+      st++;
+    }
+    chunks = x->chunks;
+    s3end(x);
+  }
+  for (s3k *c = chunks, *next; c; c = next)
+    next = c->next, free(c->b), free(c->h), free(c);
 }
 
 // rows by granule, then by place in the chunk; a null row last
@@ -829,6 +888,22 @@ static int bydir(const void *a, const void *b) {
   return c ? c : (i > k) - (i < k);
 }
 
+// Preserve the public pixel JSON's precision and nulls at the output boundary.
+static void pixels_json(duckdb_vector out, idx_t row, const h3 *h) {
+  char *json;
+  size_t size;
+  FILE *fp = open_memstream(&json, &size);
+  for (int i = 0; i < h->px; i++) {
+    const double *p = h->corners[i];
+    fprintf(fp, isfinite(p[0]) ? "%s[%.4g" : "%s[null", i ? "," : "[", p[0]);
+    for (int k = 1; k < 9; k++) fprintf(fp, ",%.6f", p[k]);
+    fputc(']', fp);
+  }
+  fputc(']', fp), fclose(fp);
+  duckdb_vector_assign_string_element_len(out, row, json, size);
+  free(json);
+}
+
 #define NH 11  // a hotspot's fields
 #define NQ 4   // a square's
 static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
@@ -837,16 +912,17 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
     duckdb_data_chunk_get_column_count(in), t = 0, o = 0;
   duckdb_vector v[6];
   row *rs = calloc(n ? n : 1, sizeof *rs);
-  sj *xs = calloc(n ? n : 1, sizeof *xs);
+  s3 *xs = calloc(n ? n : 1, sizeof *xs);
   (void)info;
   for (idx_t k = 0; k < cols; k++) v[k] = duckdb_data_chunk_get_vector(in, k);
   for (idx_t i = 0; i < n; i++) {
     row *w = &rs[i];
-    sj *x = &xs[i];
+    s3 *x = &xs[i];
     int null = 0;
     for (idx_t k = 0; k < 5; k++) null |= !valid(v[k], i);
     if (null) continue;
-    w->url = str(v[0], i), x->dir = strdup(w->url), w->x = x;
+    w->url = str(v[0], i), x->dir = strdup(w->url);
+    w->data = x, w->work = s3_work;
     for (int k = 0; k < 4; k++)
       x->box[k] = ((double *)duckdb_vector_get_data(v[k + 1]))[i];
     memcpy(x->t, TD3, sizeof x->t);
@@ -855,6 +931,10 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
       w->e = params(p, x->t, TK3, NT3);
       free(p);
     }
+    if (!w->e) w->e = thresholds(x->t);
+    for (int k = 0; k < 4; k++)
+      if (!isfinite(x->box[k]) || fabs(x->box[k]) > (k % 2 ? 90 : 180))
+        w->e = "box outside lon/lat bounds";
     if (!w->e && x->box[3] <= x->box[1]) w->e = "empty box";
   }
   // the rows of one granule run as one job on one worker, each box after
@@ -866,7 +946,7 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
   for (idx_t i = 1; i < n; i++) {
     row *a = &rs[ix[i - 1]], *b = &rs[ix[i]];
     if (a->url && b->url && !strcmp(a->url, b->url))
-      a->same = b, b->follow = 1, a->x->keep = 1;
+      a->same = b, b->follow = 1, ((s3 *)a->data)->keep = 1;
   }
   free(ix);
   run(rs, n);
@@ -903,7 +983,7 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
     dq[k] = duckdb_vector_get_data(duckdb_struct_vector_get_child(fq, k));
   for (idx_t i = 0; i < n; i++) {
     row *w = &rs[i];
-    sj *x = &xs[i];
+    s3 *x = &xs[i];
     le[i] = (duckdb_list_entry){o, 0}, lq[i] = (duckdb_list_entry){oq, 0};
     if (!w->url) {   // its fields null too: duckdb reads a field alone
       duckdb_validity_set_row_invalid(mo, i);
@@ -937,11 +1017,11 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
         else if (z == 7 || z == 8)
           ((bool *)d[z])[o] = z == 7 ? h->conf : h->sat;
         else if (z == 10)
-          duckdb_vector_assign_string_element(duckdb_struct_vector_get_child(
-            f, z), o, h->pj), free(h->pj);
+          pixels_json(duckdb_struct_vector_get_child(f, z), o, h);
         else ((double *)d[z])[o] = y[q++];
     }
     le[i].length = o - le[i].offset;
+    for (int k = 0; k < x->nd; k++) free(x->d[k].corners);
     free(w->url), free(x->d), free(x->dir);
   }
   // a nan (no temperature, as when saturated) is a null
@@ -955,7 +1035,7 @@ static void s3_detect(duckdb_function_info info, duckdb_data_chunk in,
   free(rs), free(xs);
 }
 
-static duckdb_state s3_register(duckdb_connection con) {
+duckdb_state s3_register(duckdb_connection con) {
   const char *hn[] = {"lon", "lat", "pixels", "s5", "s6", "temperature", "rh",
                       "confirmed", "saturated", "track", "px"},
              *sn[] = {"sza", "clear", "error", "hotspots", "squares"},
