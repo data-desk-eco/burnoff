@@ -70,9 +70,9 @@ The same detections always give the same sites, for any box or dates.
 The `id` is the mean place of the site's detections, rounded to 40 m
 (`live:<lat>,<lon>`). The mean changes little as detections are added,
 so the `id` usually stays the same. The dates select only the dates in
-each site. Its properties are `id`, `looks` (`[[date, cloud], …]` for the 640 m square under the site),
-`detections` (the brightest detection of each date, with its pixels)
-and `detection_count`.
+each site. Its properties are `id`, `looks` (`[[date, cloud], …]` for
+the 640 m square under the site), `detections` (the brightest detection
+of each date, with its pixels) and `detection_count`.
 
 `s3_hotspots` and `s3_sites` are the same for Sentinel-3 SLSTR by night
 (the night detector, below), at its 500 m scale:
