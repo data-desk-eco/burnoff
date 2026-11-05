@@ -12,7 +12,7 @@
 
 -- the tiles under the box's points, and their scenes from t0 to t1, one a
 -- sensing time, the newest processing; u, the box in the tile's metres
--- (the envelope of its points, as the browser's fit() takes it). a point's
+-- (the envelope of its points). a point's
 -- tile is its own zone's where eodata lists it, else a neighbouring
 -- zone's: sentinel-2 has none of some, as 43WCV, at yamal lng
 CREATE OR REPLACE TEMP TABLE cand AS

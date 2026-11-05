@@ -16,8 +16,8 @@
 // why it is fast:
 // - a job is a sequence of stages (step()), each a batch of byte-range
 //   reads, all known before any is made, and then a batch of decodes. the
-//   host makes a stage's reads at once and resumes the job: curl's multi
-//   interface here, fetch() in the browser (web/). a row waits one round
+//   host makes a stage's reads at once and resumes the job, over curl's
+//   multi interface. a row waits one round
 //   trip a stage, not one a read, and nothing blocks while it waits. a
 //   round asks for all that its answers do not decide: a site waits on
 //   three, the headers and mask, b12's tile-parts with b11's and b8a's
@@ -34,8 +34,7 @@
 //   its tile-part is read whole.
 // - decoding is nearly all the cost, so b12 is decoded only over clear
 //   background cells, and b11 and b8a only over windows around candidate
-//   hotspots. a large stage's tier-1, dwt and b12's screen run on the gpu
-//   (src/gpu.c, web/j2k.wgsl), small ones on the cpu alongside.
+//   hotspots. a large decode spreads its code-blocks over idle cores.
 // - the 60 m cloud mask (a few KB) is read first: jp2 tiles under cloud are
 //   never fetched. headers, masks and the tile-parts found in a file
 //   without a TLM are cached across rows, so many sites on one scene read
@@ -78,8 +77,6 @@ enum { B12MIN, B11MIN, PEAKMIN, CONTRAST, BGFLOOR, PEAKED, SAT, HOT, MAXPX,
 #define NP 64      // packets a tile-part may hold: 40 in a 640 px tile
 // reads closer than this are one: a request costs about as much
 #define GAP (32 << 10)
-#define CBGAP 1024   // by code-block: about an answer's headers
-#define CBMAX 16     // and at most this many reads a tile a round
 // a band's tile-parts are read whole, not their PLTs and then the packets
 // wanted, while they come to this or less: a round saved for more bytes (a
 // site's b12 needs 52% of a tile-part, b11's and b8a's 19%)
@@ -177,8 +174,7 @@ static const char PAST[] = "range past the end of the file", LACK[] = "",
 // backoff, as cdse sheds load with 503s
 static void check(rd *r, int e, long code) {
   buf *b = &r->b;
-  // a body short of its range, as a browser's cache can hand over while
-  // another read of the file is in flight, retries as a 5xx does
+  // a body short of its range retries as a 5xx does
   if (!e && code == 206 && b->size > 0 &&
       r->lo + (long long)b->n < (r->hi < 0 ? b->size : MIN(r->hi, b->size)))
     code = 500;
@@ -265,18 +261,15 @@ typedef struct {
   int ow, ox, oy;
 } dj;
 
-// a job: the hotspots in a box of one scene, and its clear-sky share. a
-// host with its own box (the browser's) sets fit, called once b12's grid
-// is known, which fills box or gives 1 to read nothing
+// a job: the hotspots in a box of one scene, and its clear-sky share
 typedef struct job {
   char *u[4];                     // b12, b11, b8a, the cloud mask
   double box[4], t[NT];
   res r;
   const char *e;
-  int (*fit)(struct job *);
   struct sj *x;                   // slstr's job (slstr.c), or NULL
   struct s3k *k3;                 // and its chunks inflated, for the next box
-  int st, budget, nr, rcap, nq, qcap, nw, cb;   // cb: by code-block (slow)
+  int st, budget, nr, rcap, nq, qcap, nw;
   long long gap;
   band bd[3];
   rd *rq;                         // the reads made and to make
@@ -286,7 +279,6 @@ typedef struct job {
   int X0, Y0, X1, Y1, W, H, mc, cx0, cy0, cw, ch, gx0, gy0, ncx, nc;
   unsigned short *b12, *m, *v12, *v11, *v8a, *g12, *g8a;
   int *cnt, *cld, *idx, *par;
-  uint32_t *gb;                   // b12's screen, from a gpu (took())
   double *ct, *bgm;
   char *ok, *sel;
 } job;
@@ -587,38 +579,6 @@ static int merge(long long *q, int n, long long g, int m) {
   return c;
 }
 
-// on a slow link (cb, the host's to set), b11's and b8a's packets of tile
-// k in m by code-block, for a round more and more reads: a 7x7 window
-// needs one or two of a precinct's code-blocks. each packet's first HEAD
-// bytes, its header nearly always (else then the whole packet), and then
-// the code-blocks windows w[0..n) need, which decs() puts in place, into q
-// (of *qc pairs) after nq
-#define HEAD 512
-static int blocks(job *j, const char *url, band *f, int k, const win *w,
-                  int n, uint64_t m, const long long *o, const uint32_t *l,
-                  long long **q, int nq, size_t *qc) {
-  j2k_cbs c = {0};
-  for (int i = 0; i < NP; i++) {
-    if (!(m >> i & 1) || got(j, url, o[i], o[i] + l[i])) continue;
-    long long a = o[i], h = MIN(l[i], HEAD);
-    rd *r = got(j, url, a, a + h);
-    size_t c0 = c.n, s = r ? MIN(l[i], r->lo + (long long)r->b.n - a) : 0;
-    for (int v = 0; r && v < n; v++)
-      if (w[v].k == k && j2k_blocks(&f->j, k, i, r->b.p + (a - r->lo), s,
-                                    w[v].x0, w[v].y0, w[v].x1, w[v].y1, &c))
-        c.n = c0, r = NULL, h = l[i];
-    if (!r) c.cb = grow(c.cb, &c.cap, c.n + 1, sizeof *c.cb),
-            c.cb[c.n++] = (j2k_cb){0, h, .row = i};   // the header, or all
-  }
-  for (size_t i = 0; i < c.n; i++) {
-    long long a = o[c.cb[i].row] + c.cb[i].off, b = a + c.cb[i].len;
-    if (a < b && !got(j, url, a, b))
-      *q = grow(*q, qc, nq + 1 + NP * f->nt, 16),
-      (*q)[2 * nq] = a, (*q)[2 * nq++ + 1] = b;
-  }
-  return free(c.cb), free(c.d), nq;
-}
-
 // band f's reads for decode windows w[0..n), as runs: each tile-part whole
 // where it is wanted whole, as without a TLM or under a request budget, or
 // while those whose PLT is not in hand come to WHOLE or less (a round
@@ -630,7 +590,7 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
   uint64_t m[256] = {0};
   long long o[NP], *q, a, b, z = 0;
   uint32_t l[NP];
-  int c, nq = 0, miss = 0, look = 0, nk = 0, cb = j->cb && f > j->bd;
+  int c, nq = 0, miss = 0, look = 0;
   size_t qc = (size_t)NP * f->nt;
   const char *e = f->tlm ? NULL : scan(j, url, f);
   layout L = {0}, *g;
@@ -646,7 +606,7 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
     if (!L.at[k]) L.at[k] = g->at[k], L.len[k] = g->len[k];
   pthread_mutex_unlock(&lk);
   // z: the bytes of the tile-parts wanted whose PLT is not in hand
-  for (int k = 0; k < f->nt; nk += !!m[k++])
+  for (int k = 0; k < f->nt; k++)
     z += m[k] && f->tlm && f->at[k] && !pk(j, url, f, k, o, l) ? f->len[k] : 0;
   q = malloc(16 * qc);
   for (int k = 0; k < f->nt; k++) {
@@ -661,7 +621,6 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
     if (!np && z <= WHOLE) np = -2;
     if (np < 0) q[2 * nq] = a, q[2 * nq++ + 1] = b;
     else if (!np) q[2 * nq] = a, q[2 * nq++ + 1] = a + MIN(f->len[k], 512);
-    else if (cb) nq = blocks(j, url, f, k, w, n, m[k], o, l, &q, nq, &qc);
     else for (int i = 0; i < np; i++)
       if (m[k] >> i & 1 && !got(j, url, o[i], o[i] + l[i]))
         q[2 * nq] = o[i], q[2 * nq++ + 1] = o[i] + l[i];
@@ -669,7 +628,7 @@ static const char *parts(job *j, const char *url, band *f, const win *w,
   // without a TLM and much of the band wanted: the whole codestream
   if (!f->tlm && j->budget && miss > f->nt / 4)
     q[0] = f->first, q[1] = -1, nq = 1;
-  else nq = merge(q, nq, cb ? CBGAP : j->gap, cb ? CBMAX * nk : j->budget);
+  else nq = merge(q, nq, j->gap, j->budget);
   if (look && ++f->round > 12) e = "tile-part not found";
   for (int i = 0; i < nq && (!e || e == LACK); i++)
     e = want(j, url, q[2 * i], q[2 * i + 1]);
@@ -698,31 +657,6 @@ static const char *dodec(job *j, dj *d) {
   return d->done = 1, e;
 }
 
-// a stage's queued decodes as one batch for a gpu (src/gpu.c, web/gpu.js):
-// their code-blocks' tier-2 records over one byte buffer, in o, and their
-// rows of the kernels' tile table, 8 int32 each in tl: the tile's rect,
-// then the window
-const char *batch(job *j, j2k_cbs *o, int32_t *tl) {
-  const char *e = NULL;
-  for (int i = 0; i < j->nq && !e; i++) {
-    dj *d = &j->dq[i];
-    j2k_box t = tbox(&j->bd[d->b].j, d->k);
-    int r[8] = {t.x0, t.y0, t.x1, t.y1, d->x0, d->y0, d->x1, d->y1};
-    memcpy(tl + 8 * i, r, sizeof r);
-    e = j2k_t2(&j->bd[d->b].j, d->k, d->p, d->n, d->x0, d->y0, d->x1, d->y1,
-               i, o);
-  }
-  return e;
-}
-
-// packet [lo, lo + n) of url from the bytes of it in hand (fill()), its
-// unread code-blocks unset, as a read of it: by code-block (blocks()),
-// once all of a stage's reads are in
-static rd *put(job *j, const char *url, long long lo, long long n) {
-  rd *r = add(j, url, lo, lo + n);
-  return r->ok = 1, fill(j, r), r;
-}
-
 // the decodes of windows w[0..n) of band b, into o: each window with the
 // packets of its tile in hand
 static const char *decs(job *j, const char *url, int b, const win *w, int n,
@@ -738,11 +672,8 @@ static const char *decs(job *j, const char *url, int b, const win *w, int n,
     need(f, d->k, 0, 0, f->w, f->h_, &c);
     if ((d->np = pk(j, url, f, d->k, q, d->n)) != c)
       return "malformed tile-part header";
-    uint64_t m = j->cb && b ? need(f, d->k, d->x0, d->y0, d->x1, d->y1, &c)
-                            : 0;
     for (int p = 0; p < c; p++) {
       rd *r = got(j, url, q[p], q[p] + d->n[p]);
-      if (!r && m >> p & 1) r = put(j, url, q[p], d->n[p]);
       d->p[p] = r ? r->b.p + (q[p] - r->lo) : NULL;
     }
   }
@@ -826,7 +757,6 @@ static const char *heads(job *j) {
   e = header(j, j->u[0], f), m = mask(j);
   if (!j->budget) header(j, j->u[1], j->bd + 1), header(j, j->u[2], j->bd + 2);
   if (e) return e;
-  if (j->fit && j->fit(j)) return FIN;
   double v[4] = {floor((j->box[0] - f->ox) / f->res),
                  floor((f->oy - j->box[3]) / f->res),
                  ceil((j->box[2] - f->ox) / f->res),
@@ -974,74 +904,6 @@ static int screen(job *j) {
   return hot;
 }
 
-// the same from a gpu (j2k.wgsl's cells, ring and squares, as gpu_cells()
-// and web/gpu.js read them back): 8 uint32 a cell, the candidates' number
-// k, 2 a square, each candidate's box index and dn, in no order, and its
-// ring. their dn go into the raster, for back(), and their rings to g12
-static int gscreen(job *j) {
-  uint32_t *c = j->gb, *s = c + 8 * j->nc + 1, k = s[-1], *p, *g;
-  int seen = j->W * j->H, clear = 0, hot = 0;
-  long long *o = malloc(8 * k + 8);
-  j->bgm = malloc(j->nc * sizeof *j->bgm);
-  for (int i = 0; i < j->nc; i++, c += 8)
-    seen -= c[2], clear += c[0] - c[1] - c[3], j->bgm[i] = cal(c[5]);
-  if (seen > 0) j->r.clear = (double)clear / seen;
-  squares(j, s), p = s + 2 * j->r.nq, g = p + 2 * k;
-  for (uint32_t i = 0; i < k; i++)
-    o[i] = (long long)p[2 * i] << 32 | p[2 * i + 1] << 16 | g[i];
-  qsort(o, j->mc = k, 8, cmp);
-  j->idx = malloc(4 * k + 4), j->g12 = malloc(2 * k + 2);
-  for (uint32_t i = 0; i < k; i++)
-    j->b12[j->idx[i] = o[i] >> 32] = o[i] >> 16, j->g12[i] = o[i],
-    hot |= cal(o[i] >> 16 & 65535) >= j->t[PEAKMIN];
-  return free(o), hot;
-}
-
-// what the gpu's screen reads (cq in j2k.wgsl): the box, the jp2 tiles and
-// each one's row of the stage's decodes, the mask, and screen()'s
-// comparisons of doubles made cuts in dn, so it is exact. NULL when
-// b12_min is past the gpu's histogram
-uint32_t *table(job *j, size_t *n) {
-  band *f = j->bd;
-  const double *t = j->t;
-  int m = 1, a = 1, nt = f->nt, nm = j->cw * j->ch, o;
-  while (m < ceil(1000 + t[B12MIN] * 10000) && cal(m) < t[B12MIN]) m++;
-  while (a < 65536 && cal(a) <= t[B12MIN]) a++;
-  if (m > 4064) return NULL;
-  *n = (o = 19 + nt + 102401 + m) + (nm + 3) / 4;
-  uint32_t *q = calloc(*n, 4), h[] = {j->X0, j->Y0, j->X1, j->Y1, f->tw,
-    f->th, f->nx, j->gx0, j->gy0, j->ncx, j->cw, m, 19, 19 + nt,
-    19 + nt + 102401, o, MIN(j->W * j->H, 1 << 22), j->cx0, j->cy0};
-  memcpy(q, h, sizeof h), memset(q + 19, 255, 4 * nt);
-  for (int i = 0; i < j->nq; i++) q[19 + j->dq[i].k] = i;
-  for (int i = 0; i <= 102400; i++) q[19 + nt + i] = floor(t[MAXCLOUD] * i);
-  for (int i = 0; i < m; i++) {
-    double v = cal(i), c = (v > t[BGFLOOR] ? v : t[BGFLOOR]) * t[CONTRAST];
-    int d = MAX(1, (int)floor(c * 1e4) + 990);
-    while (d < 65536 && cal(d) <= c) d++;
-    q[o - m + i] = MAX(a, d);
-  }
-  for (int i = 0; i < nm; i++)
-    ((uint8_t *)(q + o))[i] = j->m[i] || j->m[nm + i];
-  return q;
-}
-
-// a stage's decodes made by a gpu, p malloc'd and now the job's: b12's
-// screen (gscreen()), or the windows' samples, each from an even offset,
-// put where dodec() puts them
-void took(job *j, void *p) {
-  uint16_t *s = p;
-  for (int i = 0; i < j->nq; i++) {
-    dj *d = j->dq + i;
-    int w = d->x1 - d->x0, h = d->y1 - d->y0;
-    for (int y = d->y0; j->dq->b && y < d->y1; y++, s += w)
-      memcpy(d->o + (size_t)(y - d->oy) * d->ow + d->x0 - d->ox, s, 2 * w);
-    s += j->dq->b && w * h & 1, d->done = 1;
-  }
-  if (j->dq->b) free(p);
-  else j->gb = p;
-}
-
 // the windows around the selected candidates: each component's box of them
 // in each jp2 tile, merged while the union costs less than a second decode.
 // each box is RING wider, so that with bg each candidate's ring() is decoded
@@ -1093,11 +955,11 @@ static void wins(job *j) {
 // and how hot its peak is
 static const char *back(job *j) {
   forget(j, j->u[0]);
-  if (!(j->gb ? gscreen(j) : screen(j))) return FIN;
+  if (!screen(j)) return FIN;
   int mc = j->mc, *idx = j->idx, W = j->W, *par;
   par = j->par = malloc(mc * 4), j->ok = calloc(mc, 1), j->sel = malloc(mc);
   j->v12 = malloc(mc * 2), j->v11 = calloc(mc, 2), j->v8a = calloc(mc, 2);
-  j->g8a = calloc(mc, 2), j->g12 = j->gb ? j->g12 : calloc(mc, 2);
+  j->g8a = calloc(mc, 2), j->g12 = calloc(mc, 2);
   for (int k = 0; k < mc; k++) j->v12[k] = j->b12[idx[k]];
   for (int k = 0; k < mc; k++) {
     int i = idx[k], n;
@@ -1109,7 +971,7 @@ static const char *back(job *j) {
   for (int k = 0; k < mc; k++)
     if (V(k) >= j->t[PEAKMIN]) j->ok[find(par, k)] = 1;
   for (int k = 0; k < mc; k++)
-    if ((j->sel[k] = j->ok[find(par, k)]) && !j->gb)
+    if ((j->sel[k] = j->ok[find(par, k)]))
       j->g12[k] = ring(j->b12, idx, mc, k, W, j->H);
   return wins(j), NULL;
 }
@@ -1273,7 +1135,7 @@ static int step(job *j) {
   return DONE;
 }
 
-// a job over a box (or, with box NULL, one fit() gives) of b12's url. eodata
+// a job over a box of b12's url. eodata
 // allows 5000 requests a minute for each key, and in region a request costs
 // more than a MB: its tile-parts are read whole, joined within a MB, at most
 // 20 reads to a band (without a TLM, the whole codestream once a quarter of
@@ -1284,13 +1146,13 @@ static void start(job *j, const char *url, const double *box,
   j->u[1] = swap(url, "B12.jp2", "B11.jp2");
   j->u[2] = swap(url, "B12.jp2", "B8A.jp2");
   j->u[3] = swap(url, "/IMG_DATA/", "/QI_DATA/MSK_CLASSI_B00.jp2");
-  if (box) memcpy(j->box, box, sizeof j->box);
+  memcpy(j->box, box, sizeof j->box);
   memcpy(j->t, t, sizeof j->t);
   j->budget = strncmp(url, "s3://", 5) ? 0 : 20;
   j->gap = j->budget ? 1 << 20 : GAP, j->r.clear = NAN;
 }
 
-static void s3kfree(job *j);   // slstr.c's, or the browser's none
+static void s3kfree(job *j);   // slstr.c's
 
 // all but its result
 static void end(job *j) {
@@ -1299,18 +1161,11 @@ static void end(job *j) {
   for (int i = 0; i < 4; i++) free(j->u[i]);
   void *p[] = {j->rq, j->dq, j->wn, j->b12, j->m, j->v12, j->v11, j->v8a,
                j->g12, j->g8a, j->cnt, j->cld, j->idx, j->par, j->ct,
-               j->bgm, j->ok, j->sel, j->gb};
+               j->bgm, j->ok, j->sel};
   for (size_t i = 0; i < sizeof p / sizeof *p; i++) free(p[i]);
   drop(&j->s), drop(&j->mk);
 }
 
-// slstr's night-time detector (slstr.c): eodata alone, not the browser's
-#ifdef __EMSCRIPTEN__
-static const char *s3stage(job *j) { return "no slstr in the browser"; }
-static void s3kfree(job *j) {}
-#endif
-
-#ifndef __EMSCRIPTEN__
 #define DUCKDB_EXTENSION_NAME burnoff
 #define DUCKDB_EXTENSION_API_VERSION_MAJOR 1
 #define DUCKDB_EXTENSION_API_VERSION_MINOR 2
@@ -1318,46 +1173,6 @@ static void s3kfree(job *j) {}
 #include "duckdb_extension.h"
 #include <curl/curl.h>
 DUCKDB_EXTENSION_EXTERN
-
-#ifdef GPU
-// src/gpu.c: j2k.wgsl over wgpu-native, which gives an error, for the cpu
-// to do the work, without a gpu; gpu_off once it is off for good
-extern const char *gpu_off;
-const char *gpu_decode(const uint32_t *, size_t, const uint8_t *, size_t,
-                       const int32_t *, int, int, int, uint16_t *, void **);
-const char *gpu_cells(void *, const uint32_t *, size_t, uint32_t **);
-
-// a stage's decodes on the gpu as one batch, b12's screened there too; on
-// a failure step() makes them on the cpu. one gpu thread decodes a whole
-// code-block, so a stage of fewer than 4096 is as quick on one core (b11's
-// windows nearly always; a 10 km site's b12), and the cpu takes a stage
-// while 4 are on the gpu: measured on an m2 over 70 quarter and whole
-// tiles at 8 rows at once, 6.6 s against 9.2 with every stage on the gpu
-// and 10.1 with none
-static int fly;
-static void gpu(job *j) {
-  int b = j->dq->b, f = 0;
-  j2k *h = &j->bd[b].j;
-  j2k_cbs c = {0};
-  int32_t *tl = malloc(32 * j->nq);
-  uint32_t *cq = NULL;
-  void *o = NULL, *k;
-  size_t n = 0;
-  for (dj *d = j->dq; b && d < j->dq + j->nq; d++)
-    n += (size_t)(d->x1 - d->x0) * (d->y1 - d->y0) + 1 & ~(size_t)1;
-  if (!gpu_off && (f = __atomic_add_fetch(&fly, 1, __ATOMIC_RELAXED)) <= 4 &&
-      !batch(j, &c, tl) && c.n >= 4096 &&
-      (b || (cq = table(j, &n))) &&
-      !gpu_decode((uint32_t *)c.cb, c.n, c.d, c.nd, tl, j->nq, h->nl,
-                  h->prec, b ? o = malloc(2 * n) : NULL, &k) &&
-      (b || !gpu_cells(k, cq, n, (uint32_t **)&o)))
-    took(j, o), o = NULL;
-  if (f) __atomic_sub_fetch(&fly, 1, __ATOMIC_RELAXED);
-  free(o), free(cq), free(tl), free(c.cb), free(c.d);
-}
-#else
-#define gpu(j)
-#endif
 
 // a worker's connections: a handle that holds the key and options, which
 // each read's is copied from, and a multi handle over which a stage's
@@ -1485,7 +1300,6 @@ static void *worker(void *_) {
       start(&j, w->url, w->box, w->th);
       for (int s; (s = step(&j));)
         if (s == READ) fetch(&x, j.rq, j.nr);
-        else gpu(&j);
       w->e = j.e, w->r = j.r;
       w->org[0] = j.bd->ox, w->org[1] = j.bd->oy, w->org[2] = j.bd->res;
       end(&j);
@@ -1781,4 +1595,3 @@ DUCKDB_EXTENSION_ENTRYPOINT(duckdb_connection con, duckdb_extension_info info,
   if (ok == DuckDBError) access->set_error(info, "could not register");
   return ok == DuckDBSuccess;
 }
-#endif

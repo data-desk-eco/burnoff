@@ -7,14 +7,13 @@
 set -eu
 cd "$(dirname "$0")/.."
 H=${BURNOFF_HOST:-jump}
-rsync -az --delete --relative Makefile src web/burnoff.c web/j2k.wgsl serve \
-  "$H":burnoff/
+rsync -az --delete --relative Makefile src serve "$H":burnoff/
 ssh "$H" bash -s <<'S'
 set -eu
 O=/opt/burnoff D=/data/burnoff
 ARC=s3://data-desk-archive/data-desk/burnoff
 dpkg -s zlib1g-dev >/dev/null 2>&1 || sudo apt-get install -y -qq zlib1g-dev
-make -s -C ~/burnoff GPU=0 ext/burnoff.duckdb_extension
+make -s -C ~/burnoff ext/burnoff.duckdb_extension
 sudo install -d -o eouser $O $D $D/tmp
 # duckdb 2.0, for quack, pinned here apart from the box's own
 [ "$($O/duckdb --version 2>/dev/null | cut -d' ' -f1)" = v2.0.0 ] || {

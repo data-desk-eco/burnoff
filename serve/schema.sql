@@ -45,3 +45,10 @@ CREATE TABLE IF NOT EXISTS db.s3_hotspots (
   confirmed BOOLEAN, saturated BOOLEAN, v VARCHAR);
 ALTER TABLE db.s3_hotspots ADD COLUMN IF NOT EXISTS track DOUBLE;
 ALTER TABLE db.s3_hotspots ADD COLUMN IF NOT EXISTS px VARCHAR;
+-- 2026-11-05: the browser and gpu paths left the extension, every s2 and s3
+-- answer the same, field for field: cells and hotspots kept under the old
+-- digests (deploy.sh's V, V3) are the new ones'. a no-op once run
+UPDATE db.cells SET v = 'ae8bdad0ae4e' WHERE v = '115a56d3fb7a';
+UPDATE db.hotspots SET v = 'ae8bdad0ae4e' WHERE v = '115a56d3fb7a';
+UPDATE db.s3_cells SET v = 'bd6320798d35' WHERE v = 'cc7c2f6a4d53';
+UPDATE db.s3_hotspots SET v = 'bd6320798d35' WHERE v = 'cc7c2f6a4d53';

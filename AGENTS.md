@@ -1,7 +1,8 @@
 # burnoff
 
-The Data Desk Sentinel-2 hotspot detector: a DuckDB extension, a
-WebAssembly build for the browser, and a service on the jump host.
+The Data Desk hotspot detector, Sentinel-2 by day and Sentinel-3 by night:
+a DuckDB extension, and a service on the jump host that runs it for the
+Aerial map (`~/Tools/aerial`).
 `README.md` documents the API and the extension; this file is for work on
 the code. `make test` checks that the extension loads, offline.
 
@@ -12,10 +13,7 @@ the code. `make test` checks that the extension loads, offline.
   CPU's tier-1 and inverse 5/3 DWT).
 - `src/slstr.c`: the Sentinel-3 SLSTR night detector (`s3_detect`), on
   the same jobs and host; native only, as eodata needs its keys.
-- `web/j2k.wgsl`: tier-1, the DWT and B12's screen on the GPU, for
-  `src/gpu.c` (wgpu-native) and `web/gpu.js` (WebGPU).
 - `src/burnoff.sql`: macros run on load (`s2_scenes`, `s2_hotspots`).
-- `web/burnoff.c`, `web/worker.js`: the browser build (`make wasm`).
 - `serve/`: the service (`serve/deploy.sh`).
 
 Keep it a detector. Archive shapes, sites and publishing belong to the
@@ -28,7 +26,7 @@ A detection is a job (`step()`) in stages: headers and the 60 m cloud
 mask; B12; background, candidates and windows; B11 and B8A around the
 candidates; detections. Each stage names all its byte-range reads before
 any is made (a round), then its decodes. The host makes the reads at once
-(curl multi natively, `fetch()` in the browser) and steps again.
+(curl multi) and steps again.
 
 - With a TLM (N0512 on), PLTs give packet lengths and only the packets a
   window needs are read. Without one, an SOT search with learned layouts
@@ -36,14 +34,11 @@ any is made (a round), then its decodes. The host makes the reads at once
 - A site takes 3 rounds. Reads are cut to bytes not already in hand
   (`want()`/`fill()`). Under the eodata budget (5000 requests a minute)
   tile-parts are read whole.
-- Code-block reads for B11 and B8A (`j->cb`) are only for slow links
-  (`saveData`, 2g/3g, `worker.js?cb=1`). A measured link speed was tried
-  and overran Chrome under Aerial's load.
-- Decodes go to the GPU for stages of 4096 code-blocks or more, else the
-  CPU, which is the reference.
-- GPU traps (M2, under load): passes must not overlap, so a stage's
-  dispatches share one pass; Metal can skip a pass unreported, so each
-  ends with a canary (`mark`) and a stage without it is redone on the CPU.
+- Decodes run on the CPU; a decode of 1024 code-blocks or more spreads
+  over the cores other rows leave idle (`spread()`). A WebGPU and
+  wgpu-native decoder and a WebAssembly build for the browser were
+  removed on 2026-11-05: the service runs without a GPU, and Aerial
+  reads the service.
 - `nir_excess` rejects sunlight: a peak's B8A rise must be under 0.1 of
   its B12 rise. It cut London's detections from 20,224 to 1,451 a year
   and kept Permian flares (327 to 315 sites).
@@ -52,12 +47,12 @@ any is made (a round), then its decodes. The host makes the reads at once
 
 A change must keep every detection, clear share and cell identical,
 field for field, against a baseline: 588 boxes over 14 scenes
-(N0400-N0513), natively, through DuckDB at several rows, and in headless
-Chrome with WebGPU on and off. `j2k.c` must equal OpenJPEG 2.5 sample for
-sample, and the GPU must equal the CPU. `j2k.c` refuses any codestream
-shape the L1C baselines do not use. The cell table (`table()`) turns
-`screen()`'s comparisons into DN cuts so the GPU matches; change both
-sides together. Over file://, run each date's boxes in its own process:
+(N0400-N0513), through DuckDB at several rows. `j2k.c` must equal
+OpenJPEG 2.5 sample for sample, and refuses any codestream shape the L1C
+baselines do not use. A change to `burnoff.c`, `j2k.c` or `slstr.c`
+changes the store's digests (deploy.sh's `V`, `V3`); where the output is
+unchanged, relabel the store's rows in `schema.sql`, as on 2026-11-05.
+Over file://, run each date's boxes in its own process:
 a header cached from another date can give `tile-part not found`.
 
 ## The night detector
@@ -105,15 +100,6 @@ B-tree leaf, shuffle and deflate (zlib). Anything else is an error.
 - Memory: a whole-granule box holds ~250 MB a job (float rasters of S5,
   its flags, S6 and the hot pixels' places). The jump host runs out at 8
   jobs beside the service; use `BURNOFF_THREADS`.
-
-## The browser
-
-`web/worker.js` holds several jobs per worker, falls back to the CPU
-without WebGPU, reads `gs://` through Google's JSON API, and keeps file
-pieces (64 MB in memory, 1 GB in the Cache API) and finished results
-(IndexedDB, keyed by call and wasm hash). The Aerial map
-(`~/Tools/aerial`, branch `burnoff-live`) uses it only when the service
-fails.
 
 ## The service
 
@@ -193,11 +179,8 @@ the service, dropping requests in flight, only when a file changed.
 
 ## Measured
 
-M2, 2026-10-29. A whole tile: 0.76 s on the GPU against 4.6 s on one
-core. Through DuckDB at 8 rows: 70 tiles in 7.0 s (CPU 10.2 s), 518 sites
-in 4.8 s. Headless Chrome over gs://, 4 workers: 112 sites in 4.3 s and
-175 MB; a repeat session reads nothing. In the browser, the network sets
-the time.
+M2, 2026-10-29. A whole tile: 4.6 s on one core. Through DuckDB at 8
+rows: 70 tiles in 10.2 s, 518 sites in 4.8 s.
 
 Sites, 2026-10-30, on the archive's 53,905 detections (Feb-Oct 2026),
 date halves against the whole, for sites of 5 dates or more. An id from

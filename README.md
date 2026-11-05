@@ -44,7 +44,7 @@ FROM quack_query('quack:dev.datadesk.eco:443',
   token := 'burnoff');
 ```
 
-In a browser, use the
+The Aerial map uses the API for its live layer. In a browser, use the
 [Quack SDK](https://github.com/tobilg/quack-protocol) at
 `https://dev.datadesk.eco`.
 
@@ -244,16 +244,12 @@ five.
 
 Requires a C compiler, `pkg-config`, libcurl and zlib
 (`libcurl4-openssl-dev` and `zlib1g-dev` on Ubuntu). The JPEG 2000
-decoder is burnoff's own, `src/j2k.c`. The build downloads wgpu-native
-into `ext/` so that the extension can decode on the GPU (Metal on macOS,
-Vulkan on Linux); `make GPU=0` builds without it. `make wasm` also needs
-emscripten.
+decoder is burnoff's own, `src/j2k.c`.
 
 ```sh
 make              # ext/burnoff.duckdb_extension
 make test         # loads it and runs a detection offline
 make install      # so that `load burnoff` works in any directory
-make wasm         # web/burnoff.{js,wasm}, with emscripten
 ```
 
 ## How it decodes
@@ -261,12 +257,8 @@ make wasm         # web/burnoff.{js,wasm}, with emscripten
 A detection reads the cloud mask, then B12 over the clear parts of the
 box, then B11 and B8A only in small windows around candidate hotspots.
 From baseline N0512 the files index their packets, so only the packets
-that a window needs are read. Burnoff parses those packets on the CPU.
-Large decodes then run on the GPU, which also computes the background
-and candidates over B12. Small decodes, such as the windows around
-candidates, run on the CPU, which is as fast for them. Without a GPU,
-everything runs on the CPU. The results are the same, value for value,
-either way.
+that a window needs are read. A large decode spreads over the CPU cores
+that other rows leave idle.
 
 Over the network, a detection waits for its rounds of reads, one after
 the other. A small box in a newer file (N0512 on) takes three rounds: the
@@ -276,41 +268,16 @@ searches for their tiles. It keeps what it finds for the next detection
 on the same file, and it uses the layout of a newer date to look in the
 right place in an older one.
 
-On an M2, a whole Sentinel-2 tile takes 0.8 to 1.1 seconds with the GPU
-and 3.5 to 4.6 seconds on one CPU core. At eight rows at once, 70 whole
-and quarter tiles take 7.0 seconds against 10.2 seconds on the CPU alone,
-and 518 small sites take 4.8 seconds either way. In the browser, the
-network sets the time for sites.
-
-## In the browser
-
-`make wasm` builds the same detector for a web worker. `web/worker.js`
-answers three calls:
-
-- `tiles(points)` names the MGRS tile of each lon/lat point.
-- `detect(url, w, s, e, n, part, parts, points)` gives one scene's hotspots
-  over a lon/lat box, in lon/lat, and the obscured share of the 640 m
-  square under each point. `part` of `parts` reads that share of the box's
-  6.4 km cell columns, so several workers can share one scene.
-- `drop` ends a detection at its next stage, and the worker answers it
-  with `{dropped: true}`. A map whose view moves on uses it to free the
-  worker for the new view's reads.
-
-A `gs://gcp-public-data-sentinel-2/...` url is read through Google's JSON
-API, which answers cross-origin range requests. The page needs no proxy and
-no catalogue: a tile's scenes come from one listing of the bucket for each
-satellite and year.
-
-The Aerial map (`data-desk-eco/aerial`) uses the API for its live layer,
-and this build only when the API fails.
+On an M2, a whole Sentinel-2 tile takes 3.5 to 4.6 seconds on one CPU
+core. At eight rows at once, 70 whole and quarter tiles take 10.2
+seconds and 518 small sites take 4.8 seconds.
 
 ## Limits
 
 - burnoff needs baseline N0400 or later, which has a raster cloud mask.
 - A search that fills the catalogue's 1000-scene page stops the query.
 - Hotspots in an overlap of two UTM zones are found in both.
-- The Sentinel-3 detector reads eodata only, so it needs eodata's keys,
-  and it does not run in the browser.
+- The Sentinel-3 detector reads eodata only, so it needs eodata's keys.
 - Its thresholds come from the chunks that it reads, a quarter of a
   granule or more, not from the whole granule.
 - Its temperature uses S5 and S6 only, with no background or mid-infrared
