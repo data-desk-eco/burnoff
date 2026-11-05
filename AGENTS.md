@@ -100,7 +100,7 @@ On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
 Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
 
 - `api.sql`'s gate (`quack_authorization_function`) sees every query.
-  `FROM hotspots(...)` or `sites(...)` runs `args.sql`, `hotspots.sql`,
+  `FROM s2_hotspots(...)` or `s2_sites(...)` runs `args.sql`, `hotspots.sql`,
   `box.sql`, then `geojson.sql` or `sites.sql`; the `s3_` forms run the
   `s3*.sql` equivalents. A script after `admin <key>` (`q`, the key in
   `/data/burnoff/env`) runs as it is; anything else is refused. Macros

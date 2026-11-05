@@ -22,14 +22,14 @@ DuckDB's client-server protocol, at `quack:dev.datadesk.eco:443` with the
 token `burnoff`. It accepts four queries and refuses all others:
 
 ```sql
-FROM hotspots(w, s, e, n[, 'a', 'b'])
-FROM sites(w, s, e, n[, 'a', 'b'])
+FROM s2_hotspots(w, s, e, n[, 'a', 'b'])
+FROM s2_sites(w, s, e, n[, 'a', 'b'])
 FROM s3_hotspots(w, s, e, n[, 'a', 'b'])
 FROM s3_sites(w, s, e, n[, 'a', 'b'])
 ```
 
-The first two are Sentinel-2's, by day; the `s3_` ones are Sentinel-3's,
-by night (below).
+The `s2_` ones are Sentinel-2's, by day; the `s3_` ones are
+Sentinel-3's, by night (below).
 
 - `w, s, e, n`: longitude and latitude, at most 0.44° by 0.25° (1° by 1°
   for `s3_`).
@@ -41,7 +41,7 @@ Each gives one row, with one column, `geojson`. From DuckDB 2.0:
 ```sql
 INSTALL quack; LOAD quack;
 FROM quack_query('quack:dev.datadesk.eco:443',
-  'FROM sites(-103.6, 31.9, -103.5, 32, ''2026-08-01'', ''2026-10-30'')',
+  'FROM s2_sites(-103.6, 31.9, -103.5, 32, ''2026-08-01'', ''2026-10-30'')',
   token := 'burnoff');
 ```
 
@@ -49,7 +49,7 @@ The Aerial map uses the API for its live layer. In a browser, use the
 [Quack SDK](https://github.com/tobilg/quack-protocol) at
 `https://dev.datadesk.eco`.
 
-`hotspots` gives a feature collection, newest first:
+`s2_hotspots` gives a feature collection, newest first:
 
 - One `look` feature for each scene, with no geometry. `cloud` is the
   obscured share of the box (`-1` if the scene does not cover it). A
@@ -57,7 +57,7 @@ The Aerial map uses the API for its live layer. In a browser, use the
 - One `hotspot` feature for each detection. The geometry is its pixels
   as a multipolygon. `pixel_b12` gives the B12 value of each pixel.
 
-`sites` gives one point feature for each site. The service
+`s2_sites` gives one point feature for each site. The service
 finds sites from all the detections it holds, on all dates:
 
 1. Each detection is put on the 20 m pixel of its peak.
@@ -105,8 +105,8 @@ uses only this extension, DuckDB 2.0 and systemd. The files are in
 `serve/`, and `serve/deploy.sh` installs them.
 
 - One DuckDB process (`server.sql`) holds the store and serves Quack
-  behind caddy. Its gate (`api.sql`) turns `hotspots(...)` or
-  `sites(...)` into the service's SQL. It runs scripts from the
+  behind caddy. Its gate (`api.sql`) turns `s2_hotspots(...)` or
+  `s2_sites(...)` into the service's SQL. It runs scripts from the
   machine's own jobs (`q`) only with a key.
 - A request runs `hotspots.sql` in DuckDB with the extension. The SQL
   finds the box's tiles and scenes from an index of `eodata`. It reads

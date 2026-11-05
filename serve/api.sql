@@ -87,8 +87,8 @@ CREATE MACRO clash3(u, v) AS list_bool_or(list_transform(u, lambda a:
 
 -- the gate (quack_authorization_function), on each query: a script of
 -- bulk, index or export (q) after 'admin <key>' and a line, run as it is;
--- a public one only as `FROM hotspots(w, s, e, n[, 'a', 'b'])` or the same
--- of sites, run as args.sql, hotspots.sql, box.sql and geojson.sql or
+-- a public one only as `FROM s2_hotspots(w, s, e, n[, 'a', 'b'])` or the
+-- same of s2_sites, run as args.sql, hotspots.sql, box.sql and geojson.sql or
 -- sites.sql, over those, or of s3_hotspots or s3_sites, run as s3args.sql,
 -- s3hotspots.sql, s3box.sql and s3geojson.sql or s3sites.sql; anything
 -- else refused
@@ -99,14 +99,14 @@ CREATE TABLE api AS
 SELECT f, string_agg(content, chr(10) ORDER BY o) AS body
 FROM (SELECT parse_filename(filename, true) AS n, content
       FROM read_text('*.sql')),
-     (VALUES ('hotspots', '', 'geojson'), ('sites', '', 'sites'),
+     (VALUES ('s2_hotspots', '', 'geojson'), ('s2_sites', '', 'sites'),
              ('s3_hotspots', 's3', 'geojson'), ('s3_sites', 's3', 'sites'))
        a(f, p, l),
      LATERAL (SELECT list_position(list_transform(['args', 'hotspots',
        'box', l], lambda x: p || x), n) AS o)
 WHERE o IS NOT NULL GROUP BY f;
 CREATE MACRO call(q) AS regexp_extract(q,
-  '^FROM (hotspots|sites|s3_hotspots|s3_sites)\(' ||
+  '^FROM (s[23]_hotspots|s[23]_sites)\(' ||
   '([-0-9.]+), ?([-0-9.]+), ?([-0-9.]+), ?([-0-9.]+)' ||
   '(?:, ?''([0-9-]{10}|\.\.)'', ?''([0-9-]{10}|\.\.)'')?\)$',
   ['f', 'w', 's', 'e', 'n', 'a', 'b']);
