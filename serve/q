@@ -1,10 +1,13 @@
 #!/bin/sh
 # q: the sql on stdin run in the service (server.sql) as one script, by its
 # key (api.sql's gate); the last statement's answer on stdout. the script
-# goes in a variable, so an error's echo of the query shows no key
+# goes in a variable, so an error's echo of the query shows no key, and to
+# duckdb on stdin, so no key or secret shows in the process list
 s=$(sed "s/'/''/g")
-exec "$(dirname "$0")/duckdb" -noheader -list -bail -c "LOAD quack;
+exec "$(dirname "$0")/duckdb" -noheader -list -bail <<Q
+LOAD quack;
 SET VARIABLE s = 'admin $KEY
 $s';
 FROM quack_query('quack:localhost:9494', getvariable('s'),
-                 token := 'burnoff');"
+                 token := 'burnoff');
+Q
