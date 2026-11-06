@@ -80,6 +80,8 @@ FROM (SELECT scene, any_value(dir) AS dir, any_value(f) AS f, sx, sy,
              min(i) AS i0, max(i) AS i1, min(j) AS j0, max(j) AS j1
       FROM miss JOIN sc USING (scene) GROUP BY scene, sx, sy)
 JOIN gr USING (scene) WHERE granule <> '';
+SET VARIABLE failed = (SELECT count(*) > 0 FROM rd WHERE r.error IS NOT NULL)
+  OR (SELECT count(*) > 0 FROM gr WHERE granule = '');
 
 -- the cells read: their squares (cells.sql) and their hotspots, each in
 -- its own 100 km square, as s2_hotspots keeps them. a read's squares are
@@ -129,3 +131,9 @@ INSERT INTO db.granules
 SELECT scene, granule FROM gr WHERE granule <> ''
   AND scene NOT IN (SELECT scene FROM db.granules);
 COMMIT;
+-- and where they lie, once committed (db.touched, for api.sql's fresh)
+INSERT INTO db.touched
+SELECT getvariable('k'), getvariable('v'), now(), min(lon), min(lat), max(lon),
+       max(lat)
+FROM (SELECT lon, lat FROM obs UNION ALL SELECT lon, lat FROM det)
+HAVING count(*) > 0;

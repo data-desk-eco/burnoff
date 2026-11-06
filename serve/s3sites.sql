@@ -73,6 +73,7 @@ JOIN c3 c ON c.i = u.ci AND c.j = u.cj
 WHERE c.sza >= 90
   AND (from_json(c.squares, '[["DOUBLE"]]')[u.k + 1])[1] > 0
 GROUP BY ALL;
+CREATE OR REPLACE TEMP TABLE out AS
 SELECT '{"type":"FeatureCollection","features":['
        || coalesce(string_agg(f, ',' ORDER BY f), '') || ']}' AS geojson
 FROM (SELECT json_object('type', 'Feature', 'geometry', json_object('type',

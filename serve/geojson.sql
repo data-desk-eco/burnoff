@@ -2,6 +2,7 @@
 -- newest first: a hotspot is its pixels, a multipolygon, with its peak's
 -- place and each pixel's b12 (pixel_b12, in the polygons' order); a look
 -- has no geometry
+CREATE OR REPLACE TEMP TABLE out AS
 SELECT '{"type":"FeatureCollection","features":['
        || coalesce(string_agg(f, ',' ORDER BY t DESC, k, f), '')
        || ']}' AS geojson

@@ -109,37 +109,77 @@ SELECT * REPLACE (s3lon(granule, track, lon, lat) AS lon,
                        s3lat(granule, track, lat)) AS px)
 FROM (SELECT * EXCLUDE (v) FROM db.s3_hotspots WHERE v = getvariable('v')
         AND lat BETWEEN getvariable('s') - .05 AND getvariable('n') + .05
+        AND lon BETWEEN getvariable('w') - .05 / cos(radians(lat))
+                    AND getvariable('e') + .05 / cos(radians(lat))
       UNION ALL BY NAME FROM query_table(h));
 -- the gate (quack_authorization_function), on each query: a script of
 -- bulk, index or export (q) after 'admin <key>' and a line, run as it is;
 -- a public one only as `FROM s2_hotspots(w, s, e, n[, 'a', 'b'])` or the
 -- same of s2_sites, run as args.sql, hotspots.sql, box.sql and geojson.sql or
 -- sites.sql, over those, or of s3_hotspots or s3_sites, run as s3args.sql,
--- s3hotspots.sql, s3box.sql and s3geojson.sql or s3sites.sql; anything
--- else refused
+-- s3hotspots.sql, s3box.sql and s3geojson.sql or s3sites.sql, then
+-- answer.sql; or, where the store keeps its answer fresh, that answer
+-- alone; anything else refused. days: how long a window's end goes on
+-- gaining products (index.sh lists a week again, s3hotspots.sql searches 3
+-- days again)
 CREATE TABLE cfg AS
 SELECT getenv('KEY') AS k, getenv('V') AS v, getenv('V3') AS v3;
 SELECT error('KEY unset or short') FROM cfg WHERE coalesce(len(k), 0) < 16;
 CREATE TABLE api AS
-SELECT f, string_agg(content, chr(10) ORDER BY o) AS body
+SELECT f, any_value(days) AS days, string_agg(content, chr(10) ORDER BY o)
+         AS body
 FROM (SELECT parse_filename(filename, true) AS n, content
       FROM read_text('*.sql')),
-     (VALUES ('s2_hotspots', '', 'geojson'), ('s2_sites', '', 'sites'),
-             ('s3_hotspots', 's3', 'geojson'), ('s3_sites', 's3', 'sites'))
-       a(f, p, l),
+     (VALUES ('s2_hotspots', '', 'geojson', 8), ('s2_sites', '', 'sites', 8),
+             ('s3_hotspots', 's3', 'geojson', 3),
+             ('s3_sites', 's3', 'sites', 3)) a(f, p, l, days),
      LATERAL (SELECT list_position(list_transform(['args', 'hotspots',
-       'box', l], lambda x: p || x), n) AS o)
+       'box', l], lambda x: p || x) || ['answer'], n) AS o)
 WHERE o IS NOT NULL GROUP BY f;
 CREATE MACRO call(q) AS regexp_extract(q,
   '^FROM (s[23]_hotspots|s[23]_sites)\(' ||
   '([-0-9.]+), ?([-0-9.]+), ?([-0-9.]+), ?([-0-9.]+)' ||
   '(?:, ?''([0-9-]{10}|\.\.)'', ?''([0-9-]{10}|\.\.)'')?\)$',
   ['f', 'w', 's', 'e', 'n', 'a', 'b']);
+-- a window's end x, or d where it is open ('..') or left out: the window
+-- is the last 90 days by default
+CREATE MACRO day(x, d) AS coalesce(TRY_CAST(nullif(x, '..') AS DATE), d);
+-- an answer kept (answer.sql) is given while fresh: no other request's
+-- read by its detector (dv) has touched within 0.1° of its box (past any
+-- cell or link that reaches it) since it began, and, for a window ending
+-- within days of today or where a read failed, for an hour. or while
+-- another request makes it again (a row with no geojson yet, under 2
+-- minutes old), so a crowd waits on one
+CREATE MACRO fresh(key, dv, w, s, e, n, t1, days) AS coalesce((
+  SELECT ka > coalesce((SELECT max(t.made)
+    FROM db.touched t WHERE t.v = dv AND t.k IS DISTINCT FROM key
+      AND t.y0 <= n + .1 AND t.y1 >= s - .1
+      AND t.x0 <= e + .1 / cos(radians(least(greatest(abs(s), abs(n)), 85)))
+      AND t.x1 >= w - .1 / cos(radians(least(greatest(abs(s), abs(n)), 85)))),
+    '-infinity'::TIMESTAMPTZ)
+    AND (t1 < current_date - days AND NOT kr OR ka > now() - INTERVAL 1 HOUR)
+    OR km > ka AND km > now() - INTERVAL 2 MINUTE
+  FROM (SELECT max(made) FILTER (geojson IS NOT NULL) AS ka,
+               arg_max(retry, made) FILTER (geojson IS NOT NULL) AS kr,
+               max(made) FILTER (geojson IS NULL) AS km
+        FROM db.answers WHERE k = key)), false);
 CREATE MACRO gate(sid, q) AS CASE
   WHEN starts_with(q, (SELECT 'admin ' || k || chr(10) FROM cfg))
     THEN q[(SELECT len(k) FROM cfg) + 8:]
-  WHEN call(q).f <> '' THEN (SELECT printf('SET VARIABLE v = ''%s'';
-SET VARIABLE w = %s; SET VARIABLE s = %s; SET VARIABLE e = %s;
-SET VARIABLE n = %s; SET VARIABLE a = ''%s''; SET VARIABLE b = ''%s'';
-', if(c.f[:2] = 's3', v3, v), c.w, c.s, c.e, c.n, c.a, c.b) || body
-    FROM cfg, api, (SELECT call(q) AS c) WHERE api.f = c.f) END;
+  WHEN call(q).f <> '' THEN (SELECT if(fresh(r.k, r.v, c.w::DOUBLE,
+      c.s::DOUBLE, c.e::DOUBLE, c.n::DOUBLE, r.t1, days),
+    printf('SELECT geojson FROM db.answers
+WHERE k = ''%s'' AND geojson IS NOT NULL ORDER BY made DESC LIMIT 1;', r.k),
+    printf('SET VARIABLE began = now(); SET VARIABLE k = ''%s'';
+INSERT INTO db.answers SELECT getvariable(''k''), getvariable(''began''),
+  NULL, NULL;
+SET VARIABLE v = ''%s''; SET VARIABLE w = %s; SET VARIABLE s = %s;
+SET VARIABLE e = %s; SET VARIABLE n = %s;
+SET VARIABLE t0 = DATE ''%s''; SET VARIABLE t1 = DATE ''%s'';
+', r.k, r.v, c.w, c.s, c.e, c.n, r.t0, r.t1) || body)
+    FROM api, (SELECT call(q) AS c),
+    LATERAL (SELECT *, concat_ws(' ', c.f, c.w, c.s, c.e, c.n, t0, t1, v) AS k
+      FROM (SELECT day(c.a, current_date - 90) AS t0,
+                   day(c.b, current_date) AS t1,
+                   if(c.f[:2] = 's3', v3, v) AS v FROM cfg)) r
+    WHERE api.f = c.f) END;

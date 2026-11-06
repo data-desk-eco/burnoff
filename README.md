@@ -38,7 +38,9 @@ FROM quack_query('quack:dev.datadesk.eco:443',
 Use `s3_sites` for the night-time view. Browser clients can use the
 [Quack SDK](https://github.com/tobilg/quack-protocol) at
 `https://dev.datadesk.eco`. Results are cached; new areas take seconds
-to read, while cached areas usually return in under a second.
+to read, while cached areas usually return in under a second. A repeated
+query returns the stored answer until new observations are read near its
+box, or, for windows that end in the last week, for up to an hour.
 
 ### Hotspots
 

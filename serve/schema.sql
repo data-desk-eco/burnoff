@@ -45,6 +45,20 @@ CREATE TABLE IF NOT EXISTS db.s3_hotspots (
   confirmed BOOLEAN, saturated BOOLEAN, v VARCHAR);
 ALTER TABLE db.s3_hotspots ADD COLUMN IF NOT EXISTS track DOUBLE;
 ALTER TABLE db.s3_hotspots ADD COLUMN IF NOT EXISTS px VARCHAR;
+
+-- the gate's cache (api.sql). answers: each public request's answer
+-- (answer.sql) by its key k, made when the request began (a row with no
+-- geojson while it is made), and whether a read failed in it, to be made
+-- again (retry). touched: the lon/lat box of what each read added (k, its
+-- request's, null for q's; v, its detector's), once committed: an answer
+-- is given again only while nothing has touched near its box since it
+-- began. both appended, the newest answer of a key the one read, and
+-- pruned hourly (prune.sql); emptied, every answer is made again the same
+CREATE TABLE IF NOT EXISTS db.answers (
+  k VARCHAR, made TIMESTAMPTZ, retry BOOLEAN, geojson VARCHAR);
+CREATE TABLE IF NOT EXISTS db.touched (
+  k VARCHAR, v VARCHAR, made TIMESTAMPTZ, x0 DOUBLE, y0 DOUBLE, x1 DOUBLE,
+  y1 DOUBLE);
 -- 2026-11-05: the browser and gpu paths left the extension, every s2 and s3
 -- answer the same, field for field: cells and hotspots kept under the old
 -- digests (deploy.sh's V, V3) are the new ones'. a no-op once run

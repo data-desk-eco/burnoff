@@ -71,6 +71,7 @@ FROM (SELECT pt.s AS t, sc.scene, sc.datetime::DATE AS date,
         AND abs(sq.y - py) <= 320
       GROUP BY ALL)
 GROUP BY ALL;
+CREATE OR REPLACE TEMP TABLE out AS
 SELECT '{"type":"FeatureCollection","features":['
        || coalesce(string_agg(f, ',' ORDER BY f), '') || ']}' AS geojson
 FROM (SELECT json_object('type', 'Feature', 'geometry', json_object('type',

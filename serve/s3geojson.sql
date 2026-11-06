@@ -2,6 +2,7 @@
 -- first: a hotspot is a point, its cluster's s5-weighted place, with its
 -- radiant heat (rh, MW), planck's temperature (K) and pixels; a look has no
 -- geometry
+CREATE OR REPLACE TEMP TABLE out AS
 SELECT '{"type":"FeatureCollection","features":['
        || coalesce(string_agg(f, ',' ORDER BY t DESC, k, f), '')
        || ']}' AS geojson

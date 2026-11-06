@@ -76,6 +76,7 @@ SELECT granule, t, s3_detect(s3url(dir), i0 / 10, j0 / 10, (i1 + 1) / 10,
 FROM (SELECT granule, t, min(i) AS i0, max(i) AS i1, min(j) AS j0,
              max(j) AS j1
       FROM miss GROUP BY ALL) JOIN gr USING (granule, t);
+SET VARIABLE failed = (SELECT count(*) > 0 FROM rd WHERE r.error IS NOT NULL);
 
 -- what was read, by cell: its squares (each in its cell's 5 × 5, row by row
 -- from the south-west) and its hotspots, the lacking cells alone
@@ -126,3 +127,8 @@ SELECT *, getvariable('v') AS v FROM det
 ANTI JOIN (FROM db.s3_hotspots WHERE v = getvariable('v'))
   USING (granule, lon, lat);
 COMMIT;
+-- and where they lie, once committed (hotspots.sql's)
+INSERT INTO db.touched
+SELECT getvariable('k'), getvariable('v'), now(), min(i) / 10, min(j) / 10,
+       (max(i) + 1) / 10, (max(j) + 1) / 10
+FROM obs HAVING count(*) > 0;

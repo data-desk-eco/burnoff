@@ -42,12 +42,15 @@ URL_STYLE \\047path\\047, SCOPE \\047s3://data-desk-archive\\047);\\n" \
   "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" > ~/.config/burnoff/secret.sql'
 cd
 # a unit as the box's own jobs are: a failure reported (data-desk-failed@),
-# its log under its name (journalctl -t burnoff-<name>)
+# its log under its name (journalctl -t burnoff-<name>); every request's
+# reads queue on one pool of 8 workers, what the box's memory holds beside
+# its other services
 unit() {   # name, description, command, then [Unit], [Service], [Install]
   printf '[Unit]\nDescription=burnoff: %s\nAfter=network-online.target\n'"\
 OnFailure=data-desk-failed@burnoff-$1.service\n%b\n[Service]\nUser=eouser\n\
 WorkingDirectory=$O\nSyslogIdentifier=burnoff-$1\nEnvironmentFile=$D/env\n\
-Environment=ARC=$ARC V=$V V3=$V3\nExecStart=%s\n%b\n" "$2" "$4" "$3" "$5" |
+Environment=ARC=$ARC V=$V V3=$V3 BURNOFF_THREADS=8\n\
+ExecStart=%s\n%b\n" "$2" "$4" "$3" "$5" |
     sudo tee /etc/systemd/system/burnoff-$1.service >/dev/null
 }
 unit serve "the store, served over quack" "/bin/bash -c '. \

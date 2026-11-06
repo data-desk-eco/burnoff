@@ -109,6 +109,23 @@ Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
 - Cells come from the store, else one `s2_detect` of those missing; new
   cells and their hotspots are added in one transaction, under the
   detector's digest `v`.
+- The gate keeps each public answer (`answer.sql`, `db.answers`) under its
+  key: the call, its box, its window resolved to dates, and `v`. A
+  request whose answer is fresh (`api.sql`'s `fresh`) gets it back without
+  running a script. An answer is fresh while no other request's read by
+  the same detector has added cells or hotspots within 0.1° of its box
+  since it began (`db.touched`, written after each read commits). For a
+  window that ends within a week of today (3 days for S3), or one where a
+  read failed, it is fresh for an hour. A request that makes an answer
+  again first adds a row with no geojson; for 2 minutes, others get the
+  last answer and do not make it too. The cache holds nothing that the
+  store does not: emptied, every answer is made again the same.
+  `prune.sql` (hourly, through `export.sh`) drops replaced answers and
+  month-old rows.
+- Every request's reads share one queue of `BURNOFF_THREADS` workers (8 on
+  the jump host), so many requests at once wait in turn and do not hold
+  more memory. Two requests that miss the same scene both read it, and the
+  store keeps it twice (readers take distinct rows).
 - `sites.sql` links every date's detections within 550 m of the box by
   constrained single linkage (40 m, never two of one date over 30 m
   apart) and names a site by its mean place rounded to 40 m, so a site
@@ -129,6 +146,9 @@ Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
   the archive's `data-desk/burnoff/{observations,detections}`, one file
   per H3 res-1 cell, rewriting only partitions with new keys; an empty
   store is seeded from the archive. S3 is not exported yet.
+- `load.sh` puts a load on a service as aerial would: N visitors over a
+  few views, each its blocks over aerial's windows. Run it against a test
+  instance, never `dev.datadesk.eco`.
 - Units fail to `data-desk-failed@` and log as `burnoff-<unit>`. The
   export runs inside the service, under its `memory_limit` and
   `temp_directory`. A deploy restarts the service only when a file
@@ -149,3 +169,8 @@ Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
   VNF's (log r 0.88); nights caught 40% at 1-2 MW, 79% over 20 MW.
 - S3 reads: 6.4 MB a granule for a 0.1° site; deployed, Ras Laffan 0.5°
   for 90 days in 10.9 s cold, 2.0 s warm.
+- `load.sh`, 20 visitors at once over Ras Laffan (234 requests each), on
+  an eo1.large like the jump host, store warm, from a laptop: main, 861 s,
+  p50 11.7 s, 303 errors; with the answers kept, 76 s, p50 0.65 s, 19
+  errors (CDSE's search, failing under the first crowd), and 38 s, p50
+  0.56 s, none, once kept.
