@@ -2,8 +2,7 @@
 # index.sh: every l1c product of each day eodata lists (n0400 on) into the
 # store's scenes (q), newest day first back to 2022-01-25, the detector's
 # first baseline: a day once it lists products, and the last week again, as
-# products land late
-. /etc/profile.d/eodata.sh
+# products land late. its unit hands it the box's eodata key
 q=$(dirname "$0")/q t=/tmp/index.$$
 echo "SELECT day FROM db.days;" | "$q" > "$t.days" || exit 1
 d=$(date +%F) w=$(date -d '-7 days' +%F)

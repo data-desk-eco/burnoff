@@ -96,7 +96,8 @@ Anything else is an error.
 ## The service
 
 On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
-`serve/deploy.sh`, run by systemd behind caddy: one DuckDB 2.0
+`serve/deploy.sh`, run by data-desk's units (`infra/systemd/burnoff*`,
+with the keys as systemd credentials) behind its caddy: one DuckDB 2.0
 (`/opt/burnoff/duckdb`, `server.sql`) holding the store and serving
 Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
 
@@ -104,7 +105,7 @@ Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
   `FROM s2_hotspots(...)` or `s2_sites(...)` runs `args.sql`, `hotspots.sql`,
   `box.sql`, then `geojson.sql` or `sites.sql`; the `s3_` forms run the
   `s3*.sql` equivalents. A script after `admin <key>` (`q`, the key in
-  `/data/burnoff/env`) runs as it is; anything else is refused. Macros
+  the `burnoff` credential) runs as it is; anything else is refused. Macros
   live in `api.sql`; per-request tables are `CREATE OR REPLACE TEMP`.
 - Cells come from the store, else one `s2_detect` of those missing; new
   cells and their hotspots are added in one transaction, under the
@@ -141,7 +142,7 @@ Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
   what is read; a local test can read MEEO's public mirror
   (`https://meeo-s3.s3.eu-central-1.amazonaws.com/NTC/`) instead.
 - `index.sh` (daily) indexes eodata's scenes. `bulk.sh`, by hand
-  (`systemctl start burnoff-bulk`), fills the store around the
+  (`systemctl start burnoff@bulk`), fills the store around the
   archive's sites. `export.sh` (hourly) merges the store's S2 rows into
   the archive's `data-desk/burnoff/{observations,detections}`, one file
   per H3 res-1 cell, rewriting only partitions with new keys; an empty
