@@ -73,8 +73,9 @@ geolocation error; about 90% of corrected positions are within 500 m of
 the flare.
 
 The service runs beside Copernicus eodata in CloudFerro's WAW3-2 region.
-Deployment and service SQL are in [`serve/`](serve/); development and
-operational notes are in [`AGENTS.md`](AGENTS.md).
+The service SQL is in [`serve/`](serve/), and `make serve` builds what it
+runs. Development notes and the deployment command are in
+[`AGENTS.md`](AGENTS.md).
 
 ## DuckDB extension
 

@@ -4,7 +4,7 @@
 # goes in a variable, so an error's echo of the query shows no key, and to
 # duckdb on stdin, so no key or secret shows in the process list
 s=$(sed "s/'/''/g")
-exec "$(dirname "$0")/duckdb" -noheader -list -bail <<Q
+exec duckdb -noheader -list -bail <<Q
 LOAD quack;
 SET VARIABLE s = 'admin $KEY
 $s';

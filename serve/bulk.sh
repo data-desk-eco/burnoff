@@ -15,6 +15,6 @@ for m in $(seq 1 60); do
           "t1 = DATE '$t1'"
         cat "$d/hotspots.sql"; echo "SELECT 1;"; } |
         "$d/q" >/dev/null || echo "bulk: $lon $lat $t0 failed"
-    done < "$d/seeds.txt"
+    done < "$d/../ext/seeds.txt"
   done
 done

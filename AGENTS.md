@@ -14,7 +14,7 @@ that the extension loads, offline.
 - `src/s3.c`: the Sentinel-3 SLSTR night detector and its result binding.
 - `src/burnoff.sql`: macros run on load (`s2_scenes`, `s2_hotspots`,
   `s3_scenes`, `s3_hotspots`, `s3_flares`).
-- `serve/`: the service (`serve/deploy.sh`).
+- `serve/`: the service, which `make serve` builds for.
 
 Keep it a detector. Archive shapes and publishing belong to the
 data-desk ETL (`etl/providers/data-desk/burnoff/`), which pins the
@@ -51,11 +51,11 @@ L1C baselines do not use. Over file://, run each date's boxes in its
 own process: a header cached from another date can give `tile-part not
 found`.
 
-The store digests (`deploy.sh`'s `V`, `V3`) include the shared host and
-header, plus each detector's sources. An S2-only change leaves S3
-unchanged, and conversely. A changed digest makes the service read its
-cells again. Where the output is unchanged, relabel the store's rows in
-`schema.sql`.
+The store digests (`V`, `V3`, which `make serve` writes to `ext/env`)
+include the shared host and header, plus each detector's sources. An
+S2-only change leaves S3 unchanged, and conversely. A changed digest
+makes the service read its cells again. Where the output is unchanged,
+relabel the store's rows in `schema.sql`.
 
 ## The night detector
 
@@ -95,11 +95,20 @@ Anything else is an error.
 
 ## The service
 
-On the jump host (CloudFerro WAW3-2, beside eodata), deployed by
-`serve/deploy.sh`, run by data-desk's units (`infra/systemd/burnoff*`,
+On the data desk box (CloudFerro WAW3-2, beside eodata), run from the
+checkout `/srv/burnoff` by data-desk's units (`infra/systemd/burnoff*`,
 with the keys as systemd credentials) behind its caddy: one DuckDB 2.0
-(`/opt/burnoff/duckdb`, `server.sql`) holding the store and serving
-Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
+(the box's, `server.sql`) holding the store and serving Quack on
+localhost:9494, at `https://dev.datadesk.eco/quack`. Each start runs
+`make serve`, which builds the extension, the digests and the seeds when
+their sources change, and checks the DuckDB version. To deploy:
+
+```sh
+ssh eouser@dev.datadesk.eco \
+  'git -C /srv/burnoff pull -q && sudo systemctl restart burnoff'
+```
+
+A restart drops the requests in flight.
 
 - `api.sql`'s gate (`quack_authorization_function`) sees every query.
   `FROM s2_hotspots(...)` or `s2_sites(...)` runs `args.sql`, `hotspots.sql`,
@@ -133,8 +142,9 @@ Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
   and its id depend on the store alone. Keep its sums integer (whole
   cm). `s3sites.sql` is the same at 750 m links, 250 m ids. Both use
   `api.sql`'s `linked` macro for constrained single linkage.
-- The store (`/data/burnoff/store.duckdb`, `schema.sql`) is a cache of
-  eodata. It has no keys: concurrent appends of one key conflict in
+- The store (`store.duckdb`, `schema.sql`) is in the unit's state
+  directory, `/var/lib/data-desk/burnoff` on the data volume, and is a
+  cache of eodata. It has no keys: concurrent appends of one key conflict in
   DuckDB, so readers take distinct rows. Cells lead with tile and
   sensing time and are read by them.
 - Sentinel-3 granules come from CDSE's STAC, searched a 1° square and a
@@ -150,10 +160,9 @@ Quack on localhost:9494, at `https://dev.datadesk.eco/quack`.
 - `load.sh` puts a load on a service as aerial would: N visitors over a
   few views, each its blocks over aerial's windows. Run it against a test
   instance, never `dev.datadesk.eco`.
-- Units fail to `data-desk-failed@` and log as `burnoff-<unit>`. The
-  export runs inside the service, under its `memory_limit` and
-  `temp_directory`. A deploy restarts the service only when a file
-  changed.
+- The units are `burnoff` and `burnoff@<script>`; a failure opens an
+  issue through data-desk's `failed@`. The export runs inside the service,
+  under its `memory_limit` and `temp_directory`.
 
 ## Measured
 

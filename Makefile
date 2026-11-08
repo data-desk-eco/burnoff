@@ -11,6 +11,8 @@ PLATFORM ?= $(shell uname -sm | awk '{ \
 	print os "_" arch }')
 VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 E = ext/burnoff.duckdb_extension
+S2 = src/burnoff.h src/burnoff.c src/s2.c src/j2k.c
+S3 = src/burnoff.h src/burnoff.c src/s3.c
 
 # the shared library plus duckdb's metadata footer: a wasm-style custom
 # section header, eight 32-byte fields (last first) and 256 bytes left for a
@@ -59,7 +61,29 @@ test: $(E)
 install: $(E)
 	duckdb -unsigned -c "force install '$(CURDIR)/$(E)'"
 
+# what the service runs from this checkout (data-desk's burnoff.service, at
+# each start): the extension; the detectors' digests, what a cell is kept
+# under (schema.sql's v): s2's of its sources, s3's of its own, so a change
+# to one keeps the other's; bulk.sh's seeds; and the box's duckdb, which
+# must be 2.0, for quack, with the extensions server.sql loads. a second
+# run builds nothing
+serve: $(E) ext/env ext/seeds.txt
+	@[ "$$(duckdb --version | cut -d' ' -f1)" = v2.0.0 ] || \
+	  { echo "burnoff serves on duckdb v2.0.0, not $$(duckdb --version)"; \
+	    exit 1; } >&2
+	@duckdb -c "INSTALL spatial; INSTALL h3 FROM community; INSTALL quack"
+
+ext/env: $(S2) $(S3)
+	@mkdir -p ext
+	printf 'V=%s\nV3=%s\n' $$(cat $(S2) | sha1sum | cut -c1-12) \
+	  $$(cat $(S3) | sha1sum | cut -c1-12) > $@
+
+ext/seeds.txt: serve/seeds.sql
+	@mkdir -p ext
+	duckdb < $< > $@
+
 clean:
 	rm -rf ext
 
-.PHONY: test install clean
+.PHONY: test install serve clean
+.DELETE_ON_ERROR:
