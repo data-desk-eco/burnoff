@@ -1,5 +1,5 @@
-# test on every push; a v* tag also publishes the builds as a release, whose
-# linux one the data desk fleet pins
+# test on every push on duckdb 2.0.0, what the data desk runs; a v* tag also
+# publishes the builds as a release
 name: ci
 on: [push, pull_request]
 permissions: {contents: write}
@@ -17,7 +17,8 @@ jobs:
         with: {fetch-depth: 0}
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev zlib1g-dev
-      - run: curl -fsSL https://install.duckdb.org | sh && echo ~/.duckdb/cli/latest >> $GITHUB_PATH
+      - run: curl -fsSL https://install.duckdb.org | DUCKDB_VERSION=2.0.0 sh
+      - run: echo ~/.duckdb/cli/2.0.0 >> $GITHUB_PATH
       - run: make test
       - if: startsWith(github.ref, 'refs/tags/v')
         env: {GH_TOKEN: '${{ github.token }}'}

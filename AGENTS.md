@@ -17,8 +17,10 @@ that the extension loads, offline.
 - `serve/`: the service, which `make serve` builds for.
 
 Keep it a detector. Archive shapes and publishing belong to the
-data-desk ETL (`etl/providers/data-desk/burnoff/`), which pins the
-`burnoff-linux_amd64.duckdb_extension` of a `v*` release.
+data-desk ETL (`etl/fetch/burnoff`), which loads the extension that
+`make serve` builds on the box, so its runs detect as the service does.
+The extension uses the stable C API of DuckDB 1.2 (`C_STRUCT`), so one
+build loads on 1.2 to 2.0; `src/duckdb*.h` are 2.0.0's.
 
 ## The detector
 

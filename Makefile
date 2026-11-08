@@ -16,7 +16,8 @@ S3 = src/burnoff.h src/burnoff.c src/s3.c
 
 # the shared library plus duckdb's metadata footer: a wasm-style custom
 # section header, eight 32-byte fields (last first) and 256 bytes left for a
-# signature
+# signature. it is renamed into place, as a duckdb running the last one (the
+# etl's fetch, a unit) would fault on it rewritten
 $(E): $(SRC) src/burnoff.h src/j2k.c src/duckdb.h \
       src/duckdb_extension.h ext/burnoff.sql.h
 	$(CC) $(CFLAGS) -Iext -shared -fPIC -fvisibility=hidden $(SRC) $(LDLIBS) \
@@ -24,8 +25,8 @@ $(E): $(SRC) src/burnoff.h src/j2k.c src/duckdb.h \
 	{ cat ext/burnoff.so; printf '\000\223\004\020duckdb_signature\200\004'; \
 	  for f in "" "" "" C_STRUCT $(VERSION) v1.2.0 $(PLATFORM) 4; do \
 	    printf '%s' "$$f"; head -c $$((32 - $${#f})) /dev/zero; done; \
-	  head -c 256 /dev/zero; } > $@
-	rm ext/burnoff.so
+	  head -c 256 /dev/zero; } > $@+
+	rm ext/burnoff.so && mv $@+ $@
 
 # the macros, run on load: each line a c string
 ext/burnoff.sql.h: src/burnoff.sql

@@ -89,7 +89,8 @@ duckdb -unsigned -c "force install './burnoff.duckdb_extension'"
 ```
 
 For Linux, use `burnoff-linux_amd64.duckdb_extension`. Requires DuckDB
-1.2 or later, started with `-unsigned`. Load spatial before burnoff:
+1.2 or later (tested on 2.0), started with `-unsigned`. Load spatial
+before burnoff:
 
 ```sql
 LOAD spatial;
@@ -169,4 +170,14 @@ Requires a C compiler, `pkg-config`, libcurl and zlib
 make              # ext/burnoff.duckdb_extension
 make test         # loads the extension and runs an offline detection
 make install      # makes LOAD burnoff work from any directory
+```
+
+### Release
+
+A `v*` tag makes a release. CI builds and tests the extension on DuckDB
+2.0.0 for Linux AMD64 and macOS ARM64, and attaches both files to the
+tag's GitHub release. Tag a commit on `main` that passes CI:
+
+```sh
+git tag v0.5.0 && git push origin v0.5.0
 ```
