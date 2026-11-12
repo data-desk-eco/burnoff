@@ -44,17 +44,21 @@ DELETE FROM c WHERE NOT list_contains(getvariable('d'), cell);
 CREATE OR REPLACE MACRO kept(t) AS TABLE
 FROM arc(t) ANTI JOIN c USING (scene, i, j)
   WHERE list_contains(getvariable('d'), cell);
+-- squares stay packed, as the store keeps them, until the rows are in order:
+-- unpacked, a partition's cells take gigabytes to sort
 CREATE OR REPLACE TEMP TABLE o AS
 FROM (SELECT scene, sensed(scene) AS datetime, sensed(scene)::DATE AS date,
              split_part(scene, '_', 6)[2:] AS tile, i, j, sx, sy, ox, oy, crs,
-             clear, cloud,
-             unpacked(squares, ox, oy, sx, sy, i, j, cloud) AS squares,
-             lon, lat, cell, v
+             clear, cloud, squares, lon, lat, cell, v
       FROM c
-      UNION ALL BY NAME FROM kept('observations'))
+      UNION ALL BY NAME
+      SELECT * REPLACE (packed(squares, ox, oy, sx, sy, i, j) AS squares)
+      FROM kept('observations'))
 QUALIFY scene = max(scene) OVER (PARTITION BY split_part(scene, '_', 6),
                                               split_part(scene, '_', 3));
-COPY (FROM o ORDER BY cell, scene, i, j)
+COPY (SELECT * REPLACE (unpacked(squares, ox, oy, sx, sy, i, j, cloud)
+                        AS squares)
+      FROM (FROM o ORDER BY cell, scene, i, j))
 TO (getvariable('arc') || '/observations') (FORMAT parquet,
   COMPRESSION zstd, PARTITION_BY (cell), WRITE_PARTITION_COLUMNS true,
   FILENAME_PATTERN 'data', OVERWRITE_OR_IGNORE);
