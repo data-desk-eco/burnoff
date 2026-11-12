@@ -371,7 +371,7 @@ static const char *parts(s2 *j, const char *url, band *f, const win *w,
   // z: the bytes of the tile-parts wanted whose PLT is not in hand
   for (int k = 0; k < f->nt; k++)
     z += m[k] && f->tlm && f->at[k] && !pk(j, url, f, k, o, l) ? f->len[k] : 0;
-  q = malloc(16 * qc);
+  q = mem(16 * qc);
   for (int k = 0; k < f->nt; k++) {
     if (!m[k] || ((a = f->at[k]) && got(j->io, url, a, b = a + f->len[k])))
       continue;
@@ -380,7 +380,7 @@ static const char *parts(s2 *j, const char *url, band *f, const win *w,
     int np = !f->tlm || j->budget || m[k] == (c < 64 ? (1ull << c) - 1 : ~0ull)
            ? -2 : pk(j, url, f, k, o, l);
     if (np == -1 || np > 0 ? np != c : 0)
-      return free(q), "malformed tile-part header";
+      return unmem(q), "malformed tile-part header";
     if (!np && z <= WHOLE) np = -2;
     if (np < 0) q[2 * nq] = a, q[2 * nq++ + 1] = b;
     else if (!np) q[2 * nq] = a, q[2 * nq++ + 1] = a + MIN(f->len[k], 512);
@@ -395,7 +395,7 @@ static const char *parts(s2 *j, const char *url, band *f, const win *w,
   if (look && ++f->round > 12) e = "tile-part not found";
   for (int i = 0; i < nq && (!e || e == LACK); i++)
     e = want(j->io, url, q[2 * i], q[2 * i + 1]);
-  free(q);
+  unmem(q);
   if (e) return e;
   pthread_mutex_lock(&lk);
   if ((g = learned(url, NULL, f->nt)))
@@ -424,7 +424,7 @@ static const char *decs(s2 *j, const char *url, int b, const win *w, int n,
   long long q[NP];
   for (int i = 0, c; i < n; i++) {
     if (j->nq == j->qcap)
-      j->dq = realloc(j->dq, (j->qcap = 2 * j->qcap + 16) * sizeof *j->dq);
+      j->dq = remem(j->dq, (j->qcap = 2 * j->qcap + 16) * sizeof *j->dq);
     dj *d = &j->dq[j->nq++];
     *d = (dj){b, w[i].k, w[i].x0, w[i].y0, w[i].x1, w[i].y1, {0}, {0},
               o, j->W, j->X0, j->Y0};
@@ -517,15 +517,15 @@ static const char *heads(s2 *j) {
   if (m) return m;
   int cx0 = j->cx0 = X0 / 3, cy0 = j->cy0 = Y0 / 3;
   int cw = j->cw = (X1 + 2) / 3 - cx0, ch = j->ch = (Y1 + 2) / 3 - cy0;
-  j->m = malloc((size_t)2 * cw * ch * 2);
+  j->m = mem((size_t)2 * cw * ch * 2);
   if ((e = j2k_window(j->mk.p, j->mk.n, cx0, cy0, cx0 + cw, cy0 + ch, 2,
                       j->m)))
     return e;
   int gx0 = j->gx0 = X0 / CELL, gy0 = j->gy0 = Y0 / CELL;
   int ncx = j->ncx = (X1 - 1) / CELL - gx0 + 1;
   int nc = j->nc = ncx * ((Y1 - 1) / CELL - gy0 + 1);
-  int *cnt = j->cnt = calloc(nc, sizeof *cnt),
-      *cld = j->cld = calloc(nc, sizeof *cld);
+  int *cnt = j->cnt = mem(nc * sizeof *cnt),
+      *cld = j->cld = mem(nc * sizeof *cld);
   for (int y = Y0; y < Y1; y++) {
     unsigned short *m0 = j->m + (y / 3 - cy0) * cw, *m1 = m0 + cw * ch;
     int *cn = cnt + (y / CELL - gy0) * ncx, *cd = cld + (cn - cnt);
@@ -549,11 +549,11 @@ static const char *heads(s2 *j) {
         b[2] = MAX(b[2], a2), b[3] = MAX(b[3], a3);
       }
   }
-  j->wn = malloc(256 * sizeof *j->wn), j->nw = 0;
+  j->wn = mem(256 * sizeof *j->wn), j->nw = 0;
   for (int k = 0; k < f->nt; k++)
     if (need[k])
       j->wn[j->nw++] = (win){k, tb[k][0], tb[k][1], tb[k][2], tb[k][3]};
-  j->b12 = calloc((size_t)W * H, 2);
+  j->b12 = mem((size_t)W * H * 2);
   return NULL;
 }
 
@@ -601,10 +601,10 @@ static int screen(s2 *j) {
   int X0 = j->X0, Y0 = j->Y0, X1 = j->X1, Y1 = j->Y1, W = j->W, H = j->H;
   int gx0 = j->gx0, gy0 = j->gy0, ncx = j->ncx, nc = j->nc, *cnt = j->cnt;
   int *cld = j->cld, seen = W * H, clear = 0, hot = 0, cap = 0;
-  double *ct = j->ct = malloc(nc * sizeof *ct);
-  double *bgm = j->bgm = malloc(nc * sizeof *bgm);
+  double *ct = j->ct = mem(nc * sizeof *ct);
+  double *bgm = j->bgm = mem(nc * sizeof *bgm);
   int cut = (int)MIN(ceil(1000 + t[B12MIN] * 10000), 65536),
-      *hist = calloc(cut, 4);
+      *hist = mem(cut * 4);
   for (int c = 0; c < nc; c++) clear += cnt[c] - cld[c];
   for (int c = 0; c < nc; c++) {
     int gx = gx0 + c % ncx, gy = gy0 + c / ncx, nbg = 0, nd = 0, ndc = 0;
@@ -626,10 +626,10 @@ static int screen(s2 *j) {
     double med = bgm[c] = cal(i);
     ct[c] = (med > t[BGFLOOR] ? med : t[BGFLOOR]) * t[CONTRAST];
   }
-  free(hist);
+  unmem(hist);
   if (seen > 0) j->r.clear = (double)clear / seen;
   int qx0 = X0 / SUB, qy0 = Y0 / SUB, nqx = (X1 - 1) / SUB - qx0 + 1;
-  uint32_t *s = calloc(2 * nqx * ((Y1 - 1) / SUB - qy0 + 1), 4);
+  uint32_t *s = mem(2 * nqx * ((Y1 - 1) / SUB - qy0 + 1) * 4);
   for (int r0 = 0; r0 < H; r0++)
     for (int c0 = 0; c0 < W; c0++) {
       int gx = X0 + c0, gy = Y0 + r0;
@@ -638,14 +638,14 @@ static int screen(s2 *j) {
       q[0]++, q[1] += cld[c] > t[MAXCLOUD] * cnt[c] || cloudy(j, r0, c0) ||
                       !b12[(size_t)r0 * W + c0];
     }
-  squares(j, s), free(s);
+  squares(j, s), unmem(s);
   for (int r0 = 0; r0 < H; r0++)
     for (int c0 = 0; c0 < W; c0++) {
       double v = cal(b12[(size_t)r0 * W + c0]);
       int c = ((Y0 + r0) / CELL - gy0) * ncx + (X0 + c0) / CELL - gx0;
       if (v <= t[B12MIN] || v <= ct[c]) continue;
       if (j->mc == cap)
-        j->idx = realloc(j->idx, (cap = cap ? 2 * cap : 256) * 4);
+        j->idx = remem(j->idx, (cap = cap ? 2 * cap : 256) * 4);
       j->idx[j->mc++] = r0 * W + c0, hot |= v >= t[PEAKMIN];
     }
   return hot;
@@ -658,7 +658,7 @@ static int screen(s2 *j) {
 static void wins(s2 *j) {
   band *f = j->bd;
   int mc = j->mc, *idx = j->idx, *par = j->par, X0 = j->X0, Y0 = j->Y0;
-  int W = j->W, H = j->H, *bb = malloc((size_t)mc * 16), nw = 0, cap = 0;
+  int W = j->W, H = j->H, *bb = mem((size_t)mc * 16), nw = 0, cap = 0;
   win *wn = NULL;
   for (int k = 0; k < mc; k++)
     bb[4 * k] = bb[4 * k + 1] = INT32_MAX, bb[4 * k + 2] = bb[4 * k + 3] = -1;
@@ -675,13 +675,13 @@ static void wins(s2 *j) {
     if (b[2] < 0) continue;
     for (int ty = b[1] / f->th; ty <= (b[3] - 1) / f->th; ty++)
       for (int tx = b[0] / f->tw; tx <= (b[2] - 1) / f->tw; tx++) {
-        if (nw == cap) wn = realloc(wn, (cap = 2 * cap + 16) * sizeof *wn);
+        if (nw == cap) wn = remem(wn, (cap = 2 * cap + 16) * sizeof *wn);
         wn[nw++] = (win){ty * f->nx + tx, MAX(b[0], tx * f->tw),
                          MAX(b[1], ty * f->th), MIN(b[2], tx * f->tw + f->tw),
                          MIN(b[3], ty * f->th + f->th)};
       }
   }
-  free(bb);
+  unmem(bb);
   for (int i = 0; i < nw; i++)
     for (int k = i + 1; k < nw; k++) {
       win *a = &wn[i], *b = &wn[k];
@@ -690,7 +690,7 @@ static void wins(s2 *j) {
       if (a->k != b->k || area(&v) > area(a) + area(b) + FIXED) continue;
       *a = v, wn[k] = wn[--nw], k = i;   // and look again from i
     }
-  free(j->wn), j->wn = wn, j->nw = nw;
+  unmem(j->wn), j->wn = wn, j->nw = nw;
 }
 
 #define V(k) cal(j->v12[k])
@@ -704,9 +704,9 @@ static const char *back(s2 *j) {
   forget(j->io, j->u[0]);
   if (!screen(j)) return FIN;
   int mc = j->mc, *idx = j->idx, W = j->W, *par;
-  par = j->par = malloc(mc * 4), j->ok = calloc(mc, 1), j->sel = malloc(mc);
-  j->v12 = malloc(mc * 2), j->v11 = calloc(mc, 2), j->v8a = calloc(mc, 2);
-  j->g8a = calloc(mc, 2), j->g12 = calloc(mc, 2);
+  par = j->par = mem(mc * 4), j->ok = mem(mc), j->sel = mem(mc);
+  j->v12 = mem(mc * 2), j->v11 = mem(mc * 2), j->v8a = mem(mc * 2);
+  j->g8a = mem(mc * 2), j->g12 = mem(mc * 2);
   for (int k = 0; k < mc; k++) j->v12[k] = j->b12[idx[k]];
   for (int k = 0; k < mc; k++) {
     int i = idx[k], n;
@@ -767,11 +767,11 @@ static const char *b8a(s2 *j) {
 // peak; the detections
 static const char *dets(s2 *j) {
   int mc = j->mc, *idx = j->idx, *par = j->par, W = j->W, H = j->H;
-  int X0 = j->X0, Y0 = j->Y0, *n_ = calloc(mc, 4), *pk = malloc(mc * 4);
-  int *pq = malloc(mc * 4);
+  int X0 = j->X0, Y0 = j->Y0, *n_ = mem(mc * 4), *pk = mem(mc * 4);
+  int *pq = mem(mc * 4);
   const double *t = j->t;
-  double *sum = calloc(mc, 8);
-  char *ok = j->ok, *vis = calloc(mc, 1);
+  double *sum = mem(mc * 8);
+  char *ok = j->ok, *vis = mem(mc);
   band *f = j->bd;
   res *r = &j->r;
   for (int k = 0; k < mc; k++)
@@ -849,7 +849,7 @@ static const char *dets(s2 *j) {
                           a > 1e-6 ? p / a : INFINITY, p / avg, rad, size,
                           p >= t[SAT], pp};
   }
-  free(n_), free(pk), free(pq), free(sum), free(vis);
+  unmem(n_), unmem(pk), unmem(pq), unmem(sum), unmem(vis);
   return NULL;
 }
 
@@ -873,16 +873,6 @@ static void start(s2 *j, const char *url, const double *box,
   j->io->gap = j->budget ? 1 << 20 : GAP, j->r.clear = NAN;
 }
 
-// all but its result
-static void end(s2 *j) {
-  for (int i = 0; i < 4; i++) free(j->u[i]);
-  void *p[] = {j->dq, j->wn, j->b12, j->m, j->v12, j->v11, j->v8a,
-               j->g12, j->g8a, j->cnt, j->cld, j->idx, j->par, j->ct,
-               j->bgm, j->ok, j->sel};
-  for (size_t i = 0; i < sizeof p / sizeof *p; i++) free(p[i]);
-  drop(&j->s), drop(&j->mk);
-}
-
 typedef struct {
   double box[4], th[NT], org[3];
   res r;
@@ -904,7 +894,7 @@ static void s2_work(row *w, job *io) {
   }
   w->e = j.e, r->r = j.r;
   r->org[0] = j.bd->ox, r->org[1] = j.bd->oy, r->org[2] = j.bd->res;
-  end(&j);
+  for (int i = 0; i < 4; i++) free(j.u[i]);   // the rest goes with the job
 }
 
 static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,

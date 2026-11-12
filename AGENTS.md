@@ -39,6 +39,14 @@ once (curl multi). The detector then resumes its stage.
   tile-parts are read whole.
 - A decode of 1024 code-blocks or more spreads over the cores other
   rows leave idle (`spread()`).
+- A job's memory is its own (`mem`, `remem`, `unmem` in `burnoff.c`):
+  pages mapped for it and all unmapped when it ends, so a long-running
+  DuckDB does not keep what jobs freed. A piece over 256 KB is its own
+  mapping: `unmem` keeps it for the job's next piece of its size (up to
+  16 MB kept, so a decode's planes are not mapped again for each tile),
+  else unmaps it. Smaller ones wait for the job's end. Every piece comes
+  zeroed. What outlives the job, its results and the shared caches, is
+  `malloc`'s: never `free` a `mem` piece, nor `unmem` a `malloc` one.
 - `nir_excess` rejects sunlight: a peak's B8A rise must be under 0.1 of
   its B12 rise. It cut London's detections from 20,224 to 1,451 a year
   and kept Permian flares (327 to 315 sites).
@@ -51,7 +59,8 @@ field for field, against a baseline: 588 boxes over 14 scenes
 OpenJPEG 2.5 sample for sample, and refuses any codestream shape the
 L1C baselines do not use. Over file://, run each date's boxes in its
 own process: a header cached from another date can give `tile-part not
-found`.
+found`. Over https too, where dates without a TLM share a query: 2 of 18
+Permian scenes (T13SER, N0511, May 2025) failed so in 3 of 5 runs.
 
 The store digests (`V`, `V3`, which `make serve` writes to `ext/env`)
 include the shared host and header, plus each detector's sources. An
@@ -181,6 +190,9 @@ A restart drops the requests in flight.
   VNF's (log r 0.88); nights caught 40% at 1-2 MW, 79% over 20 MW.
 - S3 reads: 6.4 MB a granule for a 0.1° site; deployed, Ras Laffan 0.5°
   for 90 days in 10.9 s cold, 2.0 s warm.
+- Memory: six months of Permian hotspots (gcp, 1°) in one DuckDB on an
+  eo1.large hold 422 MB after, against 824 MB with `malloc` for the jobs
+  (peak about 1.1 GB either way, same time).
 - `load.sh`, 20 visitors at once over Ras Laffan (234 requests each), on
   an eo1.large like the jump host, store warm, from a laptop: main, 861 s,
   p50 11.7 s, 303 errors; with the answers kept, 76 s, p50 0.65 s, 19

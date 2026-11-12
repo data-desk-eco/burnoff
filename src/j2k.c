@@ -9,7 +9,8 @@
 // a tile decodes from just the packets a window needs (j2k_need), tier-2
 // lists their code-blocks as plain records (j2k_cb), tier-1 decodes each
 // into its tile-component's coefficients, and the windowed inverse 5/3,
-// RCT and level shift give samples equal to openjpeg 2.5's.
+// RCT and level shift give samples equal to openjpeg 2.5's. its memory is
+// the job's (burnoff.c's mem), a tile's given back once it is decoded.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -239,7 +240,7 @@ static unsigned npasses(bio *b) {
 }
 
 static void *grow(void *p, size_t *cap, size_t need, size_t sz) {
-  if (need > *cap) p = realloc(p, (*cap = 2 * need + 64) * sz);
+  if (need > *cap) p = remem(p, (*cap = 2 * need + 64) * sz);
   return p;
 }
 
@@ -577,7 +578,7 @@ void j2k_samples(const j2k *j, int k, int x0, int y0, int x1, int y1,
   j2k_box t = tbox(j, k);
   j2k_box w = {JMAX(x0, t.x0), JMAX(y0, t.y0), JMIN(x1, t.x1), JMIN(y1, t.y1)};
   size_t s = t.x1 - t.x0, sh = s * (t.y1 - t.y0), m = JMAX(j->w, j->h) + 2;
-  int32_t *b = malloc(4 * (sh + m)), **q = malloc(m * sizeof *q);
+  int32_t *b = mem(4 * (sh + m)), **q = mem(m * sizeof *q);
   int mx = (1 << j->prec) - 1;
   lev L[33];
   reach(j, t, w, L);
@@ -595,7 +596,7 @@ void j2k_samples(const j2k *j, int k, int x0, int y0, int x1, int y1,
         out[c * cs + (size_t)(y - y0) * os + x - x0] = u < 0 ? 0 : JMIN(u, mx);
       }
     }
-  free(b), free(q);
+  unmem(b), unmem(q);
 }
 
 // a parallel for, when the caller has threads to lend: f(a, i) for each i
@@ -626,12 +627,12 @@ const char *j2k_tile(const j2k *j, int k, const uint8_t *const *pk,
   j2k_cbs o = {0};
   const char *e = j2k_t2(j, k, pk, pn, x0, y0, x1, y1, &o);
 
-  int32_t *a = e ? NULL : malloc(4 * sh * j->nc);
+  int32_t *a = e ? NULL : mem(4 * sh * j->nc);
   t1job job = {j, t, &o, a};
   if (!e && j2k_spread && o.n >= 1024) j2k_spread(t1one, &job, o.n);
   else for (size_t i = 0; !e && i < o.n; i++) t1one(&job, i);
   if (!e) j2k_samples(j, k, x0, y0, x1, y1, a, nc, out, os, cs);
-  free(a), free(o.cb), free(o.d);
+  unmem(a), unmem(o.cb), unmem(o.d);
   return e;
 }
 
@@ -645,7 +646,7 @@ const char *j2k_window(const uint8_t *p, size_t n, int x0, int y0, int x1,
   const char *err = j2k_main(&j, s, e - s);
   if (err) return err;
   if (nc > j.nc) return "too few components";
-  const uint8_t **pk = malloc(j.mp * (sizeof *pk + 8));
+  const uint8_t **pk = mem(j.mp * (sizeof *pk + 8));
   uint32_t *off = (uint32_t *)(pk + j.mp), *pn = off + j.mp;
   j2k_box w = {x0, y0, x1, y1};
   size_t len;
@@ -660,6 +661,6 @@ const char *j2k_window(const uint8_t *p, size_t n, int x0, int y0, int x1,
                      (size_t)(x1 - x0) * (y1 - y0));
     }
   }
-  free(pk);
+  unmem(pk);
   return err;
 }

@@ -22,8 +22,8 @@ DUCKDB_EXTENSION_EXTERN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
-// bytes read, the file's size when the answer gave it, and the seconds a
-// 429 asked us to wait
+// bytes, in the job's memory (mem), the file's size when the answer gave
+// it, and the seconds a 429 asked us to wait
 typedef struct {
   unsigned char *p;
   size_t n, cap;
@@ -66,6 +66,9 @@ typedef struct row {
 } row;
 
 extern const char PAST[], LACK[], FIN[];
+void *mem(size_t n);
+void *remem(void *p, size_t n);
+void unmem(void *p);
 void drop(buf *b);
 void append(buf *b, const void *p, size_t n);
 rd *add(job *j, const char *url, long long lo, long long hi);

@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 #include <errno.h>
 #include <limits.h>
+#include <sys/mman.h>
 
 // "name=value,name=value" over t
 const char *params(const char *s, double *t, const char **tk,
@@ -27,9 +28,83 @@ const char *params(const char *s, double *t, const char **tk,
   return NULL;
 }
 
+// a job's memory: pages mapped for it, carved in order, and all unmapped
+// once it ends, whatever it did not give back: its reads, rasters and
+// decodes never outlive it, nor wait in an allocator for another job. a
+// piece over BIG has a mapping of its own, which unmem() gives back: kept
+// for the job's next piece of its size while it and those kept come to
+// SPARE or less (a decode's planes), else unmapped at once. every piece
+// comes zeroed. what outlives the job (its results, the shared caches) is
+// malloc's
+#define BIG (256 << 10)
+#define SPARE (16 << 20)
+typedef struct map { struct map *next; size_t n, used, last; } map;
+typedef struct { size_t n, own; } hdr;
+typedef struct { map *small, *big, *spare; size_t kept; } region;
+static __thread region *zone;   // the job's on this thread
+
+// a mapping of s bytes, zeroed, or for a piece of its own a spare one of
+// up to 2s, zeroed as far as the piece reaches
+static map *mapping(size_t s, int own) {
+  map **f = &zone->spare, *m = NULL;
+  while (own && (m = *f) && (m->n < s || m->n > 2 * s)) f = &m->next;
+  if (m) {
+    size_t n = m->n;
+    *f = m->next, zone->kept -= n, memset(m, 0, s), m->n = n;
+  } else if ((m = mmap(NULL, s, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANON, -1, 0)) == MAP_FAILED)
+    return NULL;
+  else m->n = s;
+  return m;
+}
+
+void *mem(size_t n) {
+  size_t k = sizeof(hdr) + (n + 15) / 16 * 16;
+  int own = k > BIG;
+  map **l = own ? &zone->big : &zone->small, *m = *l;
+  if (own || !m || m->used + k > m->n) {
+    if (!(m = mapping(own ? sizeof *m + k : 4 * BIG, own))) return NULL;
+    m->next = *l, m->used = sizeof *m, *l = m;
+  }
+  hdr *h = (hdr *)((char *)m + (m->last = m->used));
+  m->used += k, *h = (hdr){n, own};
+  return h + 1;
+}
+
+void unmem(void *p) {
+  map *m = p && ((hdr *)p)[-1].own ? (map *)((hdr *)p - 1) - 1 : NULL;
+  for (map **l = &zone->big; m && *l; l = &(*l)->next)
+    if (*l == m) {
+      *l = m->next;
+      if (zone->kept + m->n > SPARE) munmap(m, m->n);
+      else m->next = zone->spare, zone->spare = m, zone->kept += m->n;
+      return;
+    }
+}
+
+// p grown to n bytes: in place where it is the last piece of its mapping
+// and they fit, else copied
+void *remem(void *p, size_t n) {
+  hdr *h = p ? (hdr *)p - 1 : NULL;
+  map *m = zone->small;
+  size_t k = sizeof(hdr) + (n + 15) / 16 * 16;
+  if (h && !h->own && m && (char *)h == (char *)m + m->last && n >= h->n &&
+      m->last + k <= m->n)
+    return m->used = m->last + k, h->n = n, p;
+  void *q = mem(n);
+  if (q && h) memcpy(q, p, MIN(h->n, n)), unmem(p);
+  return q;
+}
+
+static void unmap(map *m) {
+  for (map *n; m; m = n) n = m->next, munmap(m, m->n);
+}
+
+static void let(region *r) { unmap(r->small), unmap(r->big), unmap(r->spare); }
+
 void append(buf *b, const void *p, size_t n) {
   if (b->n + n > b->cap)
-    b->p = realloc(b->p, b->cap = 2 * (b->n + n));
+    b->p = remem(b->p, b->cap = 2 * (b->n + n));
   memcpy(b->p + b->n, p, n);
   b->n += n;
 }
@@ -39,7 +114,7 @@ static size_t wr(char *d, size_t s, size_t n, void *u) {
   return s * n;
 }
 
-void drop(buf *b) { free(b->p), *b = (buf){0}; }
+void drop(buf *b) { unmem(b->p), *b = (buf){0}; }
 
 static size_t hd(char *d, size_t s, size_t n, void *u) {
   buf *b = u;
@@ -107,7 +182,7 @@ rd *got(job *j, const char *url, long long lo, long long hi) {
 
 // r made whole: [wl, wh) from its answer and the reads in hand before it
 static void fill(job *j, rd *r) {
-  unsigned char *p = malloc(r->wh - r->wl);
+  unsigned char *p = mem(r->wh - r->wl);
   long long size = r->b.size;
   for (rd *q = j->rq; q <= r; q++) {
     long long a = MAX(q->lo, r->wl), b = MIN(q->lo + (long long)q->b.n, r->wh);
@@ -115,16 +190,16 @@ static void fill(job *j, rd *r) {
       memcpy(p + a - r->wl, q->b.p + a - q->lo, b - a),
       size = MAX(size, q->b.size);
   }
-  free(r->b.p), r->b = (buf){p, r->wh - r->wl, r->wh - r->wl, size, 0};
+  unmem(r->b.p), r->b = (buf){p, r->wh - r->wl, r->wh - r->wl, size, 0};
   r->lo = r->wl, r->hi = r->wh;
 }
 
 rd *add(job *j, const char *url, long long lo, long long hi) {
   if (j->nr == j->rcap)
-    j->rq = realloc(j->rq, (j->rcap = 2 * j->rcap + 16) * sizeof *j->rq);
+    j->rq = remem(j->rq, (j->rcap = 2 * j->rcap + 16) * sizeof *j->rq);
   rd *r = &j->rq[j->nr++];
-  *r = (rd){.url = strdup(url), .lo = lo, .hi = hi, .wl = lo, .wh = hi,
-            .b.size = -1};
+  *r = (rd){.url = strcpy(mem(strlen(url) + 1), url), .lo = lo, .hi = hi,
+            .wl = lo, .wh = hi, .b.size = -1};
   return r;
 }
 
@@ -155,7 +230,7 @@ void forget(job *j, const char *url) {
   int n = 0;
   for (rd *r = j->rq; r < j->rq + j->nr; r++)
     if (strcmp(r->url, url)) j->rq[n++] = *r;
-    else free(r->url), free(r->b.p);
+    else unmem(r->b.p);
   j->nr = n;
 }
 
@@ -297,10 +372,9 @@ static void *worker(void *unused) {
     if (!(qh = w->next)) qt = NULL;
     pthread_mutex_unlock(&qm);
     __atomic_add_fetch(&busy, 1, __ATOMIC_RELAXED);
+    region z = {0};
     job j = {.connection = &connection};
-    w->work(w, &j);
-    for (int i = 0; i < j.nr; i++) free(j.rq[i].url), drop(&j.rq[i].b);
-    free(j.rq);
+    zone = &z, w->work(w, &j), let(&z);
     __atomic_sub_fetch(&busy, 1, __ATOMIC_RELAXED);
     pthread_mutex_lock(w->m);
     if (!--*w->left) pthread_cond_signal(w->c);
@@ -402,8 +476,9 @@ static void s2_get(duckdb_function_info info, duckdb_data_chunk in,
   duckdb_vector v = duckdb_data_chunk_get_vector(in, 0);
   idx_t n = duckdb_data_chunk_get_size(in);
   rd *q = calloc(n ? n : 1, sizeof *q);
+  region z = {0};
   ctx x;
-  open_(&x);
+  open_(&x), zone = &z;
   for (idx_t i = 0; i < n; i++)
     q[i] = (rd){.url = valid(v, i) ? str(v, i) : NULL, .hi = -1, .b.size = -1};
   for (idx_t i = 0; i < n; i += 4)
@@ -420,8 +495,9 @@ static void s2_get(duckdb_function_info info, duckdb_data_chunk in,
       duckdb_vector_get_validity(out), i);
     else duckdb_vector_assign_string_element_len(out, i,
       (const char *)q[i].b.p, q[i].b.n);
-    free(q[i].url), drop(&q[i].b);
+    free(q[i].url);
   }
+  let(&z), zone = NULL;
   free(q), free(x.cred), curl_easy_cleanup(x.c), curl_multi_cleanup(x.m);
 }
 

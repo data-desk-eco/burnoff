@@ -345,18 +345,18 @@ static const char *unchunk(s3 *x, int k, const var *v, int i,
   while (held && (held->k != k || held->at != v->ka[i])) held = held->next;
   if (held) b = held->b;
   else {
-    a = malloc(n), b = v->sh ? malloc(n) : a;
+    a = mem(n), b = v->sh ? mem(n) : a;
     e = uncompress(a, &n, z, v->kn[i]) != Z_OK || n != m * v->es
         ? "a chunk did not inflate" : NULL;
     if (!e && v->sh)   // byte k of every element, then byte k + 1
       for (size_t q = 0; q < m; q++)
         for (int c = 0; c < v->es; c++) b[q * v->es + c] = a[c * m + q];
     if (!e && x->keep) {
-      s3k *c = malloc(sizeof *c);
-      *c = (s3k){x->chunks, v->ka[i], k, b, h ? calloc(65536, sizeof *h) : NULL,
+      s3k *c = mem(sizeof *c);
+      *c = (s3k){x->chunks, v->ka[i], k, b, h ? mem(65536 * sizeof *h) : NULL,
                  0};
       x->chunks = held = c;
-      if (b != a) free(a);
+      if (b != a) unmem(a);
       a = NULL;
     }
   }
@@ -387,8 +387,8 @@ static const char *unchunk(s3 *x, int k, const var *v, int i,
     held->counted = 1;
   }
   if (a) {   // not held
-    if (b != a) free(b);
-    free(a);
+    if (b != a) unmem(b);
+    unmem(a);
   }
   return e;
 }
@@ -416,10 +416,10 @@ static const char *grab(s3 *x, int k, int r0, int r1, int c0, int c1) {
   if (e == LACK) return e;
   size_t m = (size_t)(r1 - r0) * (c1 - c0);
   x->wr[k] = r0, x->wc[k] = c0, x->wh[k] = r1 - r0, x->ww[k] = c1 - c0;
-  x->b[k] = malloc((m ? m : 1) * sizeof *x->b[k]);
+  x->b[k] = mem((m ? m : 1) * sizeof *x->b[k]);
   for (size_t i = 0; i < m; i++) x->b[k][i] = NAN;
   if (k == S5 || k == S6 || k == F1 || k == S7)
-    x->hist[k] = calloc(65536, sizeof *x->hist[k]);
+    x->hist[k] = mem(65536 * sizeof *x->hist[k]);
   for (int i = 0; i < v->nk; i++)
     if (UNDER(i)) {
       rd *r = got(x->io, u, v->ka[i], v->ka[i] + v->kn[i]);
@@ -542,7 +542,7 @@ static const char *s3trees(s3 *x) {
       else if (e) return e;
       else {
         size_t m = (size_t)x->wh[k] * x->ww[k];
-        x->ll[k] = malloc(m * sizeof *x->ll[k]);
+        x->ll[k] = mem(m * sizeof *x->ll[k]);
         for (size_t i = 0; i < m; i++) x->ll[k][i] = x->b[k][i];
       }
     }
@@ -639,7 +639,7 @@ static const char *s3cands(s3 *x) {
   if (!x->cd) {
     double lon, lat;
     long in = 0, clr = 0;
-    x->cd = malloc(m * sizeof *x->cd);
+    x->cd = mem(m * sizeof *x->cd);
     if (x->t[SQ] > 0) {   // at most 4M squares: a 0.02° grid over 40°
       double q = x->t[SQ], *b = x->box;
       x->qx = floor(b[0] / q), x->qy = floor(b[1] / q);
@@ -660,7 +660,7 @@ static const char *s3cands(s3 *x) {
       }
     }
     x->clear = in ? (double)clr / in : NAN;
-    free(x->b[CLD]), x->b[CLD] = NULL;
+    unmem(x->b[CLD]), x->b[CLD] = NULL;
     if (!x->nc) return FIN;
   }
   const char *l = NULL, *e;
@@ -714,7 +714,7 @@ static double median(float *a, int n) {
 static const char *s3clus(s3 *x) {
   int nc = x->nc, *cd = x->cd, ww = x->c1 - x->c0, need = 0;
   if (!x->mb) {
-    int *par = malloc(nc * 4), *p;
+    int *par = mem(nc * 4), *p;
     for (int f = 0; f < NF; f++) drop3(x, f);
     for (int k = 0; k < nc; k++) {
       par[k] = k;
@@ -722,12 +722,12 @@ static const char *s3clus(s3 *x) {
         if (cd[k] / ww - cd[q] / ww <= 1 && abs(cd[k] % ww - cd[q] % ww) <= 1)
           par[find(par, k)] = find(par, q);
     }
-    x->at = calloc(nc + 1, 4), x->mb = malloc(nc * 4), x->ok = calloc(nc, 1);
+    x->at = mem((nc + 1) * 4), x->mb = mem(nc * 4), x->ok = mem(nc);
     for (int k = 0; k < nc; k++) x->at[find(par, k) + 1]++;
     for (int k = 0; k < nc; k++) x->at[k + 1] += x->at[k];
-    p = memcpy(malloc(nc * 4), x->at, nc * 4);
+    p = memcpy(mem(nc * 4), x->at, nc * 4);
     for (int k = 0; k < nc; k++) x->mb[p[find(par, k)]++] = cd[k];
-    free(p), free(par);
+    unmem(p), unmem(par);
     for (int l = 0; l < nc; l++)
       for (int q = x->at[l]; q < x->at[l + 1]; q++) {
         int i = x->r0 + x->mb[q] / ww, c = x->c0 + x->mb[q] % ww;
@@ -787,13 +787,13 @@ static const char *s3dets(s3 *x) {
     else place(x, wi / w, wj / w, &lon, &lat);
     if (!inbox(x->box, lon, lat)) continue;
     int nb = (i1 - i0 + 5) * (j1 - j0 + 5), b = 0;
-    float *r5 = malloc(nb * 4), *r6 = malloc(nb * 4);
+    float *r5 = mem(nb * 4), *r6 = mem(nb * 4);
     for (int i = i0 - 2; i <= i1 + 2; i++)
       for (int jj = j0 - 2; jj <= j1 + 2; jj++)
         if (i < i0 || i > i1 || jj < j0 || jj > j1)
           r5[b] = px(x, S5, i, jj), r6[b++] = px(x, S6, i, jj);
     double bg5 = median(r5, b), bg6 = median(r6, b), a5 = 0, a6 = 0;
-    free(r5), free(r6);
+    unmem(r5), unmem(r6);
     for (int q = 0; q < n; q++) {
       int i = x->r0 + m[q] / ww, jj = x->c0 + m[q] % ww;
       float y5 = px(x, S5, i, jj), y6 = px(x, S6, i, jj);
@@ -849,9 +849,9 @@ static void s3start(s3 *x) {
 static void s3end(s3 *x) {
   for (int f = 0; f < NF; f++) free(x->u[f]), x->u[f] = NULL;
   for (int k = 0; k < NV; k++)
-    free(x->b[k]), free(x->hist[k]), x->b[k] = NULL, x->hist[k] = NULL;
-  free(x->ll[0]), free(x->ll[1]), free(x->cd), free(x->at), free(x->mb);
-  free(x->ok);
+    unmem(x->b[k]), unmem(x->hist[k]), x->b[k] = NULL, x->hist[k] = NULL;
+  unmem(x->ll[0]), unmem(x->ll[1]), unmem(x->cd), unmem(x->at), unmem(x->mb);
+  unmem(x->ok);
   x->ll[0] = x->ll[1] = NULL, x->cd = x->at = x->mb = NULL, x->ok = NULL;
 }
 
@@ -875,8 +875,6 @@ static void s3_work(row *w, job *io) {
     chunks = x->chunks;
     s3end(x);
   }
-  for (s3k *c = chunks, *next; c; c = next)
-    next = c->next, free(c->b), free(c->h), free(c);
 }
 
 // rows by granule, then by place in the chunk; a null row last
