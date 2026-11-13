@@ -99,16 +99,16 @@ CREATE MACRO s3pk(ps) AS ps[list_position(list_transform(ps, lambda q:
 CREATE MACRO s3sq(p, rh, lon, lat) AS [[rh] || list_transform(p[2:],
   lambda v, k: round(v + if(k % 2 = 1, lon - (p[2] + p[4] + p[6] + p[8]) / 4,
                             lat - (p[3] + p[5] + p[7] + p[9]) / 4), 6))];
--- a request's hotspots as placed: the store's, of the current detector,
--- within 0.05° (more than any correction) of the box, and what it read (h)
+-- a request's hotspots as placed: the store's within 0.05° (more than any
+-- correction) of the box, and what it read (h)
 CREATE MACRO s3at(h) AS TABLE
 SELECT * REPLACE (s3lon(granule, track, lon, lat) AS lon,
                   s3lat(granule, track, lat) AS lat,
                   s3sq(s3pk(from_json(px, '[["DOUBLE"]]')), rh,
                        s3lon(granule, track, lon, lat),
                        s3lat(granule, track, lat)) AS px)
-FROM (SELECT * EXCLUDE (v) FROM db.s3_hotspots WHERE v = getvariable('v')
-        AND lat BETWEEN getvariable('s') - .05 AND getvariable('n') + .05
+FROM (SELECT * EXCLUDE (v) FROM db.s3_hotspots
+      WHERE lat BETWEEN getvariable('s') - .05 AND getvariable('n') + .05
         AND lon BETWEEN getvariable('w') - .05 / cos(radians(lat))
                     AND getvariable('e') + .05 / cos(radians(lat))
       UNION ALL BY NAME FROM query_table(h));
@@ -145,14 +145,14 @@ CREATE MACRO call(q) AS regexp_extract(q,
 -- is the last 90 days by default
 CREATE MACRO day(x, d) AS coalesce(TRY_CAST(nullif(x, '..') AS DATE), d);
 -- an answer kept (answer.sql) is given while fresh: no other request's
--- read by its detector (dv) has touched within 0.1° of its box (past any
+-- read has touched within 0.1° of its box (past any
 -- cell or link that reaches it) since it began, and, for a window ending
 -- within days of today or where a read failed, for an hour. or while
 -- another request makes it again (a row with no geojson yet, under 2
 -- minutes old), so a crowd waits on one
-CREATE MACRO fresh(key, dv, w, s, e, n, t1, days) AS coalesce((
+CREATE MACRO fresh(key, w, s, e, n, t1, days) AS coalesce((
   SELECT ka > coalesce((SELECT max(t.made)
-    FROM db.touched t WHERE t.v = dv AND t.k IS DISTINCT FROM key
+    FROM db.touched t WHERE t.k IS DISTINCT FROM key
       AND t.y0 <= n + .1 AND t.y1 >= s - .1
       AND t.x0 <= e + .1 / cos(radians(least(greatest(abs(s), abs(n)), 85)))
       AND t.x1 >= w - .1 / cos(radians(least(greatest(abs(s), abs(n)), 85)))),
@@ -166,7 +166,7 @@ CREATE MACRO fresh(key, dv, w, s, e, n, t1, days) AS coalesce((
 CREATE MACRO gate(sid, q) AS CASE
   WHEN starts_with(q, (SELECT 'admin ' || k || chr(10) FROM cfg))
     THEN q[(SELECT len(k) FROM cfg) + 8:]
-  WHEN call(q).f <> '' THEN (SELECT if(fresh(r.k, r.v, c.w::DOUBLE,
+  WHEN call(q).f <> '' THEN (SELECT if(fresh(r.k, c.w::DOUBLE,
       c.s::DOUBLE, c.e::DOUBLE, c.n::DOUBLE, r.t1, days),
     printf('SELECT geojson FROM db.answers
 WHERE k = ''%s'' AND geojson IS NOT NULL ORDER BY made DESC LIMIT 1;', r.k),

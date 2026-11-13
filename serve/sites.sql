@@ -16,7 +16,7 @@ CREATE OR REPLACE TEMP TABLE pb AS
 SELECT cm(lon, lat) AS c, pix(cm(lon, lat)) AS p,
        split_part(scene, '_', 3)[:8] AS date
 FROM (SELECT scene, lon, lat FROM db.hotspots
-      WHERE v = getvariable('v') AND lat BETWEEN getvariable('s')
+      WHERE lat BETWEEN getvariable('s')
         - 1.5 * getvariable('m') AND getvariable('n') + 1.5 * getvariable('m')
       UNION SELECT scene, lon, lat FROM det)
 WHERE near(lon, lat);

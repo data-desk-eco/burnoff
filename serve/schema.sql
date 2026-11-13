@@ -3,9 +3,9 @@
 -- needed it. cells: each 6.4 km cell of a scene read (i, j from the 100 km
 -- square's north-west corner sx, sy), its obscured share and its 640 m
 -- squares (cells.sql, on the tile's origin ox, oy). hotspots: those of
--- each cell, pixels (px) as json. v is the digest of the extension that
--- read a cell: a cell is held for the detector that made it alone, so a new
--- one reads anew. a cell's tile and sensing time (t) lead, for a read to
+-- each cell, pixels (px) as json. v is the digest of the detector that
+-- read a cell, a record alone: a cell held is not read again, whatever the
+-- detector; to read cells again, delete them by v here. a cell's tile and sensing time (t) lead, for a read to
 -- skip by them (scenes' names share their first bytes). no keys: requests
 -- add rows at once, so a row two read together is kept twice, and readers
 -- take distinct rows
@@ -59,16 +59,14 @@ CREATE TABLE IF NOT EXISTS db.answers (
 CREATE TABLE IF NOT EXISTS db.touched (
   k VARCHAR, v VARCHAR, made TIMESTAMPTZ, x0 DOUBLE, y0 DOUBLE, x1 DOUBLE,
   y1 DOUBLE);
--- 2026-11-05: the browser and gpu paths left the extension, every s2 and s3
--- answer the same, field for field: cells and hotspots kept under the old
--- digests (deploy.sh's V, V3) are the new ones'. a no-op once run
-UPDATE db.cells SET v = 'ae8bdad0ae4e' WHERE v = '115a56d3fb7a';
-UPDATE db.hotspots SET v = 'ae8bdad0ae4e' WHERE v = '115a56d3fb7a';
-UPDATE db.s3_cells SET v = 'bd6320798d35' WHERE v = 'cc7c2f6a4d53';
-UPDATE db.s3_hotspots SET v = 'bd6320798d35' WHERE v = 'cc7c2f6a4d53';
--- 2026-11-05: s2.c and s3.c split from burnoff.c, each digest of its own
--- detector's sources; every s2 and s3 answer the same, field for field
-UPDATE db.cells SET v = '8e97e7784731' WHERE v = 'ae8bdad0ae4e';
-UPDATE db.hotspots SET v = '8e97e7784731' WHERE v = 'ae8bdad0ae4e';
-UPDATE db.s3_cells SET v = '306ab14bb183' WHERE v = 'bd6320798d35';
-UPDATE db.s3_hotspots SET v = '306ab14bb183' WHERE v = 'bd6320798d35';
+-- 2026-11-13: a cell is read once, whatever the detector (v); s3 cells
+-- read again under 306ab14bb183 drop what 508cbc28edc4 made of them. a
+-- no-op once run
+DELETE FROM db.s3_hotspots h USING (SELECT DISTINCT granule, i, j
+  FROM db.s3_cells WHERE v = '306ab14bb183') c
+WHERE h.v = '508cbc28edc4' AND h.granule = c.granule AND h.i = c.i
+  AND h.j = c.j;
+DELETE FROM db.s3_cells h USING (SELECT DISTINCT granule, i, j
+  FROM db.s3_cells WHERE v = '306ab14bb183') c
+WHERE h.v = '508cbc28edc4' AND h.granule = c.granule AND h.i = c.i
+  AND h.j = c.j;

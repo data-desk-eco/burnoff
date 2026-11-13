@@ -6,7 +6,7 @@
 -- scene's cell the store holds, so a run again changes nothing and a store
 -- lost and begun again takes nothing away. an empty store is seeded from it
 SET VARIABLE seed = (SELECT count(scene) = 0 FROM db.cells);
--- the current detector's (v) alone, of each tile and sensing time its
+-- of each tile and sensing time its
 -- newest processing (a reprocessing read after the first is kept, as a
 -- request reads the newest), and nothing written unless every cell is one
 -- of its square's 16 × 16. the hotspots are those of the cells read: a
@@ -14,12 +14,11 @@ SET VARIABLE seed = (SELECT count(scene) = 0 FROM db.cells);
 -- read after c whose cell is not in it came with a newer cell, left to the
 -- next run
 CREATE OR REPLACE TEMP TABLE c AS
-SELECT DISTINCT * EXCLUDE (tile, t) FROM db.cells WHERE v = getvariable('v')
+SELECT DISTINCT * EXCLUDE (tile, t) FROM db.cells
 QUALIFY scene = max(scene) OVER (PARTITION BY split_part(scene, '_', 6),
                                               split_part(scene, '_', 3));
 CREATE OR REPLACE TEMP TABLE h AS
-SELECT DISTINCT * FROM db.hotspots SEMI JOIN c USING (scene, i, j)
-WHERE v = getvariable('v');
+SELECT DISTINCT * FROM db.hotspots SEMI JOIN c USING (scene, i, j);
 SELECT error('export: ' || count(*) || ' cells off their square')
 FROM c WHERE i NOT BETWEEN 0 AND 15 OR j NOT BETWEEN 0 AND 15
 HAVING count(*) > 0;
@@ -35,7 +34,7 @@ CREATE OR REPLACE MACRO arc(t) AS TABLE
 FROM read_parquet(getvariable('arc') || '/' || t || '/*/*.parquet',
                   union_by_name := true, hive_partitioning := true);
 -- the partitions (d) where the store holds a scene's cell the archive lacks
--- for its detector, the rest left unread and unwritten
+-- under its v, the rest left unread and unwritten
 SET VARIABLE d = (SELECT coalesce(list(DISTINCT cell), []) FROM c
   ANTI JOIN (SELECT scene, i, j, v FROM arc('observations'))
   USING (scene, i, j, v));
@@ -78,15 +77,15 @@ TO (getvariable('arc') || '/detections') (FORMAT parquet, COMPRESSION zstd,
   PARTITION_BY (cell), WRITE_PARTITION_COLUMNS true,
   FILENAME_PATTERN 'data', OVERWRITE_OR_IGNORE);
 
--- the seed: the current detector's rows (v) as the store keeps them
+-- the seed: the archive's rows as the store keeps them
 BEGIN;
 INSERT INTO db.cells BY NAME
 SELECT tile, split_part(scene, '_', 3) AS t, scene, i, j, v, sx, sy, ox, oy,
        crs, clear, cloud, cell, lon, lat,
        packed(squares, ox, oy, sx, sy, i, j) AS squares
-FROM arc('observations') WHERE getvariable('seed') AND v = getvariable('v');
+FROM arc('observations') WHERE getvariable('seed');
 INSERT INTO db.hotspots BY NAME
 SELECT * EXCLUDE (datetime, date, tile, px, saturated, geometry),
        saturated::INTEGER AS saturated, to_json(px)::VARCHAR AS px
-FROM arc('detections') WHERE getvariable('seed') AND v = getvariable('v');
+FROM arc('detections') WHERE getvariable('seed');
 COMMIT;

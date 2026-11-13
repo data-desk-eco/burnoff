@@ -74,9 +74,10 @@ Permian scenes (T13SER, N0511, May 2025) failed so in 3 of 5 runs.
 
 The store digests (`V`, `V3`, which `make serve` writes to `ext/env`)
 include the shared host and header, plus each detector's sources. An
-S2-only change leaves S3 unchanged, and conversely. A changed digest
-makes the service read its cells again. Where the output is unchanged,
-relabel the store's rows in `schema.sql`.
+S2-only change leaves S3 unchanged, and conversely. A digest marks the
+detector that made each row; it does not make the service read cells
+again. A cell held is kept whatever the detector. To read cells again
+after a change of output, delete their rows by `v` in `schema.sql`.
 
 ## The night detector
 
@@ -138,14 +139,14 @@ A restart drops the requests in flight.
   the `burnoff` credential) runs as it is; anything else is refused. Macros
   live in `api.sql`; per-request tables are `CREATE OR REPLACE TEMP`.
 - Cells come from the store, else one `s2_detect` of those missing; new
-  cells and their hotspots are added in one transaction, under the
+  cells and their hotspots are added in one transaction, marked with the
   detector's digest `v`.
 - The gate keeps each public answer (`answer.sql`, `db.answers`) under its
   key: the call, its box, its window resolved to dates, and `v`. A
   request whose answer is fresh (`api.sql`'s `fresh`) gets it back without
-  running a script. An answer is fresh while no other request's read by
-  the same detector has added cells or hotspots within 0.1° of its box
-  since it began (`db.touched`, written after each read commits). For a
+  running a script. As `v` is in the key, a new detector makes each answer
+  again, from the store. An answer is fresh while no other request's read
+  has added cells or hotspots within 0.1° of its box since it began (`db.touched`, written after each read commits). For a
   window that ends within a week of today (3 days for S3), or one where a
   read failed, it is fresh for an hour. A request that makes an answer
   again first adds a row with no geojson; for 2 minutes, others get the

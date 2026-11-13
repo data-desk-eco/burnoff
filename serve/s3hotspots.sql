@@ -63,8 +63,7 @@ SELECT granule, t, i, j FROM gr,
 CREATE OR REPLACE TEMP TABLE held AS
 SELECT DISTINCT * EXCLUDE (v) FROM db.s3_cells SEMI JOIN need
   USING (granule, i, j)
-WHERE v = getvariable('v')
-  AND t BETWEEN strftime(getvariable('t0'), '%Y%m%d')
+WHERE t BETWEEN strftime(getvariable('t0'), '%Y%m%d')
             AND strftime(getvariable('t1'), '%Y%m%d') || 'Z';
 
 -- one read a granule, over the box of the cells it lacks
@@ -120,12 +119,10 @@ FROM (SELECT sq, strftime(d, '%Y-%m-%d') AS day FROM srch,
 ANTI JOIN db.s3_searched USING (sq, day);
 INSERT INTO db.s3_cells BY NAME
 SELECT *, getvariable('v') AS v FROM obs
-ANTI JOIN (FROM db.s3_cells WHERE v = getvariable('v'))
-  USING (granule, i, j);
+ANTI JOIN db.s3_cells USING (granule, i, j);
 INSERT INTO db.s3_hotspots BY NAME
 SELECT *, getvariable('v') AS v FROM det
-ANTI JOIN (FROM db.s3_hotspots WHERE v = getvariable('v'))
-  USING (granule, lon, lat);
+ANTI JOIN db.s3_hotspots USING (granule, lon, lat);
 COMMIT;
 -- and where they lie, once committed (hotspots.sql's)
 INSERT INTO db.touched

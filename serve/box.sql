@@ -24,7 +24,6 @@ FROM (SELECT DISTINCT * EXCLUDE (v, saturated, px),
              saturated::BOOLEAN AS saturated, from_json(px, '[{"x": "DOUBLE",
                "y": "DOUBLE", "b12": "DOUBLE"}]') AS px
       FROM db.hotspots SEMI JOIN held USING (scene, i, j)
-      WHERE v = getvariable('v')
       UNION ALL BY NAME FROM det) s JOIN sc USING (scene)
 WHERE s.lat BETWEEN getvariable('s') - getvariable('m')
   AND getvariable('n') + getvariable('m')

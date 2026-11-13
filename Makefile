@@ -64,9 +64,9 @@ install: $(E)
 	duckdb -unsigned -c "force install '$(CURDIR)/$(E)'"
 
 # what the service runs from this checkout (data-desk's burnoff.service, at
-# each start): the extension; the detectors' digests, what a cell is kept
-# under (schema.sql's v): s2's of its sources, s3's of its own, so a change
-# to one keeps the other's; bulk.sh's seeds; and the box's duckdb, which
+# each start): the extension; the detectors' digests, which mark what made
+# a cell (schema.sql's v): s2's of its sources, s3's of its own; bulk.sh's
+# seeds; and the box's duckdb, which
 # must be 2.0, for quack, with the extensions server.sql loads. a second
 # run builds nothing
 serve: $(E) ext/env ext/seeds.txt

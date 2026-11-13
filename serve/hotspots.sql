@@ -6,7 +6,7 @@
 -- corner (sx, sy), 16 a side; a hotspot is what a read of the whole tile
 -- finds wherever a read's edges fall, so a cell's are the same whichever
 -- read made them, with a cell's margin read around it; v, the detector's
--- digest, keys what it made. whole asks for
+-- digest, marks what it made. whole asks for
 -- every cell of each scene's square, not only the box's. box.sql makes the
 -- answer's tables from these
 
@@ -59,7 +59,7 @@ FROM (SELECT *, ST_Transform(ST_Point(sx + 6400 * i + 3200,
 CREATE OR REPLACE TEMP TABLE held AS
 SELECT DISTINCT * EXCLUDE (tile, t, v)
 FROM db.cells SEMI JOIN need USING (scene, i, j)
-WHERE tile IN (SELECT id FROM tiles) AND v = getvariable('v')
+WHERE tile IN (SELECT id FROM tiles)
   AND t BETWEEN strftime(getvariable('t0'), '%Y%m%d')
             AND strftime(getvariable('t1'), '%Y%m%d') || 'Z';
 
@@ -120,13 +120,11 @@ INSERT INTO db.cells BY NAME
 SELECT split_part(scene, '_', 6)[2:] AS tile, split_part(scene, '_', 3) AS t,
        scene, i, j, getvariable('v') AS v, sx, sy, ox, oy, crs, clear, cloud,
        packed(q, ox, oy, sx, sy, i, j) AS squares, cell, lon, lat
-FROM obs ANTI JOIN (FROM db.cells WHERE v = getvariable('v'))
-  USING (scene, i, j);
+FROM obs ANTI JOIN db.cells USING (scene, i, j);
 INSERT INTO db.hotspots BY NAME
 SELECT * EXCLUDE (px, saturated), saturated::INT AS saturated,
        to_json(px)::VARCHAR AS px, getvariable('v') AS v
-FROM det ANTI JOIN (FROM db.hotspots WHERE v = getvariable('v'))
-  USING (scene, x, y);
+FROM det ANTI JOIN db.hotspots USING (scene, x, y);
 INSERT INTO db.granules
 SELECT scene, granule FROM gr WHERE granule <> ''
   AND scene NOT IN (SELECT scene FROM db.granules);
