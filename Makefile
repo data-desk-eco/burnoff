@@ -66,9 +66,8 @@ install: $(E)
 # what the service runs from this checkout (data-desk's burnoff.service, at
 # each start): the extension; the detectors' digests, which mark what made
 # a cell (schema.sql's v): s2's of its sources, s3's of its own; bulk.sh's
-# seeds; and the box's duckdb, which
-# must be 2.0, for quack, with the extensions server.sql loads. a second
-# run builds nothing
+# seeds; and the box's duckdb, which must be 2.0, for quack, with the
+# extensions server.sql loads. a second run builds nothing
 serve: $(E) ext/env ext/seeds.txt
 	@[ "$$(duckdb --version | cut -d' ' -f1)" = v2.0.0 ] || \
 	  { echo "burnoff serves on duckdb v2.0.0, not $$(duckdb --version)"; \

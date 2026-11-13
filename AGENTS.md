@@ -9,19 +9,12 @@ that the extension loads, offline.
 ## Layout
 
 - `src/burnoff.c`, `src/burnoff.h`: shared DuckDB bindings, reads and workers.
-- `src/mem.c`: a job's memory (`mem`, `remem`, `unmem`, `let`).
-- `src/s2.c`: the Sentinel-2 detector and its DuckDB result binding.
-- `src/band.c`: a band file's header, tile-parts and reads, and the
-  caches jobs share.
-- `src/j2k.c`: the JPEG 2000 decoder.
-- `src/s3.c`: the Sentinel-3 SLSTR night detector and its result binding.
-- `src/h5.c`: the HDF5 reader for a granule's netCDF-4 files.
-
-`burnoff.c`, `mem.c`, `s2.c` and `s3.c` compile separately. `s2.c`
-includes `j2k.c` then `band.c`, and `s3.c` includes `h5.c`, as text: each
-is read and changed alone, but is not a unit of its own. `j2k.c` and
-`h5.c` parse bytes and know nothing of reads or DuckDB; `band.c` names
-reads on a job.
+- `src/mem.c`: a job's memory.
+- `src/s2.c`: the Sentinel-2 detector and its DuckDB result binding; it
+  includes `src/j2k.c` (the JPEG 2000 decoder) and `src/band.c` (a band
+  file's header, tile-parts and reads).
+- `src/s3.c`: the Sentinel-3 SLSTR night detector and its result binding;
+  it includes `src/h5.c` (the HDF5 reader).
 - `src/burnoff.sql`: macros run on load (`s2_scenes`, `s2_hotspots`,
   `s3_scenes`, `s3_hotspots`, `s3_flares`).
 - `serve/`: the service, which `make serve` builds for.
@@ -49,14 +42,9 @@ once (curl multi). The detector then resumes its stage.
   tile-parts are read whole.
 - A decode of 1024 code-blocks or more spreads over the cores other
   rows leave idle (`spread()`).
-- A job's memory is its own (`mem`, `remem`, `unmem` in `mem.c`):
-  pages mapped for it and all unmapped when it ends, so a long-running
-  DuckDB does not keep what jobs freed. A piece over 256 KB is its own
-  mapping: `unmem` keeps it for the job's next piece of its size (up to
-  16 MB kept, so a decode's planes are not mapped again for each tile),
-  else unmaps it. Smaller ones wait for the job's end. Every piece comes
-  zeroed. What outlives the job, its results and the shared caches, is
-  `malloc`'s: never `free` a `mem` piece, nor `unmem` a `malloc` one.
+- A job's scratch is `mem`'s (`mem.c`), all unmapped when the job ends.
+  What outlives it, its results and the shared caches, is `malloc`'s:
+  never `free` a `mem` piece, nor `unmem` a `malloc` one.
 - `nir_excess` rejects sunlight: a peak's B8A rise must be under 0.1 of
   its B12 rise. It cut London's detections from 20,224 to 1,451 a year
   and kept Permian flares (327 to 315 sites).
@@ -69,15 +57,14 @@ field for field, against a baseline: 588 boxes over 14 scenes
 OpenJPEG 2.5 sample for sample, and refuses any codestream shape the
 L1C baselines do not use. Over file://, run each date's boxes in its
 own process: a header cached from another date can give `tile-part not
-found`. Over https too, where dates without a TLM share a query: 2 of 18
-Permian scenes (T13SER, N0511, May 2025) failed so in 3 of 5 runs.
+found`. Over https too, where dates without a TLM share a query (2 of
+18 Permian scenes, May 2025, in 3 of 5 runs).
 
 The store digests (`V`, `V3`, which `make serve` writes to `ext/env`)
 include the shared host and header, plus each detector's sources. An
 S2-only change leaves S3 unchanged, and conversely. A digest marks the
-detector that made each row; it does not make the service read cells
-again. A cell held is kept whatever the detector. To read cells again
-after a change of output, delete their rows by `v` in `schema.sql`.
+detector that made each row; a held cell is not read again. To read
+cells again, delete their rows by `v` in `schema.sql`.
 
 ## The night detector
 
@@ -144,9 +131,9 @@ A restart drops the requests in flight.
 - The gate keeps each public answer (`answer.sql`, `db.answers`) under its
   key: the call, its box, its window resolved to dates, and `v`. A
   request whose answer is fresh (`api.sql`'s `fresh`) gets it back without
-  running a script. As `v` is in the key, a new detector makes each answer
-  again, from the store. An answer is fresh while no other request's read
-  has added cells or hotspots within 0.1° of its box since it began (`db.touched`, written after each read commits). For a
+  running a script. An answer is fresh while no other request's read has
+  added cells or hotspots within 0.1° of its box since it began
+  (`db.touched`, written after each read commits). For a
   window that ends within a week of today (3 days for S3), or one where a
   read failed, it is fresh for an hour. A request that makes an answer
   again first adds a row with no geojson; for 2 minutes, others get the
@@ -203,12 +190,7 @@ A restart drops the requests in flight.
   for 90 days in 10.9 s cold, 2.0 s warm.
 - Memory: six months of Permian hotspots (gcp, 1°) in one DuckDB on an
   eo1.large hold 422 MB after, against 824 MB with `malloc` for the jobs
-  (peak about 1.1 GB either way, same time). On the box from eodata
-  (13 November 2026), 56 scenes and 15 granules (whole and chained)
-  through one DuckDB hold 150 MB (S2) and 405 MB (S3) after, against
-  290-440 MB and 530-660 MB with `malloc`, peaks within 10%. A test
-  service (port 9495, empty store) under 6 clients at once (72 cold
-  requests, 3 months each) peaked at 680 MB and held 340 MB after.
+  (peak about 1.1 GB either way, same time).
 - `load.sh`, 20 visitors at once over Ras Laffan (234 requests each), on
   an eo1.large like the jump host, store warm, from a laptop: main, 861 s,
   p50 11.7 s, 303 errors; with the answers kept, 76 s, p50 0.65 s, 19

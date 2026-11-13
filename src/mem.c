@@ -1,11 +1,7 @@
-// a job's memory: pages mapped for it, carved in order, and all unmapped
-// once it ends, whatever it did not give back: its reads, rasters and
-// decodes never outlive it, nor wait in an allocator for another job. a
-// piece over BIG has a mapping of its own, which unmem() gives back: kept
-// for the job's next piece of its size while it and those kept come to
-// SPARE or less (a decode's planes), else unmapped at once. every piece
-// comes zeroed. what outlives the job (its results, the shared caches) is
-// malloc's
+// a job's memory: pages mapped for it, all unmapped once it ends, so a
+// long-running duckdb keeps nothing jobs freed. a piece over BIG is a
+// mapping of its own, kept for the job's next piece of its size up to
+// SPARE (a decode's planes). every piece comes zeroed
 #include "burnoff.h"
 #include <sys/mman.h>
 
