@@ -202,7 +202,12 @@ A restart drops the requests in flight.
   for 90 days in 10.9 s cold, 2.0 s warm.
 - Memory: six months of Permian hotspots (gcp, 1°) in one DuckDB on an
   eo1.large hold 422 MB after, against 824 MB with `malloc` for the jobs
-  (peak about 1.1 GB either way, same time).
+  (peak about 1.1 GB either way, same time). On the box from eodata
+  (13 November 2026), 56 scenes and 15 granules (whole and chained)
+  through one DuckDB hold 150 MB (S2) and 405 MB (S3) after, against
+  290-440 MB and 530-660 MB with `malloc`, peaks within 10%. A test
+  service (port 9495, empty store) under 6 clients at once (72 cold
+  requests, 3 months each) peaked at 680 MB and held 340 MB after.
 - `load.sh`, 20 visitors at once over Ras Laffan (234 requests each), on
   an eo1.large like the jump host, store warm, from a laptop: main, 861 s,
   p50 11.7 s, 303 errors; with the answers kept, 76 s, p50 0.65 s, 19
