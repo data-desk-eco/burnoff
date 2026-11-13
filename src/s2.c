@@ -118,7 +118,7 @@ typedef struct {
 // a job: the hotspots in a box of one scene, and its clear-sky share
 typedef struct {
   job *io;
-  char *u[4];                     // b12, b11, b8a, the cloud mask
+  const char *u[4];               // b12, b11, b8a, the cloud mask
   double box[4], t[NT];
   res r;
   const char *e;
@@ -567,7 +567,7 @@ static const char *b12(s2 *j) {
   const char *e = parts(j, j->u[0], j->bd, j->wn, j->nw);
   for (int i = 0; e == LACK && i < 2 * j->nw; i++) {
     band *g = j->bd + 1 + i % 2;
-    char *u = j->u[1 + i % 2];
+    const char *u = j->u[1 + i % 2];
     int k = j->wn[i / 2].k;
     long long a = g->ok && g->tlm ? g->at[k] : 0, b = a + MIN(g->len[k], 512);
     if (j->budget) header(j, u, g);
@@ -863,7 +863,7 @@ static const char *(*const stage[])(s2 *) = {heads, b12, back, b11, pick,
 // its tile-parts are wanted). elsewhere a request costs its round trip
 static void start(s2 *j, const char *url, const double *box,
                   const double *t) {
-  j->u[0] = strdup(url);
+  j->u[0] = url;
   j->u[1] = swap(url, "B12.jp2", "B11.jp2");
   j->u[2] = swap(url, "B12.jp2", "B8A.jp2");
   j->u[3] = swap(url, "/IMG_DATA/", "/QI_DATA/MSK_CLASSI_B00.jp2");
@@ -894,7 +894,6 @@ static void s2_work(row *w, job *io) {
   }
   w->e = j.e, r->r = j.r;
   r->org[0] = j.bd->ox, r->org[1] = j.bd->oy, r->org[2] = j.bd->res;
-  for (int i = 0; i < 4; i++) free(j.u[i]);   // the rest goes with the job
 }
 
 static void s2_detect(duckdb_function_info info, duckdb_data_chunk in,

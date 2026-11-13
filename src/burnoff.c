@@ -260,9 +260,8 @@ int merge(long long *q, int n, long long g, int m) {
 
 char *swap(const char *url, const char *from, const char *to) {
   const char *p = strstr(url, from);
-  char *r = malloc(strlen(url) + strlen(to) + 1);
-  if (!p) return free(r), NULL;
-  sprintf(r, "%.*s%s", (int)(p - url), url, to);
+  char *r = p ? mem(strlen(url) + strlen(to) + 1) : NULL;
+  if (p) sprintf(r, "%.*s%s", (int)(p - url), url, to);
   return r;
 }
 

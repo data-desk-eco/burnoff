@@ -416,7 +416,7 @@ static const char *grab(s3 *x, int k, int r0, int r1, int c0, int c1) {
   if (e == LACK) return e;
   size_t m = (size_t)(r1 - r0) * (c1 - c0);
   x->wr[k] = r0, x->wc[k] = c0, x->wh[k] = r1 - r0, x->ww[k] = c1 - c0;
-  x->b[k] = mem((m ? m : 1) * sizeof *x->b[k]);
+  x->b[k] = mem(m * sizeof *x->b[k]);
   for (size_t i = 0; i < m; i++) x->b[k][i] = NAN;
   if (k == S5 || k == S6 || k == F1 || k == S7)
     x->hist[k] = mem(65536 * sizeof *x->hist[k]);
@@ -503,7 +503,7 @@ static const char *s3heads(s3 *x) {
       if (f != 3 || x->in || !strcmp(e, "fetch failed after retries"))
         return e;
       // before baseline 004 F1 is on the 1 km 'in' grid, beside S7
-      free(x->u[3]), x->u[3] = swap(x->u[4], "S7_BT_in.nc", "F1_BT_in.nc");
+      x->u[3] = swap(x->u[4], "S7_BT_in.nc", "F1_BT_in.nc");
       x->in = 1, f--, e = NULL;
     }
   if (e == LACK) return e;
@@ -841,13 +841,13 @@ static const char *s3dets(s3 *x) {
 static void s3start(s3 *x) {
   x->clear = x->sza = NAN;
   for (int f = 0; f < NF; f++)
-    if (x->hn[f] = HEAD3[f], asprintf(&x->u[f], "%s/%s.nc", x->dir, F3[f]) < 0)
-      x->u[f] = NULL;
+    x->hn[f] = HEAD3[f],
+    sprintf(x->u[f] = mem(strlen(x->dir) + strlen(F3[f]) + 5), "%s/%s.nc",
+            x->dir, F3[f]);
 }
 
 // all but its result and granule, once it is done
 static void s3end(s3 *x) {
-  for (int f = 0; f < NF; f++) free(x->u[f]), x->u[f] = NULL;
   for (int k = 0; k < NV; k++)
     unmem(x->b[k]), unmem(x->hist[k]), x->b[k] = NULL, x->hist[k] = NULL;
   unmem(x->ll[0]), unmem(x->ll[1]), unmem(x->cd), unmem(x->at), unmem(x->mb);
