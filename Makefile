@@ -1,25 +1,26 @@
 # DuckDB's stable C API (1.2+), libcurl and zlib. The detectors compile
-# separately; S2 owns the JPEG 2000 decoder in src/j2k.c.
+# separately, each with what it alone reads through: S2 the JPEG 2000
+# decoder (src/j2k.c) and band files (src/band.c), S3 HDF5 (src/h5.c).
 PKGS = libcurl
 CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter
 CFLAGS += $(shell pkg-config --cflags $(PKGS))
 LDLIBS = $(shell pkg-config --libs $(PKGS)) -lz -lpthread -lm
-SRC = src/burnoff.c src/s2.c src/s3.c
+SRC = src/burnoff.c src/mem.c src/s2.c src/s3.c
 PLATFORM ?= $(shell uname -sm | awk '{ \
 	os = $$1 == "Darwin" ? "osx" : tolower($$1); \
 	arch = $$2 ~ /^(x86_64|amd64)$$/ ? "amd64" : "arm64"; \
 	print os "_" arch }')
 VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 E = ext/burnoff.duckdb_extension
-S2 = src/burnoff.h src/burnoff.c src/s2.c src/j2k.c
-S3 = src/burnoff.h src/burnoff.c src/s3.c
+HOST = src/burnoff.h src/burnoff.c src/mem.c
+S2 = $(HOST) src/s2.c src/band.c src/j2k.c
+S3 = $(HOST) src/s3.c src/h5.c
 
 # the shared library plus duckdb's metadata footer: a wasm-style custom
 # section header, eight 32-byte fields (last first) and 256 bytes left for a
 # signature. it is renamed into place, as a duckdb running the last one (the
 # etl's fetch, a unit) would fault on it rewritten
-$(E): $(SRC) src/burnoff.h src/j2k.c src/duckdb.h \
-      src/duckdb_extension.h ext/burnoff.sql.h
+$(E): $(S2) $(S3) src/duckdb.h src/duckdb_extension.h ext/burnoff.sql.h
 	$(CC) $(CFLAGS) -Iext -shared -fPIC -fvisibility=hidden $(SRC) $(LDLIBS) \
 	  -o ext/burnoff.so
 	{ cat ext/burnoff.so; printf '\000\223\004\020duckdb_signature\200\004'; \

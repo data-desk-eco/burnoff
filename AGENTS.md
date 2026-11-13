@@ -9,9 +9,19 @@ that the extension loads, offline.
 ## Layout
 
 - `src/burnoff.c`, `src/burnoff.h`: shared DuckDB bindings, reads and workers.
+- `src/mem.c`: a job's memory (`mem`, `remem`, `unmem`, `let`).
 - `src/s2.c`: the Sentinel-2 detector and its DuckDB result binding.
+- `src/band.c`: a band file's header, tile-parts and reads, and the
+  caches jobs share.
 - `src/j2k.c`: the JPEG 2000 decoder.
 - `src/s3.c`: the Sentinel-3 SLSTR night detector and its result binding.
+- `src/h5.c`: the HDF5 reader for a granule's netCDF-4 files.
+
+`burnoff.c`, `mem.c`, `s2.c` and `s3.c` compile separately. `s2.c`
+includes `j2k.c` then `band.c`, and `s3.c` includes `h5.c`, as text: each
+is read and changed alone, but is not a unit of its own. `j2k.c` and
+`h5.c` parse bytes and know nothing of reads or DuckDB; `band.c` names
+reads on a job.
 - `src/burnoff.sql`: macros run on load (`s2_scenes`, `s2_hotspots`,
   `s3_scenes`, `s3_hotspots`, `s3_flares`).
 - `serve/`: the service, which `make serve` builds for.
@@ -39,7 +49,7 @@ once (curl multi). The detector then resumes its stage.
   tile-parts are read whole.
 - A decode of 1024 code-blocks or more spreads over the cores other
   rows leave idle (`spread()`).
-- A job's memory is its own (`mem`, `remem`, `unmem` in `burnoff.c`):
+- A job's memory is its own (`mem`, `remem`, `unmem` in `mem.c`):
   pages mapped for it and all unmapped when it ends, so a long-running
   DuckDB does not keep what jobs freed. A piece over 256 KB is its own
   mapping: `unmem` keeps it for the job's next piece of its size (up to

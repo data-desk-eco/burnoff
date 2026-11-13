@@ -69,6 +69,7 @@ extern const char PAST[], LACK[], FIN[];
 void *mem(size_t n);
 void *remem(void *p, size_t n);
 void unmem(void *p);
+void let(void);
 void drop(buf *b);
 void append(buf *b, const void *p, size_t n);
 rd *add(job *j, const char *url, long long lo, long long hi);

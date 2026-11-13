@@ -10,7 +10,7 @@
 // lists their code-blocks as plain records (j2k_cb), tier-1 decodes each
 // into its tile-component's coefficients, and the windowed inverse 5/3,
 // RCT and level shift give samples equal to openjpeg 2.5's. its memory is
-// the job's (burnoff.c's mem), a tile's given back once it is decoded.
+// the job's (mem.c), a tile's given back once it is decoded.
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
